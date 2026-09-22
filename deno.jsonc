@@ -4,7 +4,7 @@
   // Consume freshly-published in-house deps without waiting out Deno 2.9's default 24h
   // minimumDependencyAge supply-chain gate. This is needed even where no SOURCE file
   // imports the dep: the universal "version" task runs
-  // `deno run -A jsr:@fathym/common@<fresh>/build/version`, and that resolution is what
+  // `deno run -A jsr:@fathym/common@0.2.325/build/version`, and that resolution is what
   // the gate blocks -- so the CI failure lands on `deno task version`, not on a build.
   // Already the house default in 29 sibling repos.
   "minimumDependencyAge": "0",
@@ -19,7 +19,7 @@
     "build:lint": "deno lint",
     "deploy": "deno task build && deno task test && fathym git",
     "test": "deno test -A tests/tests.ts --parallel --coverage=cov",
-    "version": "deno run -A jsr:@fathym/common@0.2.321/build/version"
+    "version": "deno run -A jsr:@fathym/common@0.2.325/build/version"
   },
   "imports": {},
   "lint": {
