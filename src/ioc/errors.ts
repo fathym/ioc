@@ -383,3 +383,35 @@ export class IoCNotIsolatableError extends IoCError {
     super(`${Service} can't be isolated: ${Reason}.`);
   }
 }
+
+/**
+ * Thrown (with `PendingTimeoutMs` set) when a `Resolve` is still pending after the timeout.
+ * `Waiting` lists the pending builds it was waiting on, as far as the container can see them.
+ */
+export class IoCResolveTimeoutError extends IoCError {
+  /** The error name, for logs and `instanceof`-free checks. */
+  public override name = 'IoCResolveTimeoutError';
+
+  /** The stable error code. */
+  public readonly code = 'IOC_RESOLVE_TIMEOUT' as const;
+
+  /**
+   * Creates the error.
+   *
+   * @param Service The service being resolved.
+   * @param TimeoutMs The timeout that expired.
+   * @param Waiting The pending builds it was waiting on, itself first when it is one.
+   */
+  constructor(
+    public readonly Service: string,
+    public readonly TimeoutMs: number,
+    public readonly Waiting: string[] = [],
+  ) {
+    super(
+      `Resolving ${Service} did not finish within ${TimeoutMs}ms` +
+        (Waiting.length ? `; still pending: ${Waiting.join(', ')}` : '') +
+        `. A factory may never settle, or factories may wait on each other through a captured ` +
+        `container; resolve through the factory's parameter, or set the AsyncContext option.`,
+    );
+  }
+}

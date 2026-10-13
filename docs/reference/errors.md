@@ -37,6 +37,7 @@ here, and CI fails if a new one is added without an entry. For problems that don
 | `IoCModuleCycleError`           | `IOC_MODULE_CYCLE`                            | [Module dependency cycle: …](#module-dependency-cycle-a---b---a)                                               |
 | `IoCStartError`                 | `IOC_START_FAILED`                            | [Module '…' failed to start: …](#module--failed-to-start-)                                                     |
 | `IoCNotIsolatableError`         | `IOC_NOT_ISOLATABLE`                          | [… can't be isolated: …](#-cant-be-isolated-)                                                                  |
+| `IoCResolveTimeoutError`        | `IOC_RESOLVE_TIMEOUT`                         | [Resolving … did not finish within …ms](#resolving--did-not-finish-within-ms) (with `PendingTimeoutMs`)        |
 | TypeScript                      | —                                             | [Compile errors](#typescript-errors)                                                                           |
 
 All error classes are exported from `@fathym/ioc`. Each one has a stable `code`; match on the code
@@ -219,6 +220,26 @@ created first). See [disposal](../concepts/disposal.md#order-and-errors).
 
 When modules were started, their `OnStop` errors come first in `errors`: `OnStop` runs before any
 instance is disposed, and a failing `OnStop` doesn't stop the rest of the shutdown.
+
+---
+
+## Resolving … did not finish within …ms
+
+```text
+Resolving Report did not finish within 30000ms; still pending: Report, Db. A factory may never settle, or factories may wait on each other through a captured container; resolve through the factory's parameter, or set the AsyncContext option.
+```
+
+`IoCResolveTimeoutError` (`IOC_RESOLVE_TIMEOUT`), only with the `PendingTimeoutMs` option. A
+`Resolve` was still waiting after the timeout. `Waiting` lists the pending builds it could see.
+Common causes:
+
+- **A factory that never settles,** for example a connection that waits forever. The build is
+  not cancelled; if it finishes later, later resolves get its value.
+- **A cycle through a captured container.** Factories that resolve through an outer `ioc`
+  variable after an `await` lose the resolution path, so two of them can wait on each other
+  forever. **Fix:** resolve through the factory's parameter (`(c) => c.Resolve(…)`), or pass an
+  `AsyncLocalStorage` as `AsyncContext` so the container can follow the path and throw
+  `IoCCircularDependencyError` instead. See [cycles and errors](../concepts/cycles-and-errors.md).
 
 ---
 

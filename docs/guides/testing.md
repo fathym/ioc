@@ -85,6 +85,33 @@ Deno.test('Signup lowercases the address', async () => {
 });
 ```
 
+### Or override in place, and undo
+
+For a quick swap on a container you already have, `Override(key, value)` replaces the
+registration and returns a function that restores it exactly. It works in strict mode too:
+
+```ts
+import { assertEquals } from 'jsr:@std/assert@1.0.16';
+import { IoCContainer, IoCToken } from '@fathym/ioc';
+
+const $Now = IoCToken<() => number, 'TestNow'>('TestNow');
+
+const ioc = IoCContainer.Create().RegisterValue($Now, () => Date.now());
+
+Deno.test('a frozen clock', async () => {
+  const restore = ioc.Override($Now, () => 0);
+
+  try {
+    assertEquals((await ioc.Resolve($Now))(), 0);
+  } finally {
+    restore();
+  }
+});
+```
+
+Prefer this, or a scope, to hand-written fake containers: the code under test gets a real
+container, so lifetimes, scopes and disposal behave as in production.
+
 ## 2. Fresh container per test
 
 A **singleton** is always built from the container that registered it, so a scope override

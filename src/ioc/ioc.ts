@@ -8,6 +8,7 @@ import {
   IoCModuleCycleError,
   IoCNotIsolatableError,
   IoCRegistrationError,
+  IoCResolveTimeoutError,
   IoCScopeRequiredError,
   IoCServiceNotFoundError,
   IoCStartError,
@@ -88,6 +89,89 @@ export interface IoCContainerOptions {
 
   /** Receives notices about things that are allowed but often unintended (replaced registrations…). */
   Diagnostics?: (diagnostic: IoCDiagnostic) => void;
+
+  /**
+   * An `AsyncLocalStorage` (from `node:async_hooks`) the container may use to follow resolution
+   * chains across `await` even when a factory resolves through a captured container instead of
+   * its parameter. Without it, such resolves are invisible to cycle detection after the
+   * factory's first `await`, and a cycle through them can wait forever. The container never
+   * imports `node:async_hooks` itself, so browser bundles are unaffected.
+   */
+  AsyncContext?: IoCAsyncContext;
+
+  /**
+   * Fails a `Resolve` that is still pending after this many milliseconds with an
+   * `IoCResolveTimeoutError` that lists what it is waiting on, instead of waiting forever (a
+   * hung factory, or a cycle through a captured container). Off by default.
+   */
+  PendingTimeoutMs?: number;
+}
+
+/** The part of `AsyncLocalStorage` the `AsyncContext` option uses. */
+export interface IoCAsyncContext {
+  /** The value stored for the running async context. */
+  getStore(): unknown;
+
+  /** Runs `fn` with `store` as the async context's value. */
+  // deno-lint-ignore no-explicit-any
+  run<R>(store: any, fn: () => R): R;
+}
+
+/** One registration, as reported by {@link IoCContainer.Describe}. */
+export interface IoCServiceDescription {
+  /** The key's id (the token id, class name or symbol description). */
+  Key: string;
+
+  /** The registration name (`$default` when unnamed). */
+  Name: string;
+
+  /** `Key` or `Key[name]`, as used in error messages. */
+  Label: string;
+
+  /** How it was registered; `external` for entries this version didn't create (older versions). */
+  Kind: 'class' | 'factory' | 'value' | 'external';
+
+  /** The lifetime, when known. */
+  Lifetime?: 'singleton' | 'transient' | 'scoped';
+
+  /** For level-bound scoped services: the level. */
+  ScopeLevel?: string;
+
+  /** Registered with `Default: true`. */
+  Default: boolean;
+
+  /** The module that registered it (`Use`), if any. */
+  Module?: string;
+
+  /** 0 for this container, 1 for its parent, and so on. */
+  Depth: number;
+
+  /** True when a nearer container registers the same key and name, so this one isn't used here. */
+  Shadowed: boolean;
+
+  /** Declared dependencies (`Deps`), as labels; `IoCLazy`/`IoCAll` are marked `lazy:`/`all:`. */
+  Deps: string[];
+
+  /** What the factory resolved the last times it ran (labels), for factories without `Deps`. */
+  Observed: string[];
+
+  /** For singletons, and scoped services in this scope: whether the instance is built. */
+  State?: 'empty' | 'pending' | 'ready';
+}
+
+/** What {@link IoCContainer.Describe} returns. */
+export interface IoCDescription {
+  /** This container's scope level, if it is a scope created with one. */
+  Level?: string;
+
+  /** True for a scope (a container with a parent). */
+  Scope: boolean;
+
+  /** Every registration visible from this container, nearest first. */
+  Services: IoCServiceDescription[];
+
+  /** The modules added here and in parents, in the order they were added. */
+  Modules: { Name: string; Requires: string[]; Started: boolean; Depth: number }[];
 }
 
 /** Any constructed service value. */
@@ -296,6 +380,12 @@ type FoundEntry = { entry: unknown };
 
 const DEFAULT_NAME = '$default';
 
+// Timers exist in every supported runtime, but not in the plain ES lib the npm build compiles with.
+const timers = globalThis as unknown as {
+  setTimeout(fn: () => void, ms: number): unknown;
+  clearTimeout(id: unknown): void;
+};
+
 function keySymbol(key: AnyFunction | symbol): symbol {
   if (typeof key === 'symbol') return key;
 
@@ -335,6 +425,27 @@ function observe(
   const label = labelFor(keySymbol(key), name);
 
   if (!observed.has(label)) observed.set(label, { key, name });
+}
+
+/** The labels of the pending builds `holder` is (transitively) waiting on, itself first. */
+function pendingLabels(holder: IoCHolder | undefined): string[] {
+  const labels: string[] = [];
+
+  const seen = new Set<IoCHolder>();
+
+  const visit = (h: IoCHolder) => {
+    if (seen.has(h) || h.state !== 'pending') return;
+
+    seen.add(h);
+
+    if (h.building) labels.push(h.building.label);
+
+    for (const next of h.waits ?? []) visit(next);
+  };
+
+  if (holder) visit(holder);
+
+  return labels;
 }
 
 /** Produces what a dependency injects: the service, a resolver function, or every registration. */
@@ -622,7 +733,7 @@ export class IoCContainer<TKeys = any> {
 
     observe(frame, ctorSymbol, name ?? DEFAULT_NAME);
 
-    return (await this.realize(entry, frame)) as T;
+    return (await this.limit(this.realize(entry, frame), entry, ctorSymbol, name)) as T;
   }
 
   /** Resolves a service, or `undefined` when nothing is registered for it. */
@@ -638,7 +749,9 @@ export class IoCContainer<TKeys = any> {
 
     if (found) observe(frame, key, name ?? DEFAULT_NAME);
 
-    return found ? (await this.realize(found.entry, frame)) as T : undefined;
+    return found
+      ? (await this.limit(this.realize(found.entry, frame), found.entry, key, name)) as T
+      : undefined;
   }
 
   /**
@@ -1691,6 +1804,153 @@ export class IoCContainer<TKeys = any> {
   }
 
   /**
+   * Replaces a registration with a value until the returned function is called, which puts back
+   * exactly what was there before (or removes the override when nothing was). Meant for tests:
+   * it never throws in strict mode and reports no diagnostic. Instances already built from the
+   * old registration keep what they were given, so override before resolving the services that
+   * use it, or override in a scope (`ioc.CreateScope()`) and resolve from there.
+   *
+   * @example
+   * ```ts
+   * import { IoCContainer, IoCToken } from '@fathym/ioc';
+   *
+   * const $Now = IoCToken<() => number, 'Now'>('Now');
+   *
+   * const ioc = IoCContainer.Create().RegisterValue($Now, () => Date.now());
+   *
+   * const restore = ioc.Override($Now, () => 0);
+   *
+   * console.log((await ioc.Resolve($Now))()); // 0
+   *
+   * restore();
+   * ```
+   */
+  public Override<K extends IoCServiceKeyConstructor<unknown> | symbol>(
+    key: K,
+    value: IoCServiceOf<K>,
+    options?: { Name?: string },
+  ): () => void {
+    const self = this.self();
+
+    const symbol = keySymbol(key);
+
+    const name = options?.Name || DEFAULT_NAME;
+
+    const bank = self.services.get(symbol);
+
+    const previous = bank?.has(name) ? { entry: bank.get(name) } : undefined;
+
+    self.RegisterValue(key as symbol, value as never, { Name: name, Replace: true });
+
+    const override = self.services.get(symbol)?.get(name);
+
+    return () => {
+      const current = self.services.get(symbol);
+
+      // Something replaced the override since; leave it alone.
+      if (!current || current.get(name) !== override) return;
+
+      if (previous) {
+        self.RegisterDirect(symbol, name, previous.entry as IoCServiceConstructed);
+      } else {
+        self.Unregister(key as symbol, name);
+      }
+    };
+  }
+
+  /**
+   * Describes everything visible from this container as plain data: each registration's key,
+   * name, kind, lifetime, level, module, declared and observed dependencies, whether it is
+   * shadowed by a nearer scope, and whether it is built; plus the modules and their state.
+   * Builds nothing. Use it for debugging, diagrams, health pages and tooling.
+   *
+   * @example
+   * ```ts
+   * import { IoCContainer, IoCToken } from '@fathym/ioc';
+   *
+   * const $Url = IoCToken<string, 'DescribeUrl'>('DescribeUrl');
+   *
+   * class Repo {
+   *   constructor(public url: string) {}
+   * }
+   *
+   * const ioc = new IoCContainer()
+   *   .RegisterValue($Url, 'kv://local')
+   *   .RegisterClass(Repo, { Deps: [$Url], Lazy: true });
+   *
+   * for (const s of ioc.Describe().Services) {
+   *   console.log(`${s.Label} (${s.Kind}, ${s.Lifetime}) -> ${s.Deps.join(', ') || 'nothing'}`);
+   * }
+   * ```
+   */
+  public Describe(): IoCDescription {
+    const self = this.self();
+
+    const services: IoCServiceDescription[] = [];
+
+    const visible = new Set<string>();
+
+    let depth = 0;
+
+    for (const container of self.chain()) {
+      for (const [symbol, bank] of container.services) {
+        for (const [name, entry] of bank) {
+          const reg = registrationOf(entry);
+
+          const label = reg?.label ?? labelFor(symbol, name);
+
+          const id = `${symbol.toString()}\u0000${name}`;
+
+          const holder = reg?.lifetime === 'scoped' && container !== self
+            ? self.scopedHolders.get(reg)
+            : reg?.holder;
+
+          services.push({
+            Key: symbol.description ?? '',
+            Name: name,
+            Label: label,
+            Kind: reg?.kind ?? 'external',
+            Lifetime: reg?.lifetime,
+            ScopeLevel: reg?.scopeLevel,
+            Default: !!reg?.default,
+            Module: container.origins.get(symbol)?.get(name),
+            Depth: depth,
+            Shadowed: visible.has(id),
+            Deps: (reg?.deps ?? []).map((d) =>
+              `${d.mode ? `${d.mode}:` : ''}${labelFor(keySymbol(d.key), d.name)}`
+            ),
+            Observed: [...(reg?.observed?.keys() ?? [])],
+            State: reg && reg.lifetime !== 'transient' ? holder?.state ?? 'empty' : undefined,
+          });
+
+          visible.add(id);
+        }
+      }
+
+      depth++;
+    }
+
+    const modules: IoCDescription['Modules'] = [];
+
+    depth = 0;
+
+    for (const container of self.chain()) {
+      for (const module of container.modules) {
+        modules.push({
+          Name: module.Name,
+          Requires: (module.Requires ?? []).map((m) => m.Name),
+          Started: container.started.includes(module),
+          Depth: depth,
+        });
+      }
+
+      depth++;
+    }
+
+    return { Level: self.level, Scope: !!self.parent, Services: services, Modules: modules };
+  }
+
+  /**
    * Copies every registration into `ioc` (for a scope: its own and its parents', nearest
    * winning), replacing registrations it already has with the same symbol and name. Singletons
    * are shared (both containers resolve the same instance) and transient factories receive the
@@ -1888,6 +2148,36 @@ export class IoCContainer<TKeys = any> {
   //#region Internals
 
   /**
+   * Applies `PendingTimeoutMs` to a pending resolution.
+   *
+   * @ignore
+   */
+  protected limit(
+    value: unknown,
+    entry: unknown,
+    key: AnyFunction | symbol,
+    name: string | undefined,
+  ): unknown {
+    const ms = this.self().options?.PendingTimeoutMs;
+
+    if (!ms || !(value instanceof Promise)) return value;
+
+    const reg = registrationOf(entry);
+
+    const label = reg?.label ?? labelFor(keySymbol(key), name ?? DEFAULT_NAME);
+
+    let timer: unknown;
+
+    const timeout = new Promise<never>((_, reject) => {
+      timer = timers.setTimeout(() => {
+        reject(new IoCResolveTimeoutError(label, ms, pendingLabels(reg?.holder)));
+      }, ms);
+    });
+
+    return Promise.race([value, timeout]).finally(() => timers.clearTimeout(timer));
+  }
+
+  /**
    * Runs `Start()` once.
    *
    * @ignore
@@ -1986,7 +2276,14 @@ export class IoCContainer<TKeys = any> {
    * @ignore
    */
   protected frame(): IoCResolveFrame | undefined {
-    return (this as Indexable)[IOC_CONTEXT] ?? currentFrame();
+    const frame = (this as Indexable)[IOC_CONTEXT] ?? currentFrame();
+
+    if (frame) return frame;
+
+    // A captured container used after an `await`: the async context still knows the chain.
+    const stored = this.self().options?.AsyncContext?.getStore() as IoCResolveFrame | undefined;
+
+    return stored && !stored.settled && typeof stored.label === 'string' ? stored : undefined;
   }
 
   /**
@@ -2417,7 +2714,11 @@ export class IoCContainer<TKeys = any> {
       try {
         const arg = createView(container, frame) as IoCContainer;
 
-        result = withFrame(frame, () => factory(arg));
+        const context = self.options?.AsyncContext;
+
+        result = context
+          ? context.run(frame, () => withFrame(frame, () => factory(arg)))
+          : withFrame(frame, () => factory(arg));
       } catch (err) {
         frame.settled = true;
         throw err;

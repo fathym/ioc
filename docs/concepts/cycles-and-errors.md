@@ -71,9 +71,47 @@ is lost:
 | Its parameter (`(c) => c.Resolve(…)`)    | Yes                               | Yes             |
 | A captured container, before any `await` | Yes                               | Yes             |
 | A captured container, after an `await`   | No: a lazy cycle can wait forever | No              |
+| …with the `AsyncContext` option          | Yes                               | Yes             |
 
 So always resolve through the parameter. The
 [guidelines](../guides/guidelines.md#captured-container-in-a-factory) show the fix.
+
+When you can't (a large codebase that captures the container everywhere), two options cover the
+gap:
+
+- **`AsyncContext`:** pass an `AsyncLocalStorage` (from `node:async_hooks`, available in Deno,
+  Node.js and Bun) and the container follows the path across `await`s, so captured-container
+  cycles throw `IoCCircularDependencyError` too. The container never imports `node:async_hooks`
+  itself, so browser bundles don't pay for it.
+- **`PendingTimeoutMs`:** a resolve that is still pending after the timeout fails with
+  `IoCResolveTimeoutError`, listing what it was waiting on, instead of waiting forever.
+
+```ts
+import { AsyncLocalStorage } from 'node:async_hooks';
+import { IoCCircularDependencyError, IoCContainer, IoCToken } from '@fathym/ioc';
+
+const $A = IoCToken<number, 'CapturedA'>('CapturedA');
+const $B = IoCToken<number, 'CapturedB'>('CapturedB');
+
+const ioc = new IoCContainer({ AsyncContext: new AsyncLocalStorage() });
+
+// Both factories use the captured `ioc`, after an await.
+ioc.RegisterFactory($A, async () => {
+  await Promise.resolve();
+  return (await ioc.Resolve($B)) + 1;
+}, { Lazy: true });
+
+ioc.RegisterFactory($B, async () => {
+  await Promise.resolve();
+  return (await ioc.Resolve($A)) + 1;
+}, { Lazy: true });
+
+try {
+  await ioc.Resolve($A);
+} catch (err) {
+  console.log(err instanceof IoCCircularDependencyError); // true
+}
+```
 
 **Concurrent resolutions are covered too.** When two resolutions enter the same cycle at the same
 time (`Promise.all([Resolve(A), Resolve(B)])`, or `Activate()`, which builds singletons in
@@ -94,8 +132,9 @@ A cycle is a design problem rather than a container problem. Common fixes:
 
 - **Extract the shared part** both services need into a third service.
 - **Pass a callback or event** instead of the whole service.
-- **Resolve lazily at use time**, not construction time: inject the container view and resolve
-  inside a method. Use this sparingly, since it hides the dependency.
+- **Resolve lazily at use time**, not construction time: inject `IoCLazy(key)`, a function that
+  resolves the service when called. `Validate()` still checks it is registered, but doesn't
+  count it in cycles.
 
 ## What's Next
 

@@ -27,12 +27,69 @@ runnable example, checked in CI.
 
 **Contents:**
 
+- **Creating:** [new IoCContainer](#new-ioccontaineroptions), [IoCContainer.Create](#ioccontainercreateoptions)
 - **Registration:** [Register](#registerkey-factory-options), [RegisterClass](#registerclassclass-options), [RegisterFactory](#registerfactorykey-factory-options), [RegisterValue](#registervaluekey-value-options), [Decorate](#decoratekey-decorator-options), [Unregister](#unregisterkey-name)
 - **Typed containers:** [Typed](#typed), [Expect](#expectkeys)
+- **Testing and tooling:** [Override](#overridekey-value-options), [Describe](#describe)
 - **Resolution:** [Resolve](#resolvekey-name), [TryResolve](#tryresolvekey-name), [ResolveAll](#resolveallkey), [ResolveNamed](#resolvenamedkey), [ResolveRecord](#resolverecordrecord), [Has](#haskey-name)
 - **Lifecycle:** [Validate](#validate), [Activate](#activate), [Use](#usemodules), [ModuleFromContainer](#modulefromcontainername-container-options), [Start](#startoptions), [CreateScope](#createscopeoptions), [Isolate](#isolatekeys), [Dispose](#dispose)
 - **Copying and low level:** [CopyTo](#copytotarget), [Symbol](#symbolid), [RegisterDirect / ResolveDirect](#registerdirect-and-resolvedirect), [services / symbols](#services-and-symbols)
 - **Types:** [IoCToken](#ioctokenid), [options](#options), [dependency types](#dependency-types), [registry types](#registry-types), [other types](#other-types), [errors](#error-classes)
+
+---
+
+## Creating a container
+
+### new IoCContainer(options?)
+
+```ts ignore
+new IoCContainer(options?: IoCContainerOptions)
+```
+
+With no options the container behaves exactly like earlier versions. Scopes inherit their
+parent's options.
+
+| Option             | Default | Meaning                                                                                                                                                      |
+| ------------------ | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `Strict`           | `false` | Duplicate registrations, `scoped` services resolved outside a scope, and class/token key collisions throw; a class never resolves a different same-named one |
+| `LazyByDefault`    | `false` | Singletons and scoped services are built on first resolve unless a registration says `Lazy: false`                                                           |
+| `Diagnostics`      | —       | `(d: IoCDiagnostic) => void`: notices about allowed-but-suspicious things (`IOC_REGISTRATION_REPLACED`, `IOC_CLASS_NAME_FALLBACK`, …)                        |
+| `AsyncContext`     | —       | An `AsyncLocalStorage` that lets cycle detection follow resolves made through a captured container after an `await`                                          |
+| `PendingTimeoutMs` | —       | A `Resolve` still pending after this long fails with [`IoCResolveTimeoutError`](./errors.md#resolving--did-not-finish-within-ms)                             |
+
+```ts
+import { AsyncLocalStorage } from 'node:async_hooks';
+import { IoCContainer, type IoCDiagnostic } from '@fathym/ioc';
+
+const notices: IoCDiagnostic[] = [];
+
+const ioc = new IoCContainer({
+  Diagnostics: (d) => notices.push(d),
+  AsyncContext: new AsyncLocalStorage(),
+  PendingTimeoutMs: 30_000,
+});
+
+console.log(ioc.Has(Symbol.for('Nothing'))); // false
+```
+
+### IoCContainer.Create(options?)
+
+```ts ignore
+static Create(options?: IoCContainerOptions): IoCContainer
+```
+
+A container with the settings recommended for new code: `Strict` and `LazyByDefault`, plus any
+options you pass. Call `Start()` (or `Activate()`) at startup to build everything and fail fast.
+
+```ts
+import { IoCContainer } from '@fathym/ioc';
+
+class Clock {}
+
+const ioc = IoCContainer.Create().RegisterClass(Clock);
+
+await ioc.Start();
+```
 
 ---
 
@@ -762,6 +819,70 @@ console.log(Connection.closed); // 1
 
 ---
 
+## Testing and tooling
+
+### Override(key, value, options?)
+
+```ts ignore
+Override<K>(key: K, value: IoCServiceOf<K>, options?: { Name?: string }): () => void
+```
+
+Replaces a registration with a value until the returned function is called, which restores
+exactly what was there (or removes the override). It never throws in strict mode. Instances
+already built keep what they were given, so override before resolving the services that use it,
+or override in a scope.
+
+```ts
+import { IoCContainer, IoCToken } from '@fathym/ioc';
+
+const $Now = IoCToken<() => number, 'ApiNow'>('ApiNow');
+
+const ioc = IoCContainer.Create().RegisterValue($Now, () => Date.now());
+
+const restore = ioc.Override($Now, () => 0);
+
+console.log((await ioc.Resolve($Now))()); // 0
+
+restore();
+```
+
+### Describe()
+
+```ts ignore
+Describe(): IoCDescription
+```
+
+Everything visible from the container as plain, serializable data, without building anything:
+
+- **`Services`:** one `IoCServiceDescription` per registration in this container and its parents,
+  nearest first: `Key`, `Name`, `Label`, `Kind` (`class`, `factory`, `value`, or `external` for
+  entries from older versions), `Lifetime`, `ScopeLevel`, `Default`, `Module`, `Depth` (0 is this
+  container), `Shadowed` (a nearer registration hides it), `Deps` (declared; `lazy:`/`all:`
+  prefixes), `Observed` (what the factory resolved while building) and `State`
+  (`empty`/`pending`/`ready`).
+- **`Modules`:** `Name`, `Requires`, `Started`, `Depth`.
+- **`Level`** and **`Scope`** for the container itself.
+
+```ts
+import { IoCContainer, IoCToken } from '@fathym/ioc';
+
+const $Url = IoCToken<string, 'ApiDescribeUrl'>('ApiDescribeUrl');
+
+class Repo {
+  constructor(public url: string) {}
+}
+
+const ioc = new IoCContainer()
+  .RegisterValue($Url, 'kv://local')
+  .RegisterClass(Repo, { Deps: [$Url], Lazy: true });
+
+for (const s of ioc.Describe().Services) {
+  console.log(s.Label, s.Kind, s.Deps); // IoC wiring as data
+}
+```
+
+---
+
 ## Copying and low level
 
 ### CopyTo(target)
@@ -978,6 +1099,7 @@ Every class has a stable `code`; check it with `isIoCError(err, code?)`.
 | `IoCModuleCycleError`           | `Path`                                             | [Module dependency cycle …](./errors.md#module-dependency-cycle-a---b---a)                         |
 | `IoCStartError`                 | `Module`, `cause`, `RollbackErrors`                | [Module '…' failed to start …](./errors.md#module--failed-to-start-)                               |
 | `IoCNotIsolatableError`         | `Service`, `Reason`                                | [… can't be isolated: …](./errors.md#-cant-be-isolated-)                                           |
+| `IoCResolveTimeoutError`        | `Service`, `TimeoutMs`, `Waiting`                  | [Resolving … did not finish …](./errors.md#resolving--did-not-finish-within-ms)                    |
 
 ## What's Next
 

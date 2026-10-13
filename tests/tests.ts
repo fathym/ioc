@@ -29,6 +29,7 @@ import './ioc/strict.tests.ts';
 import './ioc/modules.tests.ts';
 import './ioc/levels.tests.ts';
 import './ioc/records.tests.ts';
+import './ioc/introspection.tests.ts';
 import './ioc/deps.tests.ts';
 import './ioc/validate.tests.ts';
 import './ioc/edges.tests.ts';

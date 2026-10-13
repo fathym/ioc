@@ -83,6 +83,13 @@ Recommended release: **0.1.0**. See [migrating from 0.0.x](./docs/migration/from
   dependencies and lets `Validate()` see them.
 - **Observed dependencies:** what each factory resolves while building is recorded, for
   introspection.
+- **`Override(key, value)`** swaps a registration for tests and returns an exact undo.
+- **`Describe()`** returns the registration graph as plain data: keys, names, kinds, lifetimes,
+  levels, modules, declared and observed dependencies, shadowing and build state.
+- **`AsyncContext` option:** pass an `AsyncLocalStorage` and cycles through captured containers
+  are detected after `await` too.
+- **`PendingTimeoutMs` option:** a resolve still pending after the timeout fails with
+  `IoCResolveTimeoutError` (`IOC_RESOLVE_TIMEOUT`), listing what it waits on.
 - **`Register(symbol, factory)`.**
 - **Node.js and Bun support, checked in CI:** `deno task build:npm` builds an npm package (ESM +
   `.d.ts`), and `deno task test:runtimes` runs a smoke test on Node.js 20/22/24 and Bun and
