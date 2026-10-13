@@ -12,12 +12,12 @@ References:
     Path: ./README.md
   - Label: Project Guide
     Path: ./GUIDE.md
-  - Label: Projects: Ref-Arch README
-      Path: ../README.md
-  - Label: Projects: Ref-Arch AGENTS
-      Path: ../AGENTS.md
-  - Label: Projects: Ref-Arch Guide
-      Path: ../GUIDE.md
+  - Label: 'Projects: Ref-Arch README'
+    Path: ../README.md
+  - Label: 'Projects: Ref-Arch AGENTS'
+    Path: ../AGENTS.md
+  - Label: 'Projects: Ref-Arch Guide'
+    Path: ../GUIDE.md
   - Label: Root README
     Path: ../../../README.md
   - Label: Root Agents Guide

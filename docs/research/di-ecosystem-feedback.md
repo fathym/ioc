@@ -279,3 +279,9 @@ This is the most consistent gap across the ecosystem.
 8. **Testing.** Present scope overrides as the testing seam on Deno.
 9. **Stability.** Keep the API small and additive, keep one naming rule, and write migration notes.
 10. **.NET helpers.** Keep keyed (named) semantics, and add a small `Decorate()` helper.
+
+## What's Next
+
+- How these findings shaped the design: [ioc-next.md](../design/ioc-next.md) _[Explanation]_
+- The resulting principles: [design-principles.md](../concepts/design-principles.md) _[Explanation]_
+- How this container compares: [comparison.md](../comparison.md) _[Explanation]_

@@ -81,12 +81,21 @@ Deno.test('docs-check - helpers', async (t) => {
     assertEquals(githubSlug('Lifetimes & scopes'), 'lifetimes--scopes');
     assertEquals(githubSlug('Use **bold** and [links](x.md)'), 'use-bold-and-links');
     assertEquals(githubSlug('Migration from 0.0.36'), 'migration-from-0036');
+    assertEquals(githubSlug('`IoCDependency<Y>` and <b>html</b>'), 'iocdependencyy-and-html');
   });
 
   await t.step('headingAnchors adds duplicate suffixes and ignores code', () => {
     const anchors = headingAnchors('# A\n\n## Usage\n\n```md\n## Not a heading\n```\n\n## Usage\n');
 
     assertEquals([...anchors], ['a', 'usage', 'usage-1']);
+  });
+
+  await t.step('headingAnchors keeps inline code text, as GitHub does', () => {
+    const anchors = headingAnchors(
+      '#### `X depends on Y, which is not registered.`\n### `TryResolve(key, name?)`',
+    );
+
+    assertEquals([...anchors], ['x-depends-on-y-which-is-not-registered', 'tryresolvekey-name']);
   });
 
   await t.step('extractLinks skips code blocks and inline code', () => {
@@ -114,6 +123,24 @@ Deno.test('docs-check - helpers', async (t) => {
     assert(!isCheckedMarkdown('tests/fixtures/x.md'));
     assert(!isCheckedMarkdown('.logs/x.md'));
     assert(!isCheckedMarkdown('docs/a.ts'));
+  });
+
+  await t.step('extractErrorMessages ignores variables and handles nested templates', () => {
+    const source = `
+      constructor() { super(message); } // \`instanceof\`-free checks
+      let message = \`No Service for symbol '\${s}' with name '\${n}' has been registered.\`;
+      message += \` Resolution path: \${path.join(' -> ')}.\`;
+      super(\`IoC validation failed:\\n\${Problems.map((p) => \`  - \${p}\`).join('\\n')}\`);
+    `;
+
+    assertEquals(
+      extractErrorMessages(source).sort(),
+      [
+        "No Service for symbol '",
+        'IoC validation failed:',
+        'Resolution path:',
+      ].sort(),
+    );
   });
 
   await t.step('extractErrorMessages finds the distinctive static text', () => {

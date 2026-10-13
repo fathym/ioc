@@ -50,13 +50,12 @@ export function isCheckedMarkdown(path: string): boolean {
   return !path.split('/').some((part) => part.startsWith('.') && part !== '.github');
 }
 
-/** Removes fenced code blocks (keeping line count) so links and headings inside code are ignored. */
-export function stripCode(markdown: string): string {
-  const lines = markdown.split('\n');
-
+/** Blanks fenced code blocks (keeping the line count). */
+export function stripFences(markdown: string): string {
   let fence: string | undefined;
 
-  return lines
+  return markdown
+    .split('\n')
     .map((line) => {
       const match = line.match(/^\s*(`{3,}|~{3,})/);
 
@@ -72,8 +71,16 @@ export function stripCode(markdown: string): string {
         }
       }
 
-      return fence ? '' : line.replace(/`[^`\n]*`/g, (m) => ' '.repeat(m.length));
+      return fence ? '' : line;
     })
+    .join('\n');
+}
+
+/** Blanks fenced code blocks and inline code, so links inside code are ignored. */
+export function stripCode(markdown: string): string {
+  return stripFences(markdown)
+    .split('\n')
+    .map((line) => line.replace(/`[^`\n]*`/g, (m) => ' '.repeat(m.length)))
     .join('\n');
 }
 
@@ -94,12 +101,17 @@ export function splitFrontmatter(
 
 /** GitHub's heading anchor for a heading's text (without the leading #s). */
 export function githubSlug(heading: string): string {
+  // Inline code is kept verbatim (GitHub renders its text); markup is removed elsewhere.
   const text = heading
-    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1')
-    .replace(/<[^>]+>/g, '')
-    .replace(/(\*\*|__)(.+?)\1/g, '$2')
-    .replace(/(\*|_)(.+?)\1/g, '$2')
-    .replace(/`/g, '');
+    .split(/(`[^`]*`)/)
+    .map((part) =>
+      part.startsWith('`') ? part.slice(1, -1) : part
+        .replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1')
+        .replace(/<[^>]+>/g, '')
+        .replace(/(\*\*|__)(.+?)\1/g, '$2')
+        .replace(/(\*|_)(.+?)\1/g, '$2')
+    )
+    .join('');
 
   return text
     .trim()
@@ -114,7 +126,7 @@ export function headingAnchors(markdown: string): Set<string> {
 
   const counts = new Map<string, number>();
 
-  for (const line of stripCode(splitFrontmatter(markdown).body).split('\n')) {
+  for (const line of stripFences(splitFrontmatter(markdown).body).split('\n')) {
     const match = line.match(/^#{1,6}\s+(.+?)\s*#*\s*$/);
 
     if (!match) continue;
@@ -181,28 +193,42 @@ export function resolveLink(
   return { path, anchor: anchor || undefined };
 }
 
-/** Static text segments of the first string literal in `source` (template expressions removed). */
+/**
+ * Static text segments of the string literal at the very start of `source` (after whitespace),
+ * with template expressions removed. Returns nothing when `source` doesn't start with a literal,
+ * e.g. `super(message)`.
+ */
 function literalSegments(source: string): string[] {
-  const match = source.match(/(['"`])((?:\\.|(?!\1)[\s\S])*)\1/);
+  const match = source.match(/^\s*(['"`])((?:\\.|(?!\1)[\s\S])*)\1?/);
 
   if (!match) return [];
 
-  return match[2].split(/\$\{[^}]*\}/).map((s) => s.replace(/\\n/g, '\n'));
+  const [first, ...rest] = match[2].split('${');
+
+  // Text after a template expression starts after its closing brace. Nested templates (which
+  // end the match early) leave pieces without one; those are skipped.
+  const after = rest.map((
+    piece,
+  ) => (piece.includes('}') ? piece.slice(piece.lastIndexOf('}') + 1) : ''));
+
+  return [first, ...after].map((s) => s.replace(/\\n/g, '\n'));
 }
 
 /**
  * The most distinctive static fragment of every message the source can throw or report:
- * `throw new Error(…)`, `super(…)` in error classes, `problems.push(…)` and `AggregateError`.
+ * `throw new Error(…)`, `super(…)` in error classes, `problems.push(…)`, `AggregateError`, and
+ * messages assembled in a `message` variable.
  */
 export function extractErrorMessages(source: string): string[] {
   const messages = new Set<string>();
 
-  const starts = /throw new Error\(|super\(|problems\.push\(|new AggregateError\(\s*[^,]+,/g;
+  const starts =
+    /throw new Error\(|super\(|problems\.push\(|new AggregateError\(\s*[^,]+,|(?:let|const)\s+message\s*=|message\s*\+=/g;
 
   for (const match of source.matchAll(starts)) {
-    const segments = literalSegments(
-      source.slice(match.index! + match[0].length, match.index! + match[0].length + 400),
-    )
+    const at = match.index! + match[0].length;
+
+    const segments = literalSegments(source.slice(at, at + 400))
       .map((s) => s.trim())
       .filter((s) => s.length >= 10);
 

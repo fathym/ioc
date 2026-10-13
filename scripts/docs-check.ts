@@ -44,9 +44,11 @@ for await (
 ) {
   const path = toRepoPath(root, entry.path);
 
-  if (/\.(md|ts|txt)$/.test(path) || /\.(ya?ml)$/.test(path)) {
-    files.set(path, await Deno.readTextFile(entry.path));
-  }
+  // Every file counts for link checks; only text files need their contents.
+  files.set(
+    path,
+    /\.(md|ts|txt|ya?ml|jsonc?)$/.test(path) ? await Deno.readTextFile(entry.path) : '',
+  );
 }
 
 if (Deno.args.includes('--write')) {

@@ -170,7 +170,7 @@ does not dispose its scopes, because the parent does not track them.
 
 ## Behavior changes (migration)
 
-See the README's [Migration from 0.0.36](../../README.md#migration-from-0036) for the full list.
+See [Migrating from 0.0.x](../migration/from-0.0.x.md) for the full list, with old and new code for each change.
 The changes most likely to be noticed:
 
 - **`Lazy` factories now really defer.** `Deno.Kv` opens on first use.
@@ -210,3 +210,9 @@ depend on.
   template level.
 - **Lazy by default.** Reconsider after the dependents adopt `Activate()` for fail-fast startup.
 - **`UPSTREAM.md`.** Add it when the release is pinned, per AGENTS.md.
+
+## What's Next
+
+- The principles in short: [design-principles.md](../concepts/design-principles.md) _[Explanation]_
+- Upgrade notes: [from-0.0.x.md](../migration/from-0.0.x.md) _[How-to]_
+- The research behind the decisions: [di-ecosystem-feedback.md](../research/di-ecosystem-feedback.md) _[Explanation]_
