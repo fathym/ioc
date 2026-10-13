@@ -1,0 +1,172 @@
+---
+FrontmatterVersion: 1
+DocumentType: Guide
+Title: '@fathym/ioc Documentation'
+Summary: The map of the @fathym/ioc docs - tutorial, concepts, how-to guides, reference, migration and background.
+Created: 2026-10-13
+Updated: 2026-10-13
+Owners:
+  - fathym
+References:
+  - Label: Project README
+    Path: ../README.md
+  - Label: Project Agents Guide
+    Path: ../AGENTS.md
+  - Label: Contributing
+    Path: ../CONTRIBUTING.md
+---
+
+# @fathym/ioc Documentation
+
+Small, async-first, decorator-free dependency injection for Deno. These docs take you from your
+first container to running it in production, with every code example type-checked in CI.
+
+## Start here
+
+Pick the path that fits you:
+
+| If you are…                                | Start with                                                                                                              |
+| ------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------- |
+| New to dependency injection                | [What is IoC?](./what-is-ioc.md) _[Explanation]_ → [Getting started](./getting-started/README.md) _[Tutorial]_          |
+| Experienced, and want to see the API       | [Registering services](./guides/registering-services.md) _[How-to]_ → [API reference](./reference/api.md) _[Reference]_ |
+| Coming from InversifyJS, tsyringe, awilix… | [Migrating from other containers](./migration/from-other-containers.md) _[How-to]_                                      |
+| Upgrading from 0.0.x                       | [Migrating from 0.0.x](./migration/from-0.0.x.md) _[How-to]_                                                            |
+| Stuck on an error                          | [Error catalog](./reference/errors.md) _[Reference]_ → [Troubleshooting](./troubleshooting.md) _[How-to]_               |
+
+## Overview
+
+| Document                                           | Description                                                            |
+| -------------------------------------------------- | ---------------------------------------------------------------------- |
+| [what-is-ioc.md](./what-is-ioc.md) _[Explanation]_ | The problem a container solves, what you gain, and when not to use one |
+| [comparison.md](./comparison.md) _[Explanation]_   | How this container compares with the alternatives, honestly            |
+| [faq.md](./faq.md) _[Reference]_                   | Short answers to common questions                                      |
+
+## Getting Started
+
+| Document                                                     | Description                                                  |
+| ------------------------------------------------------------ | ------------------------------------------------------------ |
+| [getting-started/](./getting-started/README.md) _[Tutorial]_ | Build a small notes API in five steps, from install to tests |
+
+## Concepts
+
+| Document                                                                          | Description                                                          |
+| --------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| [concepts/](./concepts/README.md) _[Explanation]_                                 | How the container thinks                                             |
+| [keys-and-registrations.md](./concepts/keys-and-registrations.md) _[Explanation]_ | Classes, tokens, symbols and names, and how a registration is stored |
+| [lifetimes.md](./concepts/lifetimes.md) _[Explanation]_                           | Singleton, transient and scoped, and when each is built              |
+| [scopes.md](./concepts/scopes.md) _[Explanation]_                                 | Child scopes, overrides, and what a scope is (and isn't)             |
+| [async-resolution.md](./concepts/async-resolution.md) _[Explanation]_             | Shared creation, retries, eager failures and thenables               |
+| [disposal.md](./concepts/disposal.md) _[Explanation]_                             | Who owns what, and the order things are cleaned up                   |
+| [cycles-and-errors.md](./concepts/cycles-and-errors.md) _[Explanation]_           | Cycle detection, resolution paths and their limits                   |
+| [design-principles.md](./concepts/design-principles.md) _[Explanation]_           | Why it is decorator-free, async-first and stable                     |
+
+## Guides
+
+| Document                                                                           | Description                                              |
+| ---------------------------------------------------------------------------------- | -------------------------------------------------------- |
+| [guides/](./guides/README.md) _[How-to]_                                           | Task-focused recipes                                     |
+| [registering-services.md](./guides/registering-services.md) _[How-to]_             | Pick the right way to register anything                  |
+| [declared-dependencies.md](./guides/declared-dependencies.md) _[How-to]_           | Typed constructor dependencies with `Deps`               |
+| [async-initialization.md](./guides/async-initialization.md) _[How-to]_             | Connections, warm-up, retries and fail-fast startup      |
+| [per-request-scopes.md](./guides/per-request-scopes.md) _[How-to]_                 | One scope per HTTP request, with any framework           |
+| [testing.md](./guides/testing.md) _[How-to]_                                       | Copy-paste recipes for overriding and resetting services |
+| [plugins-and-named-services.md](./guides/plugins-and-named-services.md) _[How-to]_ | Several implementations of one key                       |
+| [decorating-services.md](./guides/decorating-services.md) _[How-to]_               | Add logging, caching or retries around a service         |
+| [organizing-registrations.md](./guides/organizing-registrations.md) _[How-to]_     | Structure the composition root of a real app             |
+| [copying-containers.md](./guides/copying-containers.md) _[How-to]_                 | `CopyTo`, mixed versions, and moving to scopes           |
+| [guidelines.md](./guides/guidelines.md) _[How-to]_                                 | Named anti-patterns, each with the fix                   |
+
+## Reference
+
+| Document                                              | Description                                          |
+| ----------------------------------------------------- | ---------------------------------------------------- |
+| [reference/](./reference/README.md) _[Reference]_     | Reference index                                      |
+| [api.md](./reference/api.md) _[Reference]_            | Every method, option and type                        |
+| [errors.md](./reference/errors.md) _[Reference]_      | Every error message, what it means and how to fix it |
+| [glossary.md](./reference/glossary.md) _[Reference]_  | The terms these docs use                             |
+| [troubleshooting.md](./troubleshooting.md) _[How-to]_ | Symptoms that aren't errors, and their causes        |
+
+## Migration
+
+| Document                                                                    | Description                                                                 |
+| --------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| [migration/](./migration/README.md) _[How-to]_                              | Migration index                                                             |
+| [from-0.0.x.md](./migration/from-0.0.x.md) _[How-to]_                       | Upgrading from the 0.0.x releases                                           |
+| [from-other-containers.md](./migration/from-other-containers.md) _[How-to]_ | API mappings from InversifyJS, tsyringe, awilix, needle-di and typed-inject |
+
+## Examples
+
+Runnable programs, each showing one idea, run in CI: [examples/](../examples/README.md).
+
+## Background
+
+| Document                                                                                 | Description                                                |
+| ---------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| [design/ioc-next.md](./design/ioc-next.md) _[Explanation]_                               | The design and decisions behind the current container      |
+| [research/di-ecosystem-feedback.md](./research/di-ecosystem-feedback.md) _[Explanation]_ | What developers like and dislike about other DI containers |
+
+---
+
+## Quick Reference
+
+### API at a glance
+
+| Task                       | Call                                                            |
+| -------------------------- | --------------------------------------------------------------- |
+| Register a class           | `ioc.RegisterClass(Repo)` or `ioc.Register(Repo)`               |
+| Register with dependencies | `ioc.RegisterClass(Repo, { Deps: [Config, $Logger] })`          |
+| Register a factory         | `ioc.Register($Db, async (c) => openDb())`                      |
+| Register a value           | `ioc.RegisterValue($Port, 8080)`                                |
+| Resolve                    | `await ioc.Resolve(Repo)` / `await ioc.Resolve($Db, 'replica')` |
+| Maybe resolve              | `await ioc.TryResolve($Db)` / `ioc.Has($Db)`                    |
+| All named implementations  | `await ioc.ResolveAll($Plugin)`                                 |
+| Per-request scope          | `await using scope = ioc.CreateScope()`                         |
+| Wrap a service             | `ioc.Decorate($Db, (inner) => withLogging(inner))`              |
+| Check wiring / build early | `ioc.Validate()` / `await ioc.Activate()`                       |
+| Clean up                   | `await ioc.Dispose()`                                           |
+
+### Lifetimes
+
+| Lifetime            | Instances              | Built when                                     |
+| ------------------- | ---------------------- | ---------------------------------------------- |
+| singleton (default) | one, shared everywhere | at registration (or first resolve with `Lazy`) |
+| `transient`         | a new one per resolve  | on every resolve                               |
+| `scoped`            | one per scope          | first resolve in each scope                    |
+
+### Errors
+
+| Error                        | Usually means                                     |
+| ---------------------------- | ------------------------------------------------- |
+| `IoCServiceNotFoundError`    | Nothing registered under that key and name        |
+| `IoCCircularDependencyError` | Two services need each other                      |
+| `IoCValidationError`         | `Validate()` found wiring problems (all listed)   |
+| `IoCContainerDisposedError`  | The container or scope was used after `Dispose()` |
+
+## For AI Consumption
+
+These docs are written for both people and AI coding assistants:
+
+- Every code example is a complete module importing from `'@fathym/ioc'`, and it type-checks in
+  CI.
+- [`llms.txt`](../llms.txt) lists every page with a one-line summary.
+- The [error catalog](./reference/errors.md) is keyed by exact message text.
+- The [guidelines](./guides/guidelines.md) name each anti-pattern, with WRONG and CORRECT code.
+
+## Conventions
+
+How these docs are written. [CONTRIBUTING](../CONTRIBUTING.md#documentation) explains how to add a
+page.
+
+- **Frontmatter on every page** in the house schema (`FrontmatterVersion`, `DocumentType`,
+  `Title`, `Summary`, `Created`, `Updated`, `Owners`, `References`).
+- **Each page leads with the reader's goal.** How-to guides open with `> **Goal:**`.
+- **One concept per example.** Each example is a complete module of about 30 lines or fewer, with
+  realistic names.
+- **Links are tagged by type** (_[Tutorial]_, _[How-to]_, _[Explanation]_, _[Reference]_), and
+  every page ends with **What's Next**.
+- **Limits are stated plainly.** No page implies a capability the container doesn't have.
+
+## What's Coming
+
+- Docs site publication alongside the other Fathym docs.
+- Recipes for more frameworks as they are requested ([open a docs issue](../.github/ISSUE_TEMPLATE/docs_problem.yml)).

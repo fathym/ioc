@@ -44,6 +44,8 @@
     "singleQuote": true,
     "useTabs": false
   },
+  // Deno KV types are used by the docs and examples (the pattern dependents use).
+  "unstable": ["kv"],
   "compilerOptions": {
     "strict": true
   },
