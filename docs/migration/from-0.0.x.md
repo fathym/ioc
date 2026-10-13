@@ -201,12 +201,10 @@ foreign symbols no longer cause a `TypeError`, and resolving never adds empty en
 
 ## 9. Factories receive a view of the container
 
-Some factories now receive a **view** of the container rather than the container itself: lazy,
-transient, retried and scope-built factories. A view shares all the container's state and is an
+Every factory now receives a **view** of the container rather than the container itself, eager
+factories (which run at registration) included. A view shares all the container's state and is an
 `IoCContainer`, but it is not `===` the container. Use it exactly as before. If you compared
 identity, compare state instead (`c.services === ioc.services`).
-
-Eager factories, which run at registration, still receive the container itself.
 
 **Why:** the view carries the resolution path, which is what makes
 [cycle detection](../concepts/cycles-and-errors.md) and resolution paths in errors work.

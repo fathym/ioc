@@ -58,30 +58,29 @@ try {
 
 ## Resolve through the factory's parameter
 
-Each factory receives a **view** of the container that carries the current path. Resolving
-through that parameter (`c` above) is how the container follows the path across `await`s. The
-view shares all the container's state; it just isn't `===` the container. (An eager singleton's
-factory, run during registration, receives the container itself; see the last row below.)
+Every factory (eager ones included) receives a **view** of the container that carries the current
+path. Resolving through that parameter (`c` above) is how the container follows the path across
+`await`s. The view shares all the container's state; it just isn't `===` the container.
 
 If a factory resolves through a container it **captured** from the outer scope instead, the
 container can still follow the path **until the factory's first `await`**. After that, the path
 is lost:
 
-| Factory resolves through…                                    | Cycle detected?                   | Path in errors? |
-| ------------------------------------------------------------ | --------------------------------- | --------------- |
-| Its parameter (`(c) => c.Resolve(…)`), one resolve at a time | Yes                               | Yes             |
-| A captured container, before any `await`                     | Yes                               | Yes             |
-| A captured container, after an `await`                       | No: a lazy cycle can wait forever | No              |
-| An eager singleton's parameter, after an `await`             | No: it can wait forever           | No              |
+| Factory resolves through…                | Cycle detected?                   | Path in errors? |
+| ---------------------------------------- | --------------------------------- | --------------- |
+| Its parameter (`(c) => c.Resolve(…)`)    | Yes                               | Yes             |
+| A captured container, before any `await` | Yes                               | Yes             |
+| A captured container, after an `await`   | No: a lazy cycle can wait forever | No              |
 
 So always resolve through the parameter. The
 [guidelines](../guides/guidelines.md#captured-container-in-a-factory) show the fix.
 
-> **Warning:** Detection follows **one** resolution at a time. If two resolutions start at the
-> same time at different points of the same cycle (`Promise.all([Resolve(A), Resolve(B)])`, or
-> `Activate()`, which builds singletons in parallel), each waits for the other's in-flight build,
-> and both can wait forever. Run `Validate()` first: for classes with `Deps` it reports the cycle
-> before anything is built. This is a known limitation, tracked for a fix.
+**Concurrent resolutions are covered too.** When two resolutions enter the same cycle at the same
+time (`Promise.all([Resolve(A), Resolve(B)])`, or `Activate()`, which builds singletons in
+parallel), each would wait for the other's in-flight build. Before waiting on a build that's
+already in progress, the container checks whether that build is itself waiting on this chain. If
+it is, the resolution throws `IoCCircularDependencyError` with the path (for example
+`B -> A -> B`) instead of waiting, so neither side hangs.
 
 ## Declared dependencies
 

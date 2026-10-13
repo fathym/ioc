@@ -74,11 +74,9 @@ results). Wrap the object: `RegisterValue($Query, { query })`. See
 
 ## My factory's `ioc` isn't `===` my container
 
-Lazy, transient and scoped factories receive a **view** of the container. It shares all the
-container's state and is an `IoCContainer`, but it isn't the same object. It carries the
-resolution path that powers cycle detection. (An eager singleton's factory, run during
-registration, receives the container itself.) Compare state (`c.services === ioc.services`), not
-identity.
+Every factory receives a **view** of the container. It shares all the container's state and is an
+`IoCContainer`, but it isn't the same object. It carries the resolution path that powers cycle
+detection. Compare state (`c.services === ioc.services`), not identity.
 
 ## Disposal didn't run
 
@@ -97,16 +95,11 @@ everything else it created. Register objects you own with `RegisterValue`. See
 
 ## Startup hangs
 
-Two services that need each other can wait for each other forever when:
-
-- they resolve each other through a **captured** container after an `await`;
-- an **eager** singleton's factory resolves the other after an `await`;
-- both are being built **at the same time** (`Promise.all`, or `Activate()`, which builds
-  singletons in parallel).
-
-On a single resolution through the factory's parameter, the same cycle throws
-`IoCCircularDependencyError`. Run `Validate()` before `Activate()` to report cycles between
-declared dependencies, resolve through the parameter, then break the cycle. See
+Two lazy services that need each other, resolved through a **captured** container after an
+`await`, wait for each other forever: the captured container can't tell which resolution it
+belongs to. Resolved through the factory's parameter, the same cycle throws
+`IoCCircularDependencyError`, including when both are built at the same time (`Promise.all`, or
+`Activate()`). Resolve through the parameter, then break the cycle. See
 [cycles and errors](./concepts/cycles-and-errors.md).
 
 ## My registration order matters

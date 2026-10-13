@@ -100,7 +100,15 @@ for (const [label, create] of impls) {
         seen = c;
         return {};
       }, { Type: ioc.Symbol('Seen') });
-      assertStrictEquals(seen, ioc);
+
+      if (label === 'legacy') {
+        assertStrictEquals(seen, ioc);
+      } else {
+        // Since 0.1 every factory, eager ones included, receives a view of the container that
+        // shares all its state and carries the resolution path (for cycle detection).
+        assertInstanceOf(seen, IoCContainer);
+        assertStrictEquals((seen as IoCContainer).services, (ioc as IoCContainer).services);
+      }
     });
 
     await t.step('class registration resolvable by symbol of its name and vice versa', async () => {

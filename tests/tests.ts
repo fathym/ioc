@@ -21,6 +21,7 @@ import './ioc/decorate.tests.ts';
 import './ioc/types.tests.ts';
 import './ioc/typed.tests.ts';
 import './ioc/codes.tests.ts';
+import './ioc/concurrency.tests.ts';
 import './ioc/deps.tests.ts';
 import './ioc/validate.tests.ts';
 import './ioc/edges.tests.ts';

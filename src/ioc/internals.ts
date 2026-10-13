@@ -36,6 +36,14 @@ export interface IoCHolder {
   state: 'empty' | 'pending' | 'ready';
   value?: unknown;
   promise?: Promise<unknown>;
+  /** While pending: the frame building it (for cycle paths across concurrent resolutions). */
+  building?: IoCResolveFrame;
+  /**
+   * While pending: other pending holders this build (or a build beneath it) is waiting on. Lets
+   * a resolution that is about to wait on a pending build check whether that build is, in turn,
+   * waiting on it — a cycle split across two concurrent resolutions.
+   */
+  waits?: Set<IoCHolder>;
 }
 
 /** One step of a resolution chain; frames link back to the request that caused them. */
@@ -156,6 +164,51 @@ export function isOnActivePath(frame: IoCResolveFrame | undefined, key: object):
   return false;
 }
 
+/** True for a holder (memoized state) rather than a registration used as a frame key. */
+export function isHolder(key: object): key is IoCHolder {
+  return typeof (key as IoCHolder).state === 'string';
+}
+
+/** The pending holders being built along the active part of a resolution chain. */
+export function activeHolders(frame: IoCResolveFrame | undefined): IoCHolder[] {
+  const holders: IoCHolder[] = [];
+
+  for (let f = frame; f; f = f.parent) {
+    if (!f.settled && isHolder(f.key) && f.key.state === 'pending') holders.push(f.key);
+  }
+
+  return holders;
+}
+
+/**
+ * When pending holder `start` waits (directly or through other pending builds) on one of
+ * `targets`, returns the labels along that wait chain, starting with `start` and ending with the
+ * target; otherwise undefined.
+ */
+export function waitPath(start: IoCHolder, targets: Set<IoCHolder>): string[] | undefined {
+  const seen = new Set<IoCHolder>();
+
+  const visit = (h: IoCHolder): string[] | undefined => {
+    const label = h.building?.label ?? '?';
+
+    if (targets.has(h)) return [label];
+
+    if (seen.has(h)) return undefined;
+
+    seen.add(h);
+
+    for (const next of h.waits ?? []) {
+      const rest = visit(next);
+
+      if (rest) return [label, ...rest];
+    }
+
+    return undefined;
+  };
+
+  return visit(start);
+}
+
 /** Labels of the active frames, outermost first. */
 export function framePath(frame: IoCResolveFrame | undefined): string[] {
   const path: string[] = [];
@@ -209,12 +262,16 @@ export function settleInto(holder: IoCHolder, result: unknown): unknown {
         holder.state = 'ready';
         holder.value = value;
         holder.promise = undefined;
+        holder.building = undefined;
+        holder.waits = undefined;
 
         return value;
       },
       (err) => {
         holder.state = 'empty';
         holder.promise = undefined;
+        holder.building = undefined;
+        holder.waits = undefined;
 
         throw err;
       },
@@ -233,6 +290,8 @@ export function settleInto(holder: IoCHolder, result: unknown): unknown {
   holder.state = 'ready';
   holder.value = result;
   holder.promise = undefined;
+  holder.building = undefined;
+  holder.waits = undefined;
 
   return result;
 }

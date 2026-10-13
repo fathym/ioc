@@ -8,6 +8,7 @@ import {
   IoCValidationError,
 } from './errors.ts';
 import {
+  activeHolders,
   type AnyFunction,
   createLegacyThunk,
   createThunk,
@@ -24,11 +25,13 @@ import {
   type IoCRegistration,
   type IoCResolveFrame,
   isClassLike,
+  isHolder,
   isOnActivePath,
   labelFor,
   noop,
   registrationOf,
   settleInto,
+  waitPath,
   withFrame,
 } from './internals.ts';
 import type { IoCToken } from './IoCToken.ts';
@@ -1565,22 +1568,19 @@ export class IoCContainer<TKeys = any> {
     const owns = spec.kind !== 'value';
 
     /**
-     * Invokes the factory as one frame of a resolution chain. Factories normally receive a view
-     * of `container` that carries the chain; the registration-time eager run passes the real
-     * container (as before) and relies on the synchronous current frame only.
+     * Invokes the factory as one frame of a resolution chain. Factories receive a view of
+     * `container` that carries the chain, so resolves made through the parameter (even after an
+     * `await`) take part in cycle detection.
      */
-    const run = (
-      container: object,
-      parent: IoCResolveFrame | undefined,
-      key: object,
-      view = true,
-    ) => {
+    const run = (container: object, parent: IoCResolveFrame | undefined, key: object) => {
       const frame: IoCResolveFrame = { key, label, parent, settled: false };
+
+      if (isHolder(key)) key.building = frame;
 
       let result: unknown;
 
       try {
-        const arg = (view ? createView(container, frame) : container) as IoCContainer;
+        const arg = createView(container, frame) as IoCContainer;
 
         result = withFrame(frame, () => factory(arg));
       } catch (err) {
@@ -1614,6 +1614,22 @@ export class IoCContainer<TKeys = any> {
           throw new IoCCircularDependencyError([...framePath(frame), label]);
         }
 
+        // Another resolution is building it. If that build is (transitively) waiting on a build
+        // in this chain, waiting here would deadlock both: report the cycle instead.
+        const mine = activeHolders(frame);
+
+        if (mine.length) {
+          const via = waitPath(h, new Set(mine));
+
+          if (via) throw new IoCCircularDependencyError([...framePath(frame), ...via]);
+
+          for (const p of mine) (p.waits ??= new Set()).add(h);
+
+          h.promise.finally(() => {
+            for (const p of mine) p.waits?.delete(h);
+          }).catch(noop);
+        }
+
         return h.promise;
       }
 
@@ -1625,6 +1641,7 @@ export class IoCContainer<TKeys = any> {
         result = run(buildOn, frame, h);
       } catch (err) {
         h.state = 'empty';
+        h.building = undefined;
         throw err;
       }
 
@@ -1682,18 +1699,19 @@ export class IoCContainer<TKeys = any> {
     const thunk = createThunk(reg);
 
     if (holder && !spec.lazy) {
-      // Eager: build now against the real container (as before). A synchronous throw propagates
-      // and leaves any previous registration in place. An async rejection never becomes an
-      // unhandled rejection; it resets the holder so a Resolve made after it settled retries
-      // (for example once a missing dependency has been registered).
+      // Eager: build now. A synchronous throw propagates and leaves any previous registration in
+      // place. An async rejection never becomes an unhandled rejection; it resets the holder so a
+      // Resolve made after it settled retries (for example once a missing dependency has been
+      // registered).
       holder.state = 'pending';
 
       let result: unknown;
 
       try {
-        result = run(self, undefined, holder, false);
+        result = run(self, undefined, holder);
       } catch (err) {
         holder.state = 'empty';
+        holder.building = undefined;
         throw err;
       }
 
