@@ -93,6 +93,8 @@ export interface IoCRegistration {
   readonly label: string;
   /** Declared constructor dependencies (`RegisterClass(…, { Deps })`), used by `Validate()`. */
   readonly deps?: readonly IoCDependencyRecord[];
+  /** A framework default (`Default: true`): it yields to any other registration of its key. */
+  readonly default?: boolean;
   resolveIn(container: object, frame?: IoCResolveFrame): unknown;
 }
 

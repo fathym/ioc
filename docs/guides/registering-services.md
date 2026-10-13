@@ -79,12 +79,15 @@ console.log(await repo.db.query('select 1'), await ioc.Resolve($Port));
 Every registration accepts these options (`RegisterValue` takes only `Name`; `Type` is for
 `RegisterClass` and `Register`):
 
-| Option     | Values                    | Default      | Effect                                                                    |
-| ---------- | ------------------------- | ------------ | ------------------------------------------------------------------------- |
-| `Lifetime` | `'transient'`, `'scoped'` | singleton    | See [lifetimes](../concepts/lifetimes.md)                                 |
-| `Lazy`     | `true`                    | eager        | Build a singleton or scoped service on first resolve, not at registration |
-| `Name`     | any string                | `'$default'` | Register several services under one key                                   |
-| `Type`     | a token or symbol         | the class    | The key, when keying a class differently (the class must fit the token)   |
+| Option     | Values                    | Default      | Effect                                                                         |
+| ---------- | ------------------------- | ------------ | ------------------------------------------------------------------------------ |
+| `Lifetime` | `'transient'`, `'scoped'` | singleton    | See [lifetimes](../concepts/lifetimes.md)                                      |
+| `Lazy`     | `true`                    | eager        | Build a singleton or scoped service on first resolve, not at registration      |
+| `Name`     | any string                | `'$default'` | Register several services under one key                                        |
+| `Type`     | a token or symbol         | the class    | The key, when keying a class differently (the class must fit the token)        |
+| `Default`  | `true`                    | —            | A default that yields to any other registration, in any order (for frameworks) |
+| `Replace`  | `true`                    | —            | Replace an existing registration on purpose (required in strict mode)          |
+| `Dispose`  | `(instance) => …`         | —            | Cleanup when the owner is disposed, for resources without `Symbol.dispose`     |
 
 ## What registration returns
 

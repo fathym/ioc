@@ -3,7 +3,10 @@ import {
   IoCCircularDependencyError,
   IoCContainerDisposedError,
   IoCDisposeError,
+  IoCDuplicateRegistrationError,
+  IoCKeyCollisionError,
   IoCRegistrationError,
+  IoCScopeRequiredError,
   IoCServiceNotFoundError,
   IoCValidationError,
   type IoCValidationIssue,
@@ -126,6 +129,17 @@ export type IoCServiceOptions = {
 
   /** The symbol to register under. Defaults to `Symbol.for(clazz.name)` for class registrations. */
   Type?: symbol;
+
+  /**
+   * Registers a default that yields to any other registration of the same key and name, whatever
+   * the order: if one exists (here or in a parent) this call does nothing, and a later registration
+   * replaces it silently, even in strict mode. Frameworks use it for overridable services.
+   * Defaults are always lazy, so an overridden default is never built.
+   */
+  Default?: boolean;
+
+  /** Replaces an existing registration on purpose. Required in strict mode; otherwise optional. */
+  Replace?: boolean;
 };
 
 /** A dependency key: a typed token, or a class (abstract classes included). */
@@ -279,6 +293,15 @@ function normalizeDependency(dep: unknown): IoCDependencyRecord {
 
 function dependencyLabel(dep: IoCDependencyRecord): string {
   return labelFor(keySymbol(dep.key), dep.name);
+}
+
+/** True for two copies of one class (for example from two copies of a package). */
+function sameSource(a: AnyFunction, b: AnyFunction): boolean {
+  try {
+    return Function.prototype.toString.call(a) === Function.prototype.toString.call(b);
+  } catch {
+    return false;
+  }
 }
 
 /** Disposes one instance through `Symbol.asyncDispose` or `Symbol.dispose`. */
@@ -919,6 +942,8 @@ export class IoCContainer<TKeys = any> {
       ctor: clazz && opts.Type === Symbol.for(clazz.name) ? clazz : undefined,
       factory,
       lazy: this.lazyFor(opts.Lazy),
+      default: opts.Default,
+      replace: opts.Replace,
     });
 
     // Historically only scoped registrations return their disposer.
@@ -1068,6 +1093,8 @@ export class IoCContainer<TKeys = any> {
       lazy: this.lazyFor(opts.Lazy),
       deps,
       dispose: opts.Dispose as ((instance: unknown) => unknown) | undefined,
+      default: opts.Default,
+      replace: opts.Replace,
     });
 
     return this as unknown as IoCContainer<
@@ -1105,6 +1132,8 @@ export class IoCContainer<TKeys = any> {
       factory: factory as (ioc: IoCContainer) => unknown,
       lazy: this.lazyFor(opts.Lazy),
       dispose: opts.Dispose as ((instance: unknown) => unknown) | undefined,
+      default: opts.Default,
+      replace: opts.Replace,
     });
 
     return this as unknown as IoCContainer<TKeys | IoCRegistered<K, TName>>;
@@ -1126,6 +1155,12 @@ export class IoCContainer<TKeys = any> {
 
       /** Hands the value to the container: it is cleaned up this way when the container is disposed. */
       Dispose?: (value: IoCServiceOf<K>) => unknown;
+
+      /** A default value that yields to any other registration (see `IoCServiceOptions.Default`). */
+      Default?: boolean;
+
+      /** Replaces an existing registration on purpose (required in strict mode). */
+      Replace?: boolean;
     },
   ): IoCContainer<TKeys | IoCRegistered<K, TName>> {
     // Values belong to whoever created them; no container disposes them unless asked to.
@@ -1142,6 +1177,8 @@ export class IoCContainer<TKeys = any> {
       factory: () => value,
       lazy: false,
       dispose: options?.Dispose as ((instance: unknown) => unknown) | undefined,
+      default: options?.Default,
+      replace: options?.Replace,
     });
 
     return this as unknown as IoCContainer<TKeys | IoCRegistered<K, TName>>;
@@ -1205,6 +1242,7 @@ export class IoCContainer<TKeys = any> {
       },
       lazy: true,
       deps: originalReg?.deps,
+      replace: true,
     });
 
     return () => {
@@ -1275,9 +1313,19 @@ export class IoCContainer<TKeys = any> {
   ): void | (() => void) {
     const self = this.self();
 
-    self.bank(symbol).set(name, instance);
-
     const reg = registrationOf(instance);
+
+    // An incoming default (for example from a plugin container's CopyTo) never replaces a
+    // registration that isn't a default.
+    if (reg?.default) {
+      const existing = self.services.get(symbol)?.get(name);
+
+      if (existing !== undefined && existing !== instance && !registrationOf(existing)?.default) {
+        return;
+      }
+    }
+
+    self.bank(symbol).set(name, instance);
 
     if (reg?.ctor && reg.symbol === symbol && reg.name === name) {
       self.trackCtor(reg.ctor, name, instance);
@@ -1587,6 +1635,30 @@ export class IoCContainer<TKeys = any> {
   }
 
   /**
+   * The entry registered for exactly this key in this container: for a class, its own
+   * registration (or a symbol registration of its name); never a different same-named class.
+   *
+   * @ignore
+   */
+  protected findExactOwn(key: AnyFunction | symbol, name: string): unknown {
+    const bank = this.services.get(keySymbol(key));
+
+    if (typeof key !== 'function') return bank?.get(name);
+
+    const own = this.byCtor.get(key)?.get(name);
+
+    if (own !== undefined) return own;
+
+    const entry = bank?.get(name);
+
+    if (entry === undefined) return undefined;
+
+    const reg = registrationOf(entry);
+
+    return !reg?.ctor || reg.ctor === key ? entry : undefined;
+  }
+
+  /**
    * Finds the stored entry for a key in this container only.
    *
    * @ignore
@@ -1616,6 +1688,10 @@ export class IoCContainer<TKeys = any> {
         const own = this.byCtor.get(key);
 
         if (own?.has(name)) return { entry: own.get(name) };
+
+        // Otherwise it would resolve the other class's instance. Strict mode allows that only
+        // for two copies of the same class (identical source, as with duplicated packages).
+        if (this.self().options?.Strict && !sameSource(reg.ctor, key)) return undefined;
       }
     }
 
@@ -1649,7 +1725,22 @@ export class IoCContainer<TKeys = any> {
   ): unknown {
     const found = this.find(key, name);
 
-    if (found) return found.entry;
+    if (found) {
+      if (typeof key === 'function') {
+        const reg = registrationOf(found.entry);
+
+        if (reg?.ctor && reg.ctor !== key && !sameSource(reg.ctor, key)) {
+          this.diagnose(
+            'IOC_CLASS_NAME_FALLBACK',
+            `${reg.label} resolved a different class that shares the name '${key.name}'; ` +
+              `register the class itself, or enable Strict to make this an error.`,
+            reg.label,
+          );
+        }
+      }
+
+      return found.entry;
+    }
 
     const symbol = keySymbol(key);
 
@@ -1704,12 +1795,68 @@ export class IoCContainer<TKeys = any> {
     lazy: boolean;
     deps?: readonly IoCDependencyRecord[];
     dispose?: (instance: unknown) => unknown;
+    default?: boolean;
+    replace?: boolean;
   }): () => void {
     const self = this.self();
 
     self.assertNotDisposed();
 
     const { symbol, name, lifetime, factory } = spec;
+
+    const strict = !!self.options?.Strict;
+
+    const exactKey = spec.ctor ?? symbol;
+
+    // A default yields to any registration of the same key and name, here or in a parent.
+    if (spec.default) {
+      for (const c of self.chain()) {
+        const existing = c.findExactOwn(exactKey, name);
+
+        if (existing !== undefined && registrationOf(existing)?.default !== true) return noop;
+      }
+    }
+
+    if (!spec.default && !spec.replace) {
+      const existing = self.findExactOwn(exactKey, name);
+
+      if (existing !== undefined && registrationOf(existing)?.default !== true) {
+        const label = labelFor(symbol, name);
+
+        if (strict) throw new IoCDuplicateRegistrationError(label);
+
+        self.diagnose(
+          'IOC_REGISTRATION_REPLACED',
+          `${label} was registered again; the new registration replaces the earlier one.`,
+          label,
+        );
+      }
+    }
+
+    // A class and a token on one key would resolve as each other.
+    if (!spec.replace) {
+      const isClassKey = !!spec.ctor;
+
+      for (const c of self.chain()) {
+        for (const entry of c.services.get(symbol)?.values() ?? []) {
+          const reg = registrationOf(entry);
+
+          if (!reg || reg.default || !!reg.ctor === isClassKey) continue;
+
+          const key = `${symbol.description}`;
+
+          if (strict) throw new IoCKeyCollisionError(key);
+
+          self.diagnose(
+            'IOC_KEY_COLLISION',
+            `The key '${key}' is used by both a class and a token.`,
+            key,
+          );
+
+          break;
+        }
+      }
+    }
 
     const holder: IoCHolder | undefined = lifetime === 'transient' ? undefined : { state: 'empty' };
 
@@ -1837,6 +1984,7 @@ export class IoCContainer<TKeys = any> {
       holder,
       label,
       deps: spec.deps,
+      default: spec.default || undefined,
       resolveIn(container: object, frame?: IoCResolveFrame): unknown {
         if (!holder) {
           if (isOnActivePath(frame, reg)) {
@@ -1855,6 +2003,9 @@ export class IoCContainer<TKeys = any> {
 
           // One instance per child scope, built against (and disposed by) that scope.
           if (scoped) return fromHolder(scoped, c, c, frame);
+
+          // Resolving from the root, where it would silently act as one shared instance.
+          if (c.options?.Strict && !c.parent) throw new IoCScopeRequiredError(label);
         }
 
         // Singletons always build against their owner, never against whoever resolved them.
@@ -1864,7 +2015,12 @@ export class IoCContainer<TKeys = any> {
 
     const thunk = createThunk(reg);
 
-    if (holder && !spec.lazy) {
+    // Defaults are always lazy (an overridden default is never built), and in strict mode a root
+    // `scoped` registration is never built at the root.
+    const lazy = spec.lazy || !!spec.default ||
+      (lifetime === 'scoped' && strict && !self.parent);
+
+    if (holder && !lazy) {
       // Eager: build now. A synchronous throw propagates and leaves any previous registration in
       // place. An async rejection never becomes an unhandled rejection; it resets the holder so a
       // Resolve made after it settled retries (for example once a missing dependency has been

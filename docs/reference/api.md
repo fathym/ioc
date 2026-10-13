@@ -695,6 +695,8 @@ console.log(typeof $Port, port); // symbol 8080
 | `Lazy`     | `false`      | Build a singleton or scoped service on first resolve instead of at registration                                                                                                   |
 | `Name`     | `'$default'` | Register several services under one key                                                                                                                                           |
 | `Type`     | the class    | The key, as a symbol or token                                                                                                                                                     |
+| `Default`  | —            | A default that yields to any other registration of the key and name, in any order; never built if overridden; a merged plugin's default never replaces a host registration        |
+| `Replace`  | —            | Replace an existing registration on purpose (required in strict mode)                                                                                                             |
 | `Dispose`  | —            | `(instance) => …`: cleanup run when the owner is disposed, for resources without `Symbol.dispose` (`kv => kv.close()`). On `RegisterClass`, `RegisterFactory` and `RegisterValue` |
 
 ### Dependency types

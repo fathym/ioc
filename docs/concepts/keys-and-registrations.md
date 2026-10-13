@@ -105,6 +105,31 @@ Registering the same key and name again **replaces** the earlier registration (l
 That is how test scopes and decorators work. `Unregister(key, name?)` removes the current
 registration.
 
+Two options make the intent explicit:
+
+- **`Default: true`** registers a default that yields to any other registration of the same key and
+  name, whatever the order. Frameworks use it for services users may override: the user's
+  registration wins whether it comes before or after, and a plugin container merged with `CopyTo`
+  can't overwrite the host's registration with its default.
+- **`Replace: true`** marks an override as intended.
+
+```ts
+import { IoCContainer, IoCToken } from '@fathym/ioc';
+
+const $Greeting = IoCToken<string, 'Greeting'>('Greeting');
+
+const ioc = new IoCContainer()
+  .RegisterValue($Greeting, 'hello from the app') // the user's registration
+  .RegisterValue($Greeting, 'hello from the framework', { Default: true }); // yields
+
+console.log(await ioc.Resolve($Greeting)); // hello from the app
+```
+
+In **strict mode** (`new IoCContainer({ Strict: true })` or `IoCContainer.Create()`), a second
+registration without `Replace` or `Default` throws `IoCDuplicateRegistrationError`, and a class
+and a token sharing one key throw `IoCKeyCollisionError`. Without strict mode, both are allowed and
+reported through the `Diagnostics` option.
+
 ## Class or factory?
 
 This only concerns the deprecated `Register` method. `RegisterClass` and `RegisterFactory` never
