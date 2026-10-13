@@ -5,6 +5,9 @@
 // a `Symbol.for` key rather than a module-private WeakSet or `#private` field, and container
 // detection never uses `instanceof`.
 
+// deno-lint-ignore no-explicit-any
+type Indexable = any;
+
 /** Marks a function stored in `services` as a thunk created by a protocol-aware container. */
 export const IOC_REGISTRATION = Symbol.for('@fathym/ioc/registration');
 
@@ -18,6 +21,22 @@ export const IOC_CONTEXT = Symbol.for('@fathym/ioc/context');
 export const IOC_SELF = Symbol.for('@fathym/ioc/self');
 
 export const IOC_PROTOCOL_VERSION = 1;
+
+/**
+ * Who owns (and so disposes) each disposable instance: the first container that created it, or
+ * {@link IOC_EXTERNAL} for values handed in with `RegisterValue`. Shared through `globalThis`
+ * under a `Symbol.for` key, so every copy of the library in the process agrees on ownership: a
+ * decorator or alias factory that returns an instance another container created never makes a
+ * second owner.
+ */
+export const IOC_OWNERS: WeakMap<object, object> = ((globalThis as Indexable)[
+  Symbol.for('@fathym/ioc/owners')
+] ??= new WeakMap<object, object>());
+
+/** Owner recorded for values the container was given rather than created; never disposed. */
+export const IOC_EXTERNAL: object = ((globalThis as Indexable)[
+  Symbol.for('@fathym/ioc/external')
+] ??= Object.freeze({ external: true }));
 
 /** Any function or class; used for constructor identity, where nothing else is assumed. */
 // deno-lint-ignore ban-types
@@ -76,9 +95,6 @@ export interface IoCRegistration {
   readonly deps?: readonly IoCDependencyRecord[];
   resolveIn(container: object, frame?: IoCResolveFrame): unknown;
 }
-
-// deno-lint-ignore no-explicit-any
-type Indexable = any;
 
 export function noop(): void {}
 

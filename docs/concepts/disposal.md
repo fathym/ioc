@@ -64,6 +64,16 @@ console.log(log); // [ "cache cleared", "pool closed" ]  (last created, first di
 An instance is disposed only if it implements `Symbol.asyncDispose` (preferred) or
 `Symbol.dispose`.
 
+**One owner per instance.** The first container to create an instance owns it, and only the owner
+disposes it, once. So:
+
+- a decorator that returns the inner instance doesn't make it disposed twice;
+- an alias factory (`RegisterFactory($Alias, (c) => c.Resolve($Primary))`) doesn't either;
+- decorating a parent's singleton in a scope never lets the scope dispose it;
+- two containers sharing a singleton through `CopyTo` leave it to the container that built it.
+
+Ownership is shared across every copy of the library loaded in the process.
+
 ## What is never disposed
 
 - **Transient instances.** Whoever resolved one owns it. (Tracking transients is how other
@@ -88,6 +98,11 @@ An instance is disposed only if it implements `Symbol.asyncDispose` (preferred) 
 
 A disposed container or scope clears its registrations and rejects further use with
 `IoCContainerDisposedError`. Calling `Dispose()` again does nothing.
+
+**Builds still in flight are not leaked.** `Dispose()` doesn't wait for a factory that's still
+running (one that never settles would hang shutdown). When such a build finishes after the
+container was disposed, its instance is disposed as soon as it arrives. A failure doing so is
+reported through the `Diagnostics` option (`IOC_LATE_DISPOSE_FAILED`), not thrown.
 
 ## Containers and scopes
 

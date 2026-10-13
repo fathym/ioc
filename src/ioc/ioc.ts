@@ -16,6 +16,8 @@ import {
   currentFrame,
   framePath,
   IOC_CONTEXT,
+  IOC_EXTERNAL,
+  IOC_OWNERS,
   IOC_PROTOCOL,
   IOC_PROTOCOL_VERSION,
   IOC_SELF,
@@ -256,6 +258,17 @@ function normalizeDependency(dep: unknown): IoCDependencyRecord {
 
 function dependencyLabel(dep: IoCDependencyRecord): string {
   return labelFor(keySymbol(dep.key), dep.name);
+}
+
+/** Disposes one instance through `Symbol.asyncDispose` or `Symbol.dispose`. */
+async function disposeOne(value: object): Promise<void> {
+  const v = value as Indexable;
+
+  if (typeof v[Symbol.asyncDispose] === 'function') {
+    await v[Symbol.asyncDispose]();
+  } else if (typeof v[Symbol.dispose] === 'function') {
+    v[Symbol.dispose]();
+  }
 }
 
 function isDisposable(value: unknown): value is object {
@@ -1025,6 +1038,9 @@ export class IoCContainer<TKeys = any> {
     value: IoCServiceOf<K>,
     options?: { Name?: TName },
   ): IoCContainer<TKeys | IoCRegistered<K, TName>> {
+    // Values belong to whoever created them; no container ever disposes them.
+    if (isDisposable(value) && !IOC_OWNERS.has(value)) IOC_OWNERS.set(value, IOC_EXTERNAL);
+
     this.addRegistration({
       symbol: keySymbol(key),
       name: options?.Name || DEFAULT_NAME,
@@ -1296,13 +1312,7 @@ export class IoCContainer<TKeys = any> {
 
     for (const value of owned) {
       try {
-        const v = value as Indexable;
-
-        if (typeof v[Symbol.asyncDispose] === 'function') {
-          await v[Symbol.asyncDispose]();
-        } else if (typeof v[Symbol.dispose] === 'function') {
-          v[Symbol.dispose]();
-        }
+        await disposeOne(value);
       } catch (err) {
         errors.push(err);
       }
@@ -1418,12 +1428,31 @@ export class IoCContainer<TKeys = any> {
   }
 
   /**
-   * Records an instance this container created, for disposal.
+   * Records an instance this container created, for disposal. The first container to create an
+   * instance owns it: an instance that already has an owner (returned again by a decorator or an
+   * alias factory, or a value given to `RegisterValue`) is never owned twice. An instance that
+   * arrives after this container was disposed (its build was still in flight) is disposed now.
    *
    * @ignore
    */
   protected trackOwned(value: unknown): void {
-    if (isDisposable(value)) this.owned.push(value);
+    if (!isDisposable(value) || IOC_OWNERS.has(value)) return;
+
+    const self = this.self();
+
+    IOC_OWNERS.set(value, self);
+
+    if (!self.disposed) {
+      self.owned.push(value);
+      return;
+    }
+
+    disposeOne(value).catch((err) =>
+      self.diagnose(
+        'IOC_LATE_DISPOSE_FAILED',
+        `An instance that finished building after Dispose() failed to dispose: ${err}`,
+      )
+    );
   }
 
   /**
