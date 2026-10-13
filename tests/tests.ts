@@ -23,3 +23,4 @@ import './ioc/deps.tests.ts';
 import './ioc/validate.tests.ts';
 import './ioc/edges.tests.ts';
 import './docs/docs-check.tests.ts';
+import './docs/examples.tests.ts';

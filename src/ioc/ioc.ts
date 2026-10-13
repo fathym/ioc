@@ -278,9 +278,10 @@ export class IoCContainer {
   }
 
   /**
-   * Creates every singleton and scoped service registered in this container that has not been
-   * created yet (lazy or failed ones), so configuration errors surface at startup rather than on
-   * first use. Rejects with an `AggregateError` naming every service that failed.
+   * Creates every singleton registered in this container that has not been created yet (lazy or
+   * failed ones), so configuration errors surface at startup rather than on first use. Rejects
+   * with an `AggregateError` naming every service that failed. Transient and scoped services are
+   * not built: they belong to each resolve and to each scope.
    */
   public async Activate(): Promise<void> {
     const self = this.self();
@@ -295,7 +296,8 @@ export class IoCContainer {
       for (const entry of bank.values()) {
         const reg = registrationOf(entry);
 
-        if (!reg || reg.lifetime === 'transient') continue;
+        // Transients are built per resolve, and scoped services belong to the scopes that use them.
+        if (!reg || reg.lifetime !== 'singleton') continue;
 
         work.push(
           Promise.resolve()

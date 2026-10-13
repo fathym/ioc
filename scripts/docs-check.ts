@@ -1,5 +1,6 @@
 // Checks the documentation: frontmatter, links and anchors, orphan pages, "What's Next" footers,
-// error-catalog coverage, llms.txt freshness, and that every code block in the docs type-checks.
+// error-catalog coverage, llms.txt freshness, and that every code block in the docs type-checks
+// and runs.
 //
 //   deno run -A scripts/docs-check.ts            check everything
 //   deno run -A scripts/docs-check.ts --write    also regenerate llms.txt
@@ -62,13 +63,19 @@ const problems = checkDocs(files, options);
 
 for (const p of problems) console.error(`${p.file}: ${p.message}`);
 
-// Type-check every TypeScript code block in the Markdown, and the examples.
+// Type-check and run every TypeScript code block in the Markdown; type-check the examples.
 const markdown = [...files.keys()].filter(isCheckedMarkdown).sort();
 
 const examples = [...files.keys()].filter((p) => p.startsWith('examples/') && p.endsWith('.ts'));
 
 const checks: [string, string[]][] = [
-  ['code blocks in Markdown', ['check', '--doc-only', ...markdown]],
+  ['code blocks in Markdown (type-checked and run)', [
+    'test',
+    '-A',
+    '--quiet',
+    '--doc',
+    ...markdown,
+  ]],
   ...(examples.length ? [['examples', ['check', ...examples]] as [string, string[]]] : []),
 ];
 

@@ -1,0 +1,139 @@
+---
+FrontmatterVersion: 1
+DocumentType: Guide
+Title: 'Step 2: Your First Container'
+Summary: Register a class, a factory and a value, use a typed token, and see how lifetimes change what you get back.
+Created: 2026-10-13
+Updated: 2026-10-13
+Owners:
+  - fathym
+References:
+  - Label: Getting Started
+    Path: ./README.md
+  - Label: Project Agents Guide
+    Path: ../../AGENTS.md
+---
+
+# Step 2: Your First Container
+
+> **Goal:** Wire up the core of the notes app. You'll register services three different ways and
+> resolve them without writing a single `new` for the app's objects.
+
+## What you'll build
+
+A `NotesService` that stamps each note with the time from a `Clock`, plus the app's name as a
+plain value.
+
+## Register and resolve
+
+```ts
+import { IoCContainer, IoCToken } from '@fathym/ioc';
+
+// A typed token: a key that carries the type of what's registered under it.
+const $AppName = IoCToken<string>('AppName');
+
+class Clock {
+  public now(): Date {
+    return new Date();
+  }
+}
+
+class NotesService {
+  readonly #notes: string[] = [];
+
+  constructor(private clock: Clock) {}
+
+  public add(text: string): string {
+    const note = `${this.clock.now().toISOString()} ${text}`;
+    this.#notes.push(note);
+    return note;
+  }
+
+  public list(): string[] {
+    return [...this.#notes];
+  }
+}
+
+const ioc = new IoCContainer();
+
+ioc.RegisterValue($AppName, 'Notes'); // 1. a value you already have
+ioc.RegisterClass(Clock); // 2. a class the container constructs
+ioc.Register(NotesService, async (c) => new NotesService(await c.Resolve(Clock))); // 3. a factory
+
+const notes = await ioc.Resolve(NotesService);
+
+notes.add('Buy milk');
+
+console.log(await ioc.Resolve($AppName), notes.list());
+// Notes [ "2026-10-13T12:00:00.000Z Buy milk" ]
+```
+
+Three things to notice:
+
+1. **`Resolve($AppName)` returns a `string`.** The token carries the type, so there is no generic
+   to write and nothing to cast.
+2. **The factory receives the container (`c`).** Resolve dependencies through that parameter,
+   not through a captured `ioc`. It's what makes scopes, overrides and cycle detection work
+   later.
+3. **You never called `new Clock()`.** The container did.
+
+## Let the container call the constructor
+
+Writing a factory just to pass dependencies along gets repetitive. Declare the dependencies
+instead, and the container checks them against the constructor's parameters at compile time:
+
+```ts
+import { IoCContainer } from '@fathym/ioc';
+
+class Clock {
+  public now(): Date {
+    return new Date();
+  }
+}
+
+class NotesService {
+  constructor(public clock: Clock) {}
+}
+
+const ioc = new IoCContainer();
+
+ioc.RegisterClass(Clock);
+ioc.RegisterClass(NotesService, { Deps: [Clock] }); // a type error if NotesService's constructor changes
+
+const notes = await ioc.Resolve(NotesService);
+
+console.log(notes.clock instanceof Clock); // true
+```
+
+## Same instance, or a new one?
+
+By default every service is a **singleton**: built once and shared. Ask for a **transient**
+lifetime when you want a fresh instance on every resolve:
+
+```ts
+import { IoCContainer } from '@fathym/ioc';
+
+class Draft {
+  public text = '';
+}
+
+class Clock {}
+
+const ioc = new IoCContainer();
+
+ioc.RegisterClass(Clock); // singleton (the default)
+ioc.RegisterClass(Draft, { Lifetime: 'transient' });
+
+console.log((await ioc.Resolve(Clock)) === (await ioc.Resolve(Clock))); // true
+console.log((await ioc.Resolve(Draft)) === (await ioc.Resolve(Draft))); // false
+```
+
+There's a third lifetime, `scoped`, which you'll use in [step 4](./per-request-scopes.md).
+
+## What's Next
+
+- Start an async service (Deno KV) and check startup:
+  [async-services.md](./async-services.md) _[Tutorial]_
+- Why tokens, classes and symbols all work as keys:
+  [keys-and-registrations.md](../concepts/keys-and-registrations.md) _[Explanation]_
+- All the lifetimes in one table: [lifetimes.md](../concepts/lifetimes.md) _[Explanation]_

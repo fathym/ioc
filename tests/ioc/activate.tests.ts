@@ -5,7 +5,7 @@ import { IoCToken } from '../../src/ioc/IoCToken.ts';
 import { assert, assertEquals, assertRejects } from '../test.deps.ts';
 
 Deno.test('Activate', async (t) => {
-  await t.step('builds lazy singletons and scoped services, not transients', async () => {
+  await t.step('builds lazy singletons, not scoped or transient services', async () => {
     const ioc = new IoCContainer();
     const built: string[] = [];
 
@@ -18,7 +18,7 @@ Deno.test('Activate', async (t) => {
 
     await ioc.Activate();
 
-    assertEquals(built.sort(), ['lazy', 'scoped']);
+    assertEquals(built, ['lazy']);
   });
 
   await t.step('does not rebuild services that are already built', async () => {
