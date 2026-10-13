@@ -54,7 +54,7 @@ class NotesHandler {
 // Composition root.
 const ioc = new IoCContainer();
 
-ioc.Register(Deno.Kv, () => Deno.openKv(':memory:'), { Lazy: true });
+ioc.RegisterFactory(Deno.Kv, () => Deno.openKv(':memory:'), { Lazy: true });
 ioc.RegisterFactory(NotesStore, async (c) => new KvNotesStore(await c.Resolve(Deno.Kv)), {
   Lazy: true,
 });

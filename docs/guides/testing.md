@@ -68,7 +68,7 @@ class Signup {
 }
 
 const ioc = new IoCContainer();
-ioc.Register($Mailer, () => ({ send: () => Promise.reject(new Error('real SMTP')) }), {
+ioc.RegisterFactory($Mailer, () => ({ send: () => Promise.reject(new Error('real SMTP')) }), {
   Lazy: true,
 });
 ioc.RegisterClass(Signup, { Deps: [$Mailer], Lifetime: 'transient' });
@@ -106,7 +106,7 @@ class Billing {
 }
 
 function registerApp(ioc: IoCContainer) {
-  ioc.Register($Clock, () => ({ now: () => Date.now() }), { Lazy: true });
+  ioc.RegisterFactory($Clock, () => ({ now: () => Date.now() }), { Lazy: true });
   ioc.RegisterClass(Billing, { Deps: [$Clock], Lazy: true }); // a singleton
 }
 
@@ -135,7 +135,7 @@ import { IoCContainer, IoCToken } from '@fathym/ioc';
 const $Prices = IoCToken<{ quote(symbol: string): number }>('Prices');
 
 const ioc = new IoCContainer();
-ioc.Register($Prices, () => ({ quote: (symbol) => symbol.length * 10 }));
+ioc.RegisterFactory($Prices, () => ({ quote: (symbol) => symbol.length * 10 }));
 
 Deno.test('quotes are requested once per symbol', async () => {
   await using test = ioc.CreateScope();
@@ -260,7 +260,7 @@ class Repo {
 }
 
 function registerApp(ioc: IoCContainer) {
-  ioc.Register($Db, () => ({ url: 'kv://local' }), { Lazy: true });
+  ioc.RegisterFactory($Db, () => ({ url: 'kv://local' }), { Lazy: true });
   ioc.RegisterClass(Repo, { Deps: [$Db], Lazy: true });
 }
 
@@ -285,7 +285,7 @@ Deno.test('search retries after the index becomes available', async () => {
   let indexReady = false;
 
   const ioc = new IoCContainer();
-  ioc.Register(
+  ioc.RegisterFactory(
     $Search,
     () =>
       indexReady ? Promise.resolve({ ready: true }) : Promise.reject(new Error('index missing')),

@@ -79,7 +79,7 @@ class Repo {
 
 const ioc = new IoCContainer();
 
-ioc.Register($Db, () => openDb(), { Lazy: true }); // singleton is the default
+ioc.RegisterFactory($Db, () => openDb(), { Lazy: true }); // singleton is the default
 ioc.RegisterClass(Repo, { Deps: [$Db], Lifetime: 'transient' });
 
 ioc.Validate();
@@ -98,7 +98,7 @@ console.log(await repo.all()); // [ "select * from notes" ]
 | `bind(X).toSelf()`                            | `RegisterClass(X)`                                                      |
 | `bind(T).to(Impl)`                            | `RegisterClass(Impl, { Type: $T })` or `Register($T, () => new Impl())` |
 | `bind(T).toConstantValue(v)`                  | `RegisterValue($T, v)`                                                  |
-| `bind(T).toDynamicValue(ctx => …)`            | `Register($T, (ioc) => …)`                                              |
+| `bind(T).toDynamicValue(ctx => …)`            | `RegisterFactory($T, (ioc) => …)`                                       |
 | `.inSingletonScope()` / `.inTransientScope()` | default / `{ Lifetime: 'transient' }`                                   |
 | `.inRequestScope()`                           | No direct equivalent; usually `scoped` with a scope per request         |
 | `.whenNamed('x')` / `getNamed(T, 'x')`        | `{ Name: 'x' }` / `Resolve($T, 'x')`                                    |
@@ -117,7 +117,7 @@ console.log(await repo.all()); // [ "select * from notes" ]
 | `@singleton()` / `registerSingleton`                           | `RegisterClass(X)` (singleton is the default)                               |
 | `register(T, { useClass: Impl })`                              | `RegisterClass(Impl, { Type: $T })`                                         |
 | `register(T, { useValue: v })`                                 | `RegisterValue($T, v)`                                                      |
-| `register(T, { useFactory: c => … })`                          | `Register($T, (ioc) => …)` (and it may be async)                            |
+| `register(T, { useFactory: c => … })`                          | `RegisterFactory($T, (ioc) => …)` (and it may be async)                     |
 | `Lifecycle.Transient` / `ContainerScoped` / `ResolutionScoped` | `'transient'` / `'scoped'` / no direct equivalent                           |
 | `container.resolve(T)`                                         | `await ioc.Resolve($T)`                                                     |
 | `container.resolveAll(T)`                                      | `await ioc.ResolveAll($T)`                                                  |

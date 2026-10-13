@@ -57,6 +57,12 @@ Recommended release: **0.1.0**. See [migrating from 0.0.x](./docs/migration/from
   error catalog, migration guides) with every example executed in CI; runnable `examples/`;
   `llms.txt`; CONTRIBUTING, SECURITY, CODE_OF_CONDUCT and issue templates.
 
+### Deprecated
+
+- **`Register`**, the overloaded method that guesses whether it was given a class or a factory.
+  Use `RegisterClass`, `RegisterFactory` or `RegisterValue`. `Register` keeps working and will be
+  removed in 1.0. See [moving off `Register`](./docs/migration/from-0.0.x.md#moving-off-register).
+
 ### Changed
 
 - **`Lazy: true` really defers** creation to the first resolve, and now also applies to factory

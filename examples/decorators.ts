@@ -16,7 +16,7 @@ let upstreamCalls = 0;
 
 const ioc = new IoCContainer();
 
-ioc.Register($Prices, () => ({
+ioc.RegisterFactory($Prices, () => ({
   quote: (symbol) => Promise.resolve(++upstreamCalls && symbol.length * 10),
 }));
 

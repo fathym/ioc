@@ -37,7 +37,7 @@ let upstreamCalls = 0;
 
 const ioc = new IoCContainer();
 
-ioc.Register($Prices, () => ({
+ioc.RegisterFactory($Prices, () => ({
   quote: (symbol) => Promise.resolve((upstreamCalls++, symbol.length * 10)),
 }));
 
@@ -78,7 +78,7 @@ console.log(upstreamCalls); // 1
   const ioc = new IoCContainer();
 
   ioc.RegisterValue($Prefix, '>> ');
-  ioc.Register($Greeter, () => ({ greet: (name) => `hi ${name}` }));
+  ioc.RegisterFactory($Greeter, () => ({ greet: (name) => `hi ${name}` }));
   ioc.Decorate($Greeter, async (inner, c) => {
     const prefix = await c.Resolve($Prefix);
     return { greet: (name) => prefix + inner.greet(name) };

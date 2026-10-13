@@ -71,7 +71,7 @@ already distinct, so the id type matters most for plain types like `string` and 
 declare `IoCToken('Config')` share a key. Prefix ids in shared libraries:
 `IoCToken<Config, '@acme/notes/Config'>('@acme/notes/Config')`.
 
-**A class key is its name.** `Register(Repo)` stores the service under `Symbol.for('Repo')`, so
+**A class key is its name.** `RegisterClass(Repo)` stores the service under `Symbol.for('Repo')`, so
 `Resolve(Repo)` and `Resolve(ioc.Symbol('Repo'))` find the same thing.
 
 > **Note:** A symbol created with `Symbol('x')` (not `Symbol.for`) is unique. Only code holding
@@ -102,13 +102,14 @@ all of them, use `ResolveAll`, `Has` and `TryResolve`
 ## Registering again replaces
 
 Registering the same key and name again **replaces** the earlier registration (last one wins).
-That is how test scopes and decorators work. The removal function `Register` returns for a
-scoped registration never removes a _later_ registration.
+That is how test scopes and decorators work. `Unregister(key, name?)` removes the current
+registration.
 
 ## Class or factory?
 
-`Register` accepts a class or a factory in the same position, so it has to decide which one you
-passed:
+This only concerns the deprecated `Register` method. `RegisterClass` and `RegisterFactory` never
+guess. `Register` accepts a class or a factory in the same position, so it has to decide which one
+you passed:
 
 | You pass                                                              | Treated as | Why                               |
 | --------------------------------------------------------------------- | ---------- | --------------------------------- |

@@ -201,7 +201,7 @@ created first). See [disposal](../concepts/disposal.md#order-and-errors).
 
 ### The Type was missing for the registration.
 
-`Register` received a factory, or an anonymous class, without a key. **Fix:** pass the key, either
+The deprecated `Register` (or `RegisterClass` with an anonymous class) received no key. **Fix:** pass the key, either
 as the first argument or as `Type`:
 
 ```ts
@@ -211,15 +211,15 @@ const $Clock = IoCToken<{ now(): number }>('Clock');
 
 const ioc = new IoCContainer();
 
-ioc.Register($Clock, () => ({ now: () => Date.now() })); // key first
-ioc.Register(() => ({ now: () => 0 }), { Type: $Clock, Name: 'frozen' }); // or as Type
+ioc.RegisterFactory($Clock, () => ({ now: () => Date.now() })); // the key comes first
+ioc.RegisterFactory($Clock, () => ({ now: () => 0 }), { Name: 'frozen' });
 
 console.log((await ioc.Resolve($Clock, 'frozen')).now()); // 0
 ```
 
 ### A factory is required when registering by symbol.
 
-`Register(symbol, …)` was called without a function as the second argument. **Fix:** pass a
+The deprecated `Register(symbol, …)` was called without a function as the second argument. **Fix:** pass a
 factory, or use `RegisterValue(symbol, value)` for a value.
 
 ### RegisterClass expects a class.
@@ -238,7 +238,7 @@ use `RegisterFactory` for factories.
 
 These appear at compile time. Each is caught before your code runs.
 
-### `No overload matches this call` on `Register(token, factory)`
+### `No overload matches this call` on `Register(token, factory)` (deprecated)
 
 ```text
 TS2769: No overload matches this call.
@@ -296,7 +296,7 @@ dependency per parameter.
 ### `Cannot assign an abstract constructor type to a non-abstract constructor type`
 
 **Means:** `Register(AbstractClass)` without a factory; an abstract class can't be constructed.
-**Fix:** `Register(AbstractClass, () => new Implementation())`.
+**Fix:** `RegisterFactory(AbstractClass, () => new Implementation())`.
 
 ### `Argument of type 'string' is not assignable to parameter of type 'Db'`
 

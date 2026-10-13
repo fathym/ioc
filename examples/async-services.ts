@@ -25,8 +25,8 @@ async function fetchRemoteConfig(): Promise<RemoteConfig> {
 
 const ioc = new IoCContainer();
 
-ioc.Register(Deno.Kv, () => Deno.openKv(':memory:'), { Lazy: true });
-ioc.Register($RemoteConfig, fetchRemoteConfig, { Lazy: true });
+ioc.RegisterFactory(Deno.Kv, () => Deno.openKv(':memory:'), { Lazy: true });
+ioc.RegisterFactory($RemoteConfig, fetchRemoteConfig, { Lazy: true });
 
 // Activate builds every lazy singleton and reports all failures together.
 try {

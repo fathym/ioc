@@ -113,11 +113,11 @@ Runnable programs, each showing one idea, run in CI: [examples/](../examples/REA
 
 | Task                         | Call                                                                                       |
 | ---------------------------- | ------------------------------------------------------------------------------------------ |
-| Register a class             | `ioc.RegisterClass(Repo)` or `ioc.Register(Repo)`                                          |
+| Register a class             | `ioc.RegisterClass(Repo)`                                                                  |
 | Register with dependencies   | `ioc.RegisterClass(Repo, { Deps: [Config, $Logger] })`                                     |
 | Check registration order     | `new IoCContainer().Typed().RegisterClass(Config).RegisterClass(Repo, { Deps: [Config] })` |
 | Declare a key from elsewhere | `.Expect($Request)` on a typed container                                                   |
-| Register a factory           | `ioc.Register($Db, async (c) => openDb())`                                                 |
+| Register a factory           | `ioc.RegisterFactory($Db, async (c) => openDb())`                                          |
 | Register a value             | `ioc.RegisterValue($Port, 8080)`                                                           |
 | Resolve                      | `await ioc.Resolve(Repo)` / `await ioc.Resolve($Db, 'replica')`                            |
 | Maybe resolve                | `await ioc.TryResolve($Db)` / `ioc.Has($Db)`                                               |

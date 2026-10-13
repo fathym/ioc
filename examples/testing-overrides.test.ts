@@ -22,7 +22,7 @@ class SignupService {
 
 /** The production wiring, shared by the app and the tests. */
 function registerApp(ioc: IoCContainer): void {
-  ioc.Register($Mailer, () => ({
+  ioc.RegisterFactory($Mailer, () => ({
     send: () => Promise.reject(new Error('no SMTP server in tests')),
   }));
   ioc.RegisterClass(SignupService, { Deps: [$Mailer], Lifetime: 'transient' });

@@ -45,8 +45,8 @@ const $B = IoCToken<unknown>('B');
 
 const ioc = new IoCContainer();
 
-ioc.Register($A, async (c) => ({ b: await c.Resolve($B) }), { Lazy: true });
-ioc.Register($B, async (c) => ({ a: await c.Resolve($A) }), { Lazy: true });
+ioc.RegisterFactory($A, async (c) => ({ b: await c.Resolve($B) }), { Lazy: true });
+ioc.RegisterFactory($B, async (c) => ({ a: await c.Resolve($A) }), { Lazy: true });
 
 try {
   await ioc.Resolve($A);

@@ -42,6 +42,7 @@ Read the table, then the sections for any row that touches your code.
 | 10 | [Copied transient factories receive the target](#10-copied-transient-factories-receive-the-target)                           | `CopyTo` users                                        | None                                           |
 | 11 | [Circular dependencies throw](#11-circular-dependencies-throw)                                                               | Graphs that used to hang                              | Break the cycle                                |
 | 12 | [New: `Register(symbol, factory)` and typed factory parameters](#12-new-registersymbol-factory-and-typed-factory-parameters) | Everyone                                              | Optional                                       |
+| 13 | [`Register` is deprecated](#moving-off-register)                                                                             | Everyone                                              | Optional now; required before 1.0              |
 
 Everything else (typed tokens, `CreateScope`, `Dispose`, `Decorate`, `Deps`, `Validate`,
 `Activate`, …) is new API you can adopt when you like. See the [changelog](../../CHANGELOG.md).
@@ -227,6 +228,40 @@ wait forever. Now it throws `IoCCircularDependencyError` with the path, for exam
 `Register(ioc.Symbol('Hooks'), () => new Hooks())` now works; it threw "The Type was missing"
 before. The `ioc` parameter of factories is now typed in every `Register` form; it used to be an
 implicit `any` in `Register((ioc) => …, { Type })`.
+
+## Moving off `Register`
+
+`Register` is deprecated and will be removed in 1.0. It keeps working until then. Its job is
+split across three explicit methods, which never guess whether you passed a class or a factory,
+and which return the container, so they chain on a
+[typed container](../guides/declared-dependencies.md#depend-only-on-whats-registered-typed-containers):
+
+| Before (`Register`)                                     | After                                                  |
+| ------------------------------------------------------- | ------------------------------------------------------ |
+| `Register(Clock)`                                       | `RegisterClass(Clock)`                                 |
+| `Register(PgDb, { Type: $Db })`                         | `RegisterClass(PgDb, { Type: $Db })`                   |
+| `Register($Db, (c) => …)` / `Register(Cache, (c) => …)` | `RegisterFactory($Db, (c) => …)`                       |
+| `Register((c) => …, { Type: ioc.Symbol('X') })`         | `RegisterFactory(ioc.Symbol('X'), (c) => …)`           |
+| `const remove = Register(…, { Lifetime: 'scoped' })`    | `RegisterFactory(…)`, then `Unregister(key, name?)`    |
+| A named `function` passed to `Register` (constructed)   | `RegisterFactory(key, fn)` (called, never constructed) |
+
+```ts
+import { IoCContainer, IoCToken } from '@fathym/ioc';
+
+const $Db = IoCToken<{ url: string }, 'Db'>('Db');
+
+class Clock {
+  public now = () => Date.now();
+}
+
+const ioc = new IoCContainer()
+  .RegisterClass(Clock) // was: ioc.Register(Clock)
+  .RegisterFactory($Db, () => ({ url: 'kv://local' }), { Lazy: true }); // was: ioc.Register($Db, …)
+
+console.log((await ioc.Resolve($Db)).url); // kv://local
+
+ioc.Unregister($Db); // was: the function Register returned for a scoped registration
+```
 
 ## What's Next
 

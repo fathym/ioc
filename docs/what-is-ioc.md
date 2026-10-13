@@ -87,7 +87,7 @@ class NotesService {
 const ioc = new IoCContainer();
 
 ioc.RegisterClass(Config);
-ioc.Register(Deno.Kv, async (c) => await Deno.openKv((await c.Resolve(Config)).dbPath), {
+ioc.RegisterFactory(Deno.Kv, async (c) => await Deno.openKv((await c.Resolve(Config)).dbPath), {
   Lazy: true,
 });
 ioc.RegisterClass(NotesStore, { Deps: [Deno.Kv], Lazy: true });

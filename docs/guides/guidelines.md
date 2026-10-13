@@ -91,13 +91,15 @@ const ioc = new IoCContainer();
 ioc.RegisterValue($Greeting, 'Hello');
 
 // WRONG - resolves through the captured root container
-ioc.Register($Message, async () => `${await ioc.Resolve($Greeting)}!`, {
+ioc.RegisterFactory($Message, async () => `${await ioc.Resolve($Greeting)}!`, {
   Lifetime: 'transient',
   Name: 'wrong',
 });
 
 // CORRECT - resolves through the parameter
-ioc.Register($Message, async (c) => `${await c.Resolve($Greeting)}!`, { Lifetime: 'transient' });
+ioc.RegisterFactory($Message, async (c) => `${await c.Resolve($Greeting)}!`, {
+  Lifetime: 'transient',
+});
 
 const scope = ioc.CreateScope();
 
@@ -214,7 +216,7 @@ console.log(sharedPool.closed); // false
   await using ioc = new IoCContainer();
 
   // WRONG - a factory's result is treated as the container's own
-  ioc.Register($PoolWrong, () => sharedPool);
+  ioc.RegisterFactory($PoolWrong, () => sharedPool);
 }
 
 console.log(sharedPool.closed); // true
@@ -225,7 +227,7 @@ console.log(sharedPool.closed); // true
 **Symptom:** a factory written as `function makeDb() {…}` behaves strangely, because `this` is a
 new object and its return value is used only if it's an object.
 
-**Why:** for compatibility with older versions, `Register` treats named `function` declarations as
+**Why:** for compatibility with older versions, the deprecated `Register` treats named `function` declarations as
 classes and calls them with `new`.
 
 ```ts

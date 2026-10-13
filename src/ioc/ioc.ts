@@ -40,7 +40,7 @@ export type IoCServiceConstructor<T> = { new (...args: any[]): T };
 
 /**
  * A class used only as a key (it is never constructed by the container), so abstract classes
- * work as typed "interface" keys: `ioc.Register(Repo, () => new PgRepo())`.
+ * work as typed "interface" keys: `ioc.RegisterFactory(Repo, () => new PgRepo())`.
  */
 // deno-lint-ignore no-explicit-any
 export type IoCServiceKeyConstructor<T> = abstract new (...args: any[]) => T;
@@ -424,7 +424,7 @@ export class IoCContainer<TKeys = any> {
    *
    * const ioc = new IoCContainer();
    *
-   * ioc.Register(IoCToken('Cache'), () => new Map(), { Lazy: true });
+   * ioc.RegisterFactory(IoCToken('Cache'), () => new Map(), { Lazy: true });
    *
    * await ioc.Activate(); // builds Cache now; throws an AggregateError naming every failure
    * ```
@@ -608,6 +608,11 @@ export class IoCContainer<TKeys = any> {
   /**
    * Registers a scoped factory under a token or symbol; returns a function that removes the
    * registration.
+   *
+   * @deprecated Use the explicit methods: {@link IoCContainer.RegisterClass},
+   * {@link IoCContainer.RegisterFactory} or {@link IoCContainer.RegisterValue}. They never guess
+   * whether you passed a class or a factory, and they chain on a typed container. `Register`
+   * keeps working and will be removed in 1.0.
    */
   public Register<T>(
     type: IoCToken<T> | symbol,
@@ -615,7 +620,14 @@ export class IoCContainer<TKeys = any> {
     options: IoCRegisterOptions & { Lifetime: 'scoped' },
   ): () => void;
 
-  /** Registers a factory under a token or symbol (same as passing `{ Type: type }`). */
+  /**
+   * Registers a factory under a token or symbol (same as passing `{ Type: type }`).
+   *
+   * @deprecated Use the explicit methods: {@link IoCContainer.RegisterClass},
+   * {@link IoCContainer.RegisterFactory} or {@link IoCContainer.RegisterValue}. They never guess
+   * whether you passed a class or a factory, and they chain on a typed container. `Register`
+   * keeps working and will be removed in 1.0.
+   */
   public Register<T>(
     type: IoCToken<T> | symbol,
     instance: IoCServiceResolver<NoInfer<T>>,
@@ -625,6 +637,11 @@ export class IoCContainer<TKeys = any> {
   /**
    * Registers `clazz` as a scoped service created by `instance`; returns a function that removes
    * the registration.
+   *
+   * @deprecated Use the explicit methods: {@link IoCContainer.RegisterClass},
+   * {@link IoCContainer.RegisterFactory} or {@link IoCContainer.RegisterValue}. They never guess
+   * whether you passed a class or a factory, and they chain on a typed container. `Register`
+   * keeps working and will be removed in 1.0.
    */
   public Register<T>(
     clazz: IoCServiceKeyConstructor<T>,
@@ -632,7 +649,14 @@ export class IoCContainer<TKeys = any> {
     options: IoCServiceOptions & { Lifetime: 'scoped' },
   ): () => void;
 
-  /** Registers a factory keyed by `clazz` (or `options.Type`). */
+  /**
+   * Registers a factory keyed by `clazz` (or `options.Type`).
+   *
+   * @deprecated Use the explicit methods: {@link IoCContainer.RegisterClass},
+   * {@link IoCContainer.RegisterFactory} or {@link IoCContainer.RegisterValue}. They never guess
+   * whether you passed a class or a factory, and they chain on a typed container. `Register`
+   * keeps working and will be removed in 1.0.
+   */
   public Register<T>(
     clazz: IoCServiceKeyConstructor<T>,
     instance: IoCServiceResolver<T>,
@@ -642,6 +666,11 @@ export class IoCContainer<TKeys = any> {
   /**
    * Registers a scoped class, or a scoped factory (`options.Type` is required for factories);
    * returns a function that removes the registration.
+   *
+   * @deprecated Use the explicit methods: {@link IoCContainer.RegisterClass},
+   * {@link IoCContainer.RegisterFactory} or {@link IoCContainer.RegisterValue}. They never guess
+   * whether you passed a class or a factory, and they chain on a typed container. `Register`
+   * keeps working and will be removed in 1.0.
    */
   public Register<T>(
     clazzInstance: IoCServiceConstructor<T> | IoCServiceResolver<T>,
@@ -665,6 +694,11 @@ export class IoCContainer<TKeys = any> {
    * ioc.Register(Clock); // a class (singleton by default)
    * ioc.Register($Db, async () => ({ url: 'kv://local' }), { Lazy: true }); // an async factory
    * ```
+   *
+   * @deprecated Use the explicit methods: {@link IoCContainer.RegisterClass},
+   * {@link IoCContainer.RegisterFactory} or {@link IoCContainer.RegisterValue}. They never guess
+   * whether you passed a class or a factory, and they chain on a typed container. `Register`
+   * keeps working and will be removed in 1.0.
    */
   public Register<T>(
     clazzInstance: IoCServiceConstructor<T> | IoCServiceResolver<T>,
@@ -935,7 +969,7 @@ export class IoCContainer<TKeys = any> {
    *
    * const ioc = new IoCContainer();
    *
-   * ioc.Register($Prices, () => ({ quote: (symbol) => symbol.length }));
+   * ioc.RegisterFactory($Prices, () => ({ quote: (symbol) => symbol.length }));
    * ioc.Decorate($Prices, (inner) => {
    *   const cache = new Map<string, number>();
    *   return { quote: (s) => cache.get(s) ?? cache.set(s, inner.quote(s)).get(s)! };

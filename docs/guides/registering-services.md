@@ -20,22 +20,21 @@ References:
 
 ## Pick a method
 
-| I have…                                                  | Use                                                                    |
-| -------------------------------------------------------- | ---------------------------------------------------------------------- |
-| A class with no constructor parameters                   | `RegisterClass(Clock)`                                                 |
-| A class whose constructor needs other services           | `RegisterClass(Repo, { Deps: [Config, $Db] })`                         |
-| A class that implements an interface token               | `RegisterClass(PgDb, { Type: $Db })`                                   |
-| An interface or abstract class, and the code to build it | `RegisterFactory($Db, (c) => …)` or `RegisterFactory(Cache, (c) => …)` |
-| Async setup (connect, fetch, load)                       | the same, with an `async` factory, often `Lazy: true`                  |
-| A value I already have (config, a function, a request)   | `RegisterValue($Port, 8080)`                                           |
-| Older code using symbols                                 | `Register((c) => …, { Type: ioc.Symbol('X') })`                        |
+| I have…                                                  | Use                                                                         |
+| -------------------------------------------------------- | --------------------------------------------------------------------------- |
+| A class with no constructor parameters                   | `RegisterClass(Clock)`                                                      |
+| A class whose constructor needs other services           | `RegisterClass(Repo, { Deps: [Config, $Db] })`                              |
+| A class that implements an interface token               | `RegisterClass(PgDb, { Type: $Db })`                                        |
+| An interface or abstract class, and the code to build it | `RegisterFactory($Db, (c) => …)` or `RegisterFactory(Cache, (c) => …)`      |
+| Async setup (connect, fetch, load)                       | the same, with an `async` factory, often `Lazy: true`                       |
+| A value I already have (config, a function, a request)   | `RegisterValue($Port, 8080)`                                                |
+| Older code using `Register` (deprecated)                 | See [moving off `Register`](../migration/from-0.0.x.md#moving-off-register) |
 
 Prefer the explicit methods: `RegisterClass`, `RegisterFactory` and `RegisterValue`. They never
 guess whether you passed a class or a factory, and they return the container, so registrations
 chain and a [typed container](./declared-dependencies.md#depend-only-on-whats-registered-typed-containers)
-can check `Deps` against what's registered. `Register` is the flexible, original method, kept for
-compatibility. Its token and class forms (`Register($Db, factory)`) still work, and the docs use
-them in places.
+can check `Deps` against what's registered. `Register`, the original overloaded method, is
+deprecated and will be removed in 1.0.
 
 ## Every form, in one program
 
@@ -67,7 +66,7 @@ const ioc = new IoCContainer()
   }, { Lazy: true })
   .RegisterClass(Repo, { Deps: [Config, $Db] }); // a class with declared dependencies
 
-ioc.Register(() => ({ legacy: true }), { Type: ioc.Symbol('Legacy') }); // the original symbol form
+ioc.RegisterFactory(ioc.Symbol('Legacy'), () => ({ legacy: true })); // a plain symbol key (untyped)
 
 const repo = await ioc.Resolve(Repo);
 
@@ -92,11 +91,11 @@ Every registration accepts these options (`RegisterValue` takes only `Name`; `Ty
 | Call                                                | Returns                                               |
 | --------------------------------------------------- | ----------------------------------------------------- |
 | `RegisterClass`, `RegisterFactory`, `RegisterValue` | The same container, typed with the new key (to chain) |
-| `Register(…, { Lifetime: 'scoped' })`               | A function that removes this registration             |
-| `Register(…)` with any other lifetime               | `undefined`                                           |
+| `Register(…, { Lifetime: 'scoped' })` (deprecated)  | A function that removes this registration             |
+| `Register(…)` (deprecated), any other lifetime      | `undefined`                                           |
 | `Decorate(…)`                                       | A function that restores the previous registration    |
 
-Remove an explicit registration with `Unregister(key, name?)`. The function `Register` returns
+Remove a registration with `Unregister(key, name?)`. The function the deprecated `Register` returns
 for a scoped registration only ever removes the registration it created. If something was
 registered again under the same key and name since, the newer registration stays.
 
@@ -104,11 +103,11 @@ registered again under the same key and name since, the newer registration stays
 
 - **Eager singletons are built at registration.** Register dependencies first, or use `Lazy: true`
   so order doesn't matter.
-- **A named `function` declaration passed to `Register` is constructed,** not called, for
-  compatibility with older versions. Use an arrow function or `RegisterFactory`.
+- **A named `function` declaration passed to the deprecated `Register` is constructed,** not
+  called. `RegisterFactory` always calls it.
 - **A registration made as a statement doesn't change the variable's type.** To have `Deps`
   checked against what's registered, chain the calls on a typed container.
-- **Abstract classes can't be constructed,** so `Register(Cache)` alone is a type error. Give it a
+- **Abstract classes can't be constructed,** so `RegisterClass(Cache)` is a type error. Give it a
   factory.
 
 ## What's Next

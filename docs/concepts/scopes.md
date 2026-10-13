@@ -65,9 +65,13 @@ const $Greeting = IoCToken<string>('Greeting');
 const ioc = new IoCContainer();
 
 ioc.RegisterValue($Greeting, 'Hello');
-ioc.Register(IoCToken<string>('Message'), async (c) => `${await c.Resolve($Greeting)}, Ada`, {
-  Lifetime: 'transient',
-});
+ioc.RegisterFactory(
+  IoCToken<string>('Message'),
+  async (c) => `${await c.Resolve($Greeting)}, Ada`,
+  {
+    Lifetime: 'transient',
+  },
+);
 
 const scope = ioc.CreateScope();
 

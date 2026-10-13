@@ -49,7 +49,7 @@ class GreetingHandler {
 
 const ioc = new IoCContainer();
 
-ioc.Register(CurrentUser, async (c) => {
+ioc.RegisterFactory(CurrentUser, async (c) => {
   const req = await c.Resolve($Request);
   return new CurrentUser(req.headers.get('x-user') ?? 'guest');
 }, { Lifetime: 'scoped', Lazy: true });

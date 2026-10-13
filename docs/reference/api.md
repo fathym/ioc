@@ -40,6 +40,12 @@ runnable example, checked in CI.
 
 ### Register(key, factory, options?)
 
+> **Warning:** Deprecated; it will be removed in 1.0. Use [`RegisterClass`](#registerclassclass-options),
+> [`RegisterFactory`](#registerfactorykey-factory-options) or
+> [`RegisterValue`](#registervaluekey-value-options). They never guess whether you passed a class
+> or a factory, and they chain on a [typed container](#typed). See
+> [moving off `Register`](../migration/from-0.0.x.md#moving-off-register).
+
 The flexible, original registration method. It accepts several forms:
 
 ```ts ignore
@@ -200,7 +206,7 @@ const $Greeter = IoCToken<{ greet(name: string): string }>('Greeter');
 
 const ioc = new IoCContainer();
 
-ioc.Register($Greeter, () => ({ greet: (name) => `hi ${name}` }));
+ioc.RegisterFactory($Greeter, () => ({ greet: (name) => `hi ${name}` }));
 
 const undo = ioc.Decorate(
   $Greeter,
@@ -406,7 +412,7 @@ const $Cache = IoCToken<Map<string, string>>('Cache');
 
 const ioc = new IoCContainer();
 
-ioc.Register($Cache, () => new Map(), { Lazy: true });
+ioc.RegisterFactory($Cache, () => new Map(), { Lazy: true });
 
 console.log(ioc.Has($Cache), ioc.Has($Cache, 'other')); // true false
 ```
@@ -469,7 +475,7 @@ let built = false;
 
 const ioc = new IoCContainer();
 
-ioc.Register(IoCToken('Search'), () => (built = true), { Lazy: true });
+ioc.RegisterFactory(IoCToken('Search'), () => (built = true), { Lazy: true });
 
 await ioc.Activate();
 
@@ -652,11 +658,11 @@ console.log(typeof $Port, port); // symbol 8080
 
 ### Options
 
-| Type                                   | Fields                                                                                                                    | Used by                                 |
-| -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- | --------------------------------------- |
-| `IoCServiceOptions`                    | `Lifetime?: 'transient' \| 'scoped'`, `Lazy?: boolean`, `Name?: string`, `Type?: symbol`                                  | `Register(class/factory, …)`            |
-| `IoCRegisterOptions<TName>`            | `IoCServiceOptions` without `Type`; `Name` typed as `TName`                                                               | `Register(token, …)`, `RegisterFactory` |
-| `IoCRegisterClassOptions<C, TKeys, …>` | `Lifetime`, `Lazy`, `Name`, `Deps?: IoCDependenciesFor<ConstructorParameters<C>, TKeys>`, `Type?` (a token `C` satisfies) | `RegisterClass`                         |
+| Type                                   | Fields                                                                                                                    | Used by                                   |
+| -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------- |
+| `IoCServiceOptions`                    | `Lifetime?: 'transient' \| 'scoped'`, `Lazy?: boolean`, `Name?: string`, `Type?: symbol`                                  | `Register(class/factory, …)` (deprecated) |
+| `IoCRegisterOptions<TName>`            | `IoCServiceOptions` without `Type`; `Name` typed as `TName`                                                               | `Register(token, …)`, `RegisterFactory`   |
+| `IoCRegisterClassOptions<C, TKeys, …>` | `Lifetime`, `Lazy`, `Name`, `Deps?: IoCDependenciesFor<ConstructorParameters<C>, TKeys>`, `Type?` (a token `C` satisfies) | `RegisterClass`                           |
 
 | Option     | Default      | Meaning                                                                         |
 | ---------- | ------------ | ------------------------------------------------------------------------------- |

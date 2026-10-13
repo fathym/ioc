@@ -40,7 +40,7 @@ flowchart LR
 The default. One instance, created once and shared everywhere.
 
 - **Eager by default.** A singleton is built _when you register it_. A synchronous error makes
-  `Register` throw (and keeps any earlier registration). An async failure is kept until something
+  the registration call throw (and keeps any earlier registration). An async failure is kept until something
   resolves the service, and the next resolve after it settles retries.
 - **`Lazy: true` defers creation** to the first resolve. Creation is shared by concurrent
   resolves and retried if it fails. Use `Activate()` to build lazy singletons at startup anyway.
@@ -63,8 +63,8 @@ One instance per **scope** (see [scopes](./scopes.md)), typically one per HTTP r
 
 - In each child scope created with `CreateScope()`, the instance is built on first resolve and
   disposed with the scope.
-- In the container where it was registered, it behaves like a singleton. `Register` returns a
-  function that removes the registration, as it always has.
+- In the container where it was registered, it behaves like a singleton (built at registration
+  unless `Lazy`).
 
 ```ts
 import { IoCContainer } from '@fathym/ioc';

@@ -37,7 +37,7 @@ import { IoCContainer, IoCToken } from '@fathym/ioc';
 const $Plugin = IoCToken<{ name: string }>('Plugin');
 
 const pluginIoc = new IoCContainer();
-pluginIoc.Register($Plugin, () => ({ name: 'search' }), { Lazy: true });
+pluginIoc.RegisterFactory($Plugin, () => ({ name: 'search' }), { Lazy: true });
 
 const runtimeIoc = new IoCContainer();
 pluginIoc.CopyTo(runtimeIoc);

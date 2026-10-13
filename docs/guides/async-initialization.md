@@ -37,7 +37,7 @@ import { IoCContainer } from '@fathym/ioc';
 const ioc = new IoCContainer();
 
 // Opened the first time something resolves it. Concurrent resolves share one connection.
-ioc.Register(Deno.Kv, () => Deno.openKv(':memory:'), { Lazy: true, Name: 'cache' });
+ioc.RegisterFactory(Deno.Kv, () => Deno.openKv(':memory:'), { Lazy: true, Name: 'cache' });
 
 const [a, b] = await Promise.all([ioc.Resolve(Deno.Kv, 'cache'), ioc.Resolve(Deno.Kv, 'cache')]);
 
@@ -63,13 +63,13 @@ const order: string[] = [];
 
 const ioc = new IoCContainer();
 
-ioc.Register($Client, async (c) => {
+ioc.RegisterFactory($Client, async (c) => {
   const { region } = await c.Resolve($Settings); // waits for settings first
   order.push('client');
   return { endpoint: `https://${region}.api.example` };
 }, { Lazy: true });
 
-ioc.Register($Settings, async () => {
+ioc.RegisterFactory($Settings, async () => {
   await new Promise((resolve) => setTimeout(resolve, 5)); // e.g. fetch remote config
   order.push('settings');
   return { region: 'eu' };
@@ -112,7 +112,7 @@ const $Conn = IoCToken<{ connected: true }>('Conn');
 
 const ioc = new IoCContainer();
 
-ioc.Register($Conn, () => withRetry(connect), { Lazy: true });
+ioc.RegisterFactory($Conn, () => withRetry(connect), { Lazy: true });
 
 console.log(await ioc.Resolve($Conn), `after ${calls} attempts`); // { connected: true } after 3 attempts
 ```
@@ -128,7 +128,7 @@ const $Remote = IoCToken<Response>('Remote');
 
 const ioc = new IoCContainer();
 
-ioc.Register($Remote, () => {
+ioc.RegisterFactory($Remote, () => {
   // AbortSignal.timeout makes fetch reject after 2 seconds.
   return fetch('data:application/json,{"ok":true}', { signal: AbortSignal.timeout(2000) });
 }, { Lazy: true });
@@ -147,8 +147,10 @@ import { IoCContainer, IoCToken } from '@fathym/ioc';
 
 const ioc = new IoCContainer();
 
-ioc.Register(IoCToken('Cache'), () => ({ ready: true }), { Lazy: true });
-ioc.Register(IoCToken('Search'), () => Promise.reject(new Error('index missing')), { Lazy: true });
+ioc.RegisterFactory(IoCToken('Cache'), () => ({ ready: true }), { Lazy: true });
+ioc.RegisterFactory(IoCToken('Search'), () => Promise.reject(new Error('index missing')), {
+  Lazy: true,
+});
 
 try {
   await ioc.Activate();
