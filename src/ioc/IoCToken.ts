@@ -1,5 +1,3 @@
-declare const IoCTokenType: unique symbol;
-
 /**
  * A symbol that carries the type of the service registered under it, so resolving it needs no
  * explicit generic:
@@ -14,7 +12,10 @@ declare const IoCTokenType: unique symbol;
  * Tokens are plain `Symbol.for(id)` symbols at runtime, so `IoCToken('Db')` and `ioc.Symbol('Db')`
  * are interchangeable, and a plain symbol is accepted anywhere a token is.
  */
-export type IoCToken<T> = symbol & { readonly [IoCTokenType]?: T };
+export type IoCToken<T> = symbol & {
+  /** Type-only marker carrying the service type; never present at runtime. */
+  readonly '@fathym/ioc/type'?: T;
+};
 
 /** Creates a typed token for `id` (the same symbol as `Symbol.for(id)` / `ioc.Symbol(id)`). */
 export function IoCToken<T>(id: string): IoCToken<T> {

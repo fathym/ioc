@@ -162,18 +162,33 @@ export class IoCContainer {
    * Registrations keyed by their exact class, so two different classes that share a name do not
    * resolve each other's instances. The name-based bank in `services` stays authoritative for
    * symbol lookups and for classes the container has not seen.
+   *
+   * @ignore
    */
   protected readonly byCtor: Map<AnyFunction, Map<string, unknown>>;
 
-  /** The container this scope was created from (see {@link IoCContainer.CreateScope}). */
+  /**
+   * The container this scope was created from (see {@link IoCContainer.CreateScope}).
+   *
+   * @ignore
+   */
   protected parent?: IoCContainer;
 
-  /** This scope's instances of `scoped` registrations owned by an ancestor. */
+  /**
+   * This scope's instances of `scoped` registrations owned by an ancestor.
+   *
+   * @ignore
+   */
   protected readonly scopedHolders: Map<IoCRegistration, IoCHolder>;
 
-  /** Instances this container created and must dispose, in creation order. */
+  /**
+   * Instances this container created and must dispose, in creation order.
+   *
+   * @ignore
+   */
   protected readonly owned: object[];
 
+  /** @ignore */
   protected disposed: boolean;
 
   constructor() {
@@ -875,28 +890,45 @@ export class IoCContainer {
 
   //#region Internals
 
-  /** The resolution frame a call continues: the view's frame, else the running factory's. */
+  /**
+   * The resolution frame a call continues: the view's frame, else the running factory's.
+   *
+   * @ignore
+   */
   protected frame(): IoCResolveFrame | undefined {
     return (this as Indexable)[IOC_CONTEXT] ?? currentFrame();
   }
 
-  /** The real container behind a context view (or this container). */
+  /**
+   * The real container behind a context view (or this container).
+   *
+   * @ignore
+   */
   protected self(): IoCContainer {
     return (this as Indexable)[IOC_SELF] ?? this;
   }
 
-  /** This container followed by its ancestors. */
+  /**
+   * This container followed by its ancestors.
+   *
+   * @ignore
+   */
   protected *chain(): Generator<IoCContainer> {
     for (let c: IoCContainer | undefined = this.self(); c; c = c.parent) {
       yield c;
     }
   }
 
+  /** @ignore */
   protected assertNotDisposed(): void {
     if (((this as Indexable)[IOC_SELF] ?? this).disposed) throw new IoCContainerDisposedError();
   }
 
-  /** The name bank for `symbol`, created on demand for any symbol. */
+  /**
+   * The name bank for `symbol`, created on demand for any symbol.
+   *
+   * @ignore
+   */
   protected bank(symbol: symbol): Map<string, IoCServiceResolutions> {
     let bank = this.services.get(symbol);
 
@@ -908,6 +940,7 @@ export class IoCContainer {
     return bank;
   }
 
+  /** @ignore */
   protected trackCtor(ctor: AnyFunction, name: string, entry: unknown): void {
     let entries = this.byCtor.get(ctor);
 
@@ -919,6 +952,7 @@ export class IoCContainer {
     entries.set(name, entry);
   }
 
+  /** @ignore */
   protected untrackCtor(ctor: AnyFunction, name: string, entry: unknown): void {
     const entries = this.byCtor.get(ctor);
 
@@ -929,7 +963,11 @@ export class IoCContainer {
     }
   }
 
-  /** Records an instance this container created, for disposal. */
+  /**
+   * Records an instance this container created, for disposal.
+   *
+   * @ignore
+   */
   protected trackOwned(value: unknown): void {
     if (isDisposable(value)) this.owned.push(value);
   }
@@ -937,6 +975,8 @@ export class IoCContainer {
   /**
    * This scope's holder for a `scoped` registration owned by an ancestor (created on demand), or
    * undefined when this container is not a child scope of the owner.
+   *
+   * @ignore
    */
   protected scopedHolderFor(reg: IoCRegistration): IoCHolder | undefined {
     if (!this.parent || reg.owner === this) return undefined;
@@ -951,7 +991,11 @@ export class IoCContainer {
     return holder;
   }
 
-  /** Finds the stored entry for a key in this container only. */
+  /**
+   * Finds the stored entry for a key in this container only.
+   *
+   * @ignore
+   */
   protected findOwn(key: AnyFunction | symbol, name: string): FoundEntry | undefined {
     const bank = this.services.get(keySymbol(key));
 
@@ -983,7 +1027,11 @@ export class IoCContainer {
     return { entry };
   }
 
-  /** Finds the stored entry for a key, nearest scope first. Never mutates. */
+  /**
+   * Finds the stored entry for a key, nearest scope first. Never mutates.
+   *
+   * @ignore
+   */
   protected find(key: AnyFunction | symbol, name: string): FoundEntry | undefined {
     for (let c: IoCContainer | undefined = this.self(); c; c = c.parent) {
       const found = c.findOwn(key, name);
@@ -994,7 +1042,11 @@ export class IoCContainer {
     return undefined;
   }
 
-  /** Like `find`, but throws {@link IoCServiceNotFoundError} when nothing is registered. */
+  /**
+   * Like `find`, but throws {@link IoCServiceNotFoundError} when nothing is registered.
+   *
+   * @ignore
+   */
   protected lookup(
     key: AnyFunction | symbol,
     name: string,
@@ -1015,7 +1067,11 @@ export class IoCContainer {
     throw new IoCServiceNotFoundError(symbol, name, [...names], framePath(frame));
   }
 
-  /** Turns a stored entry into the service value (or a promise of it). */
+  /**
+   * Turns a stored entry into the service value (or a promise of it).
+   *
+   * @ignore
+   */
   protected realize(entry: unknown, frame: IoCResolveFrame | undefined): unknown {
     const reg = registrationOf(entry);
 
@@ -1032,6 +1088,8 @@ export class IoCContainer {
   /**
    * Creates and stores a registration, building it now unless it is lazy or transient. Returns
    * a function that removes exactly this registration.
+   *
+   * @ignore
    */
   protected addRegistration(spec: {
     symbol: symbol;

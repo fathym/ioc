@@ -4,7 +4,7 @@ DocumentType: Guide
 Title: IoC Container Guide
 Summary: Playbook for maintaining the Fathym IoC container for Deno runtimes.
 Created: 2025-11-20
-Updated: 2025-11-20
+Updated: 2026-10-13
 Owners:
   - fathym
 References:
@@ -12,10 +12,14 @@ References:
     Path: ./README.md
   - Label: Project Agents Guide
     Path: ./AGENTS.md
-  - Label: Projects: Ref-Arch README
-      Path: ../README.md
-  - Label: Projects: Ref-Arch Guide
-      Path: ../GUIDE.md
+  - Label: 'Projects: Ref-Arch README'
+    Path: ../README.md
+  - Label: 'Projects: Ref-Arch Guide'
+    Path: ../GUIDE.md
+  - Label: IoC Next (design and migration)
+    Path: ./docs/design/ioc-next.md
+  - Label: DI Ecosystem Feedback (research)
+    Path: ./docs/research/di-ecosystem-feedback.md
   - Label: Root Workspace Guide
     Path: ../../../WORKSPACE_GUIDE.md
 ---
@@ -26,12 +30,17 @@ Use this playbook to keep IoC container work predictable and discoverable.
 
 ## Current Focus
 
-- Validate container lifecycle behaviors (transient, scoped) and symbol
-  registration patterns.
-- Provide usage examples for common scenarios (factory registrations, lazy
-  resolutions, scoped lifetimes).
+- Validate container lifecycle behaviors (transient, scoped, scopes) and symbol
+  registration patterns. The legacy suite (`tests/ioc/bench.ts`) and the
+  characterization tests run against the frozen 0.0.36 container in
+  `tests/fixtures/legacy-ioc.ts`; keep both green.
+- Keep cross-version interop working: dependents pin different exact versions,
+  so containers from several versions call each other's `CopyTo`
+  (`tests/ioc/interop.tests.ts`). Never use `#private` fields or `instanceof`
+  across containers.
+- Provide usage examples for common scenarios in the README.
 - Align APIs with other ref-arch libraries and the CLI where integration
-  matters.
+  matters. See [`docs/design/ioc-next.md`](./docs/design/ioc-next.md).
 
 ## Workflow
 
