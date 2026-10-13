@@ -1,4 +1,8 @@
-import { IoCCircularDependencyError, IoCServiceNotFoundError } from './errors.ts';
+import {
+  IoCCircularDependencyError,
+  IoCContainerDisposedError,
+  IoCServiceNotFoundError,
+} from './errors.ts';
 import {
   type AnyFunction,
   createLegacyThunk,
@@ -17,10 +21,12 @@ import {
   isClassLike,
   isOnActivePath,
   labelFor,
+  noop,
   registrationOf,
   settleInto,
   withFrame,
 } from './internals.ts';
+import type { IoCToken } from './IoCToken.ts';
 
 /** Any constructed service value. */
 // deno-lint-ignore ban-types
@@ -29,6 +35,16 @@ export type IoCServiceConstructed = { constructor: Function };
 /** A class that can be registered and used as a resolution key. */
 // deno-lint-ignore no-explicit-any
 export type IoCServiceConstructor<T> = { new (...args: any[]): T };
+
+/**
+ * A class used only as a key (it is never constructed by the container), so abstract classes
+ * work as typed "interface" keys: `ioc.Register(Repo, () => new PgRepo())`.
+ */
+// deno-lint-ignore no-explicit-any
+export type IoCServiceKeyConstructor<T> = abstract new (...args: any[]) => T;
+
+/** Anything a service can be resolved by: a typed token / symbol, or a class. */
+export type IoCServiceKey<T> = IoCToken<T> | IoCServiceKeyConstructor<T>;
 
 /** Options accepted by {@link IoCContainer.Register}. */
 export type IoCServiceOptions = {
@@ -40,7 +56,9 @@ export type IoCServiceOptions = {
 
   /**
    * `singleton` (default): one shared instance. `transient`: a new instance per resolve.
-   * `scoped`: a singleton whose registration can be removed with the function `Register` returns.
+   * `scoped`: one instance per scope (see {@link IoCContainer.CreateScope}); in the container it
+   * was registered in it behaves as a singleton whose registration can be removed with the
+   * function `Register` returns.
    */
   Lifetime?: 'transient' | 'scoped';
 
@@ -50,6 +68,9 @@ export type IoCServiceOptions = {
   /** The symbol to register under. Defaults to `Symbol.for(clazz.name)` for class registrations. */
   Type?: symbol;
 };
+
+/** Options for registrations whose key is given separately (no `Type`). */
+export type IoCRegisterOptions = Omit<IoCServiceOptions, 'Type'>;
 
 /** What is stored per registration in {@link IoCContainer.services}. */
 export type IoCServiceResolutions =
@@ -66,7 +87,20 @@ export type IoCServices = Map<symbol, Map<string, IoCServiceResolutions>>;
 // deno-lint-ignore no-explicit-any
 type Indexable = any;
 
+type FoundEntry = { entry: unknown };
+
 const DEFAULT_NAME = '$default';
+
+function keySymbol(key: AnyFunction | symbol): symbol {
+  return typeof key === 'symbol' ? key : Symbol.for(key.name);
+}
+
+function isDisposable(value: unknown): value is object {
+  if ((typeof value !== 'object' && typeof value !== 'function') || value === null) return false;
+
+  return typeof (value as Indexable)[Symbol.asyncDispose] === 'function' ||
+    typeof (value as Indexable)[Symbol.dispose] === 'function';
+}
 
 /**
  * A small, async-first, decorator-free inversion-of-control container.
@@ -81,7 +115,7 @@ const DEFAULT_NAME = '$default';
  * ```
  */
 export class IoCContainer {
-  /** Registrations by symbol, then by name. */
+  /** Registrations by symbol, then by name (this container's own; scopes see parents too). */
   public services: IoCServices;
 
   /** Symbols handed out by {@link IoCContainer.Symbol}. */
@@ -94,6 +128,17 @@ export class IoCContainer {
    */
   protected readonly byCtor: Map<AnyFunction, Map<string, unknown>>;
 
+  /** The container this scope was created from (see {@link IoCContainer.CreateScope}). */
+  protected parent?: IoCContainer;
+
+  /** This scope's instances of `scoped` registrations owned by an ancestor. */
+  protected readonly scopedHolders: Map<IoCRegistration, IoCHolder>;
+
+  /** Instances this container created and must dispose, in creation order. */
+  protected readonly owned: object[];
+
+  protected disposed: boolean;
+
   constructor() {
     this.services = new Map<symbol, Map<string, IoCServiceResolutions>>();
 
@@ -101,73 +146,72 @@ export class IoCContainer {
 
     this.byCtor = new Map();
 
+    this.scopedHolders = new Map();
+
+    this.owned = [];
+
+    this.disposed = false;
+
     Object.defineProperty(this, IOC_PROTOCOL, { value: IOC_PROTOCOL_VERSION });
   }
 
-  /**
-   * Copies every registration into `ioc`, replacing registrations it already has with the same
-   * symbol and name. Singletons are shared (both containers resolve the same instance) and
-   * transient factories receive the container they are resolved from.
-   */
-  public CopyTo(ioc: IoCContainer): void {
-    const target = ioc as Indexable;
+  //#region Resolution
 
-    const protocolAware = (target?.[IOC_PROTOCOL] ?? 0) >= 1;
+  /** Resolves a service by typed token (or symbol), optionally by name. */
+  public async Resolve<T>(token: IoCToken<T>, name?: string): Promise<T>;
 
-    for (const [symbol, bank] of this.services) {
-      for (const [name, entry] of bank) {
-        if (protocolAware) {
-          target.RegisterDirect(symbol, name, entry);
-        } else {
-          // Older containers only know symbols from their own `Symbol(id)` registry.
-          if (symbol.description === undefined) continue;
-
-          const reg = registrationOf(entry);
-
-          target.RegisterDirect(
-            target.Symbol(symbol.description),
-            name,
-            reg ? createLegacyThunk(reg, target) : entry,
-          );
-        }
-      }
-    }
-
-    // RegisterDirect already tracked the classes that own their name bank entries; this carries
-    // over same-named classes whose entries were shadowed by a later registration.
-    if (protocolAware && typeof target.trackCtor === 'function') {
-      for (const [ctor, entries] of this.byCtor) {
-        for (const [name, entry] of entries) {
-          target.trackCtor(ctor, name, entry);
-        }
-      }
-    }
-  }
-
-  /** Resolves a class registration. */
-  public async Resolve<T>(ctor: IoCServiceConstructor<T>): Promise<T>;
-
-  /** Resolves a named class registration. */
-  public async Resolve<T>(
-    ctor: IoCServiceConstructor<T>,
-    name: string,
-  ): Promise<T>;
-
-  /** Resolves a symbol registration. */
-  public async Resolve<T>(symbol: symbol): Promise<T>;
-
-  /** Resolves a named symbol registration. */
-  public async Resolve<T>(symbol: symbol, name: string): Promise<T>;
+  /** Resolves a service by class (abstract classes work as keys), optionally by name. */
+  public async Resolve<T>(ctor: IoCServiceKeyConstructor<T>, name?: string): Promise<T>;
 
   public async Resolve<T>(
-    ctorSymbol: IoCServiceConstructor<T> | symbol,
+    ctorSymbol: IoCServiceKeyConstructor<T> | symbol,
     name?: string,
   ): Promise<T> {
     const frame = this.frame();
 
+    this.assertNotDisposed();
+
     const entry = this.lookup(ctorSymbol, name ?? DEFAULT_NAME, frame);
 
     return (await this.realize(entry, frame)) as T;
+  }
+
+  /** Resolves a service, or `undefined` when nothing is registered for it. */
+  public async TryResolve<T>(
+    key: IoCServiceKey<T> | symbol,
+    name?: string,
+  ): Promise<T | undefined> {
+    const frame = this.frame();
+
+    this.assertNotDisposed();
+
+    const found = this.find(key, name ?? DEFAULT_NAME);
+
+    return found ? (await this.realize(found.entry, frame)) as T : undefined;
+  }
+
+  /**
+   * Resolves every named registration for a key (including `$default`), nearest scope first
+   * when a name is registered at several levels.
+   */
+  public async ResolveAll<T>(key: IoCServiceKey<T> | symbol): Promise<T[]> {
+    const names: string[] = [];
+
+    for (const container of this.chain()) {
+      const bank = container.services.get(keySymbol(key));
+
+      for (const name of bank?.keys() ?? []) {
+        if (!names.includes(name)) names.push(name);
+      }
+    }
+
+    // Resolve through `this` so a factory parameter view keeps its resolution chain.
+    return await Promise.all(names.map((name) => this.Resolve(key as symbol, name) as Promise<T>));
+  }
+
+  /** True when a registration exists for the key and name (in this container or its parents). */
+  public Has(key: IoCServiceKey<unknown> | symbol, name?: string): boolean {
+    return !!this.find(key, name ?? DEFAULT_NAME);
   }
 
   /**
@@ -175,32 +219,75 @@ export class IoCContainer {
    * {@link IoCContainer.Resolve}; this exists for container-to-container copying.
    */
   public ResolveDirect<T>(
-    ctorSymbol: IoCServiceConstructor<T> | symbol,
+    ctorSymbol: IoCServiceKeyConstructor<T> | symbol,
     name?: string,
   ): IoCServiceResolutions {
-    const frame = this.frame();
-
-    return this.lookup(ctorSymbol, name ?? DEFAULT_NAME, frame) as IoCServiceResolutions;
+    return this.lookup(ctorSymbol, name ?? DEFAULT_NAME, this.frame()) as IoCServiceResolutions;
   }
 
-  // Overload order matters for typing the factory parameter (`(ioc) => …`): the class + factory
+  /**
+   * Creates every singleton and scoped service registered in this container that has not been
+   * created yet (lazy or failed ones), so configuration errors surface at startup rather than on
+   * first use. Rejects with an `AggregateError` naming every service that failed.
+   */
+  public async Activate(): Promise<void> {
+    const self = this.self();
+
+    self.assertNotDisposed();
+
+    const failures: { label: string; error: unknown }[] = [];
+
+    const work: Promise<void>[] = [];
+
+    for (const bank of self.services.values()) {
+      for (const entry of bank.values()) {
+        const reg = registrationOf(entry);
+
+        if (!reg || reg.lifetime === 'transient') continue;
+
+        work.push(
+          Promise.resolve()
+            .then(() => self.realize(entry, undefined))
+            .then(noop, (error) => {
+              failures.push({ label: reg.label, error });
+            }),
+        );
+      }
+    }
+
+    await Promise.all(work);
+
+    if (failures.length) {
+      throw new AggregateError(
+        failures.map((f) => f.error),
+        `IoC activation failed for: ${failures.map((f) => f.label).join(', ')}.`,
+      );
+    }
+  }
+
+  //#endregion
+
+  //#region Registration
+
+  // Overload order matters for typing the factory parameter (`(ioc) => …`): the key + factory
   // forms come first, and the class-only and factory-only forms share one union signature,
   // because TypeScript does not contextually type a callback across separate overloads.
 
   /**
-   * Registers a scoped factory under `type`; returns a function that removes the registration.
+   * Registers a scoped factory under a token or symbol; returns a function that removes the
+   * registration.
    */
   public Register<T>(
-    type: symbol,
-    instance: IoCServiceResolver<T>,
-    options: Omit<IoCServiceOptions, 'Type'> & { Lifetime: 'scoped' },
+    type: IoCToken<T>,
+    instance: IoCServiceResolver<NoInfer<T>>,
+    options: IoCRegisterOptions & { Lifetime: 'scoped' },
   ): () => void;
 
-  /** Registers a factory under `type` (same as passing `{ Type: type }`). */
+  /** Registers a factory under a token or symbol (same as passing `{ Type: type }`). */
   public Register<T>(
-    type: symbol,
-    instance: IoCServiceResolver<T>,
-    options?: Omit<IoCServiceOptions, 'Type'>,
+    type: IoCToken<T>,
+    instance: IoCServiceResolver<NoInfer<T>>,
+    options?: IoCRegisterOptions,
   ): void | (() => void);
 
   /**
@@ -208,14 +295,14 @@ export class IoCContainer {
    * the registration.
    */
   public Register<T>(
-    clazz: IoCServiceConstructor<T>,
+    clazz: IoCServiceKeyConstructor<T>,
     instance: IoCServiceResolver<T>,
     options: IoCServiceOptions & { Lifetime: 'scoped' },
   ): () => void;
 
   /** Registers a factory keyed by `clazz` (or `options.Type`). */
   public Register<T>(
-    clazz: IoCServiceConstructor<T>,
+    clazz: IoCServiceKeyConstructor<T>,
     instance: IoCServiceResolver<T>,
     options?: IoCServiceOptions,
   ): void | (() => void);
@@ -239,13 +326,14 @@ export class IoCContainer {
   ): void | (() => void);
 
   public Register<T>(
-    clazzInstance: IoCServiceConstructor<T> | IoCServiceResolver<T> | symbol,
+    clazzInstance: IoCServiceKeyConstructor<T> | IoCServiceResolver<T> | symbol,
     instanceOptions?: IoCServiceResolver<T> | IoCServiceOptions,
     options?: IoCServiceOptions,
   ): void | (() => void) {
     let clazz: AnyFunction | undefined;
     let factory: (ioc: IoCContainer) => unknown;
     let opts: IoCServiceOptions;
+    let kind: IoCRegistration['kind'] = 'factory';
 
     if (typeof clazzInstance === 'symbol') {
       if (typeof instanceOptions !== 'function') {
@@ -261,9 +349,10 @@ export class IoCContainer {
         factory = instanceOptions as IoCServiceResolver<T>;
         opts = { ...options };
       } else {
-        const ctor = clazzInstance as IoCServiceConstructor<T>;
+        const ctor = clazzInstance as unknown as IoCServiceConstructor<T>;
         factory = () => new ctor();
         opts = { ...(instanceOptions as IoCServiceOptions | undefined) };
+        kind = 'class';
       }
     } else {
       factory = clazzInstance as IoCServiceResolver<T>;
@@ -278,17 +367,200 @@ export class IoCContainer {
       throw new Error(`The Type was missing for the registration.`);
     }
 
-    const ctorKeyed = !!clazz && opts.Type === Symbol.for(clazz.name);
+    const lifetime = opts.Lifetime ?? 'singleton';
 
-    return this.addRegistration({
+    const unregister = this.addRegistration({
       symbol: opts.Type,
       name: opts.Name || DEFAULT_NAME,
-      lifetime: opts.Lifetime ?? 'singleton',
-      kind: typeof instanceOptions === 'function' || !clazz ? 'factory' : 'class',
-      ctor: ctorKeyed ? clazz : undefined,
+      lifetime,
+      kind,
+      ctor: clazz && opts.Type === Symbol.for(clazz.name) ? clazz : undefined,
       factory,
       lazy: !!opts.Lazy,
     });
+
+    // Historically only scoped registrations return their disposer.
+    return lifetime === 'scoped' ? unregister : undefined;
+  }
+
+  /**
+   * Registers a class that the container constructs (`new clazz()`), keyed by the class (or
+   * `options.Type`). Returns a function that removes the registration.
+   */
+  public RegisterClass<C extends IoCServiceConstructor<unknown>>(
+    clazz: C,
+    options?: IoCServiceOptions,
+  ): () => void {
+    if (!isClassLike(clazz)) {
+      throw new Error(`RegisterClass expects a class.`);
+    }
+
+    const opts = { ...options };
+
+    const type = opts.Type ?? (clazz.name ? Symbol.for(clazz.name) : undefined);
+
+    if (!type) throw new Error(`The Type was missing for the registration.`);
+
+    return this.addRegistration({
+      symbol: type,
+      name: opts.Name || DEFAULT_NAME,
+      lifetime: opts.Lifetime ?? 'singleton',
+      kind: 'class',
+      ctor: type === Symbol.for(clazz.name) ? clazz : undefined,
+      factory: () => new clazz(),
+      lazy: !!opts.Lazy,
+    });
+  }
+
+  /**
+   * Registers a factory under a token, symbol or class key. The factory receives the container
+   * (use it rather than a captured container so scopes and cycle detection work). Returns a
+   * function that removes the registration.
+   */
+  public RegisterFactory<T>(
+    key: IoCServiceKey<T>,
+    factory: IoCServiceResolver<NoInfer<T>>,
+    options?: IoCRegisterOptions,
+  ): () => void {
+    if (typeof factory !== 'function') {
+      throw new Error(`RegisterFactory expects a factory function.`);
+    }
+
+    const opts = { ...options };
+
+    const symbol = keySymbol(key);
+
+    return this.addRegistration({
+      symbol,
+      name: opts.Name || DEFAULT_NAME,
+      lifetime: opts.Lifetime ?? 'singleton',
+      kind: 'factory',
+      ctor: typeof key === 'function' ? key : undefined,
+      factory: factory as (ioc: IoCContainer) => unknown,
+      lazy: !!opts.Lazy,
+    });
+  }
+
+  /**
+   * Registers an existing value (any value, including functions and thenables) as a singleton.
+   * The container never invokes or disposes it. Returns a function that removes the
+   * registration.
+   */
+  public RegisterValue<T>(
+    key: IoCServiceKey<T>,
+    value: NoInfer<T>,
+    options?: { Name?: string },
+  ): () => void {
+    return this.addRegistration({
+      symbol: keySymbol(key),
+      name: options?.Name || DEFAULT_NAME,
+      lifetime: 'singleton',
+      kind: 'value',
+      ctor: typeof key === 'function' ? key : undefined,
+      factory: () => value,
+      lazy: false,
+    });
+  }
+
+  /**
+   * Wraps the current registration for a key with `decorator` (logging, caching, retries…). The
+   * decorated service keeps the original's lifetime; decorators applied in order wrap each
+   * other. In a scope, decorating a parent's registration only affects the scope. Returns a
+   * function that restores the previous registration.
+   */
+  public Decorate<T>(
+    key: IoCServiceKey<T>,
+    decorator: (inner: T, ioc: IoCContainer) => T | Promise<T>,
+    options?: { Name?: string },
+  ): () => void {
+    const self = this.self();
+
+    const name = options?.Name || DEFAULT_NAME;
+
+    const symbol = keySymbol(key);
+
+    const ownBank = self.services.get(symbol);
+
+    const previousOwn = ownBank?.has(name) ? { entry: ownBank.get(name) } : undefined;
+
+    const original = self.lookup(key, name, undefined);
+
+    const originalReg = registrationOf(original);
+
+    const lifetime: IoCLifetime = originalReg?.lifetime ??
+      (typeof original === 'function' && !original.name ? 'transient' : 'singleton');
+
+    const remove = self.addRegistration({
+      symbol,
+      name,
+      lifetime,
+      kind: 'factory',
+      ctor: typeof key === 'function' ? key : originalReg?.ctor,
+      factory: (ioc) => {
+        const inner = ioc.realize(original, ioc.frame());
+
+        return inner instanceof Promise
+          ? inner.then((value) => decorator(value as T, ioc))
+          : decorator(inner as T, ioc);
+      },
+      lazy: true,
+    });
+
+    return () => {
+      const bank = self.services.get(symbol);
+
+      const current = bank?.get(name);
+
+      remove();
+
+      // Put back what this container had before, unless something else replaced the decorator.
+      if (previousOwn && bank && !bank.has(name) && current !== undefined) {
+        self.RegisterDirect(symbol, name, previousOwn.entry as IoCServiceConstructed);
+      }
+    };
+  }
+
+  /**
+   * Removes a registration from this container (not from parents). Returns whether one existed.
+   */
+  public Unregister(key: IoCServiceKey<unknown> | symbol, name?: string): boolean {
+    const self = this.self();
+
+    const symbol = keySymbol(key);
+
+    const n = name ?? DEFAULT_NAME;
+
+    const bank = self.services.get(symbol);
+
+    if (typeof key === 'symbol') {
+      // By symbol: remove the registration and every class registered under the symbol + name.
+      let removed = !!bank?.delete(n);
+
+      for (const [ctor, entries] of [...self.byCtor]) {
+        const entry = entries.get(n);
+
+        if (entry !== undefined && registrationOf(entry)?.symbol === symbol) {
+          self.untrackCtor(ctor, n, entry);
+          removed = true;
+        }
+      }
+
+      return removed;
+    }
+
+    const found = self.findOwn(key, n);
+
+    if (!found) return false;
+
+    const reg = registrationOf(found.entry);
+
+    if (reg?.ctor) self.untrackCtor(reg.ctor, n, found.entry);
+
+    // Only drop the name bank entry when it is the one being unregistered; a same-named class
+    // that currently owns the name keeps its registration.
+    if (bank && bank.get(n) === found.entry) bank.delete(n);
+
+    return true;
   }
 
   /**
@@ -326,6 +598,121 @@ export class IoCContainer {
     return symbol;
   }
 
+  //#endregion
+
+  //#region Scopes, copying and disposal
+
+  /**
+   * Creates a child scope. The scope resolves everything its parent can; `scoped` registrations
+   * get one instance per scope, singletons stay shared with the parent, and registrations made
+   * on the scope override the parent's for this scope only (handy for per-request services and
+   * for test overrides). Dispose the scope when done — `await using scope = ioc.CreateScope()`
+   * — to dispose the instances it created.
+   */
+  public CreateScope(): IoCContainer {
+    const self = this.self();
+
+    self.assertNotDisposed();
+
+    const scope = new IoCContainer();
+
+    scope.parent = self;
+
+    return scope;
+  }
+
+  /**
+   * Copies every registration into `ioc` (for a scope: its own and its parents', nearest
+   * winning), replacing registrations it already has with the same symbol and name. Singletons
+   * are shared (both containers resolve the same instance) and transient factories receive the
+   * container they are resolved from.
+   */
+  public CopyTo(ioc: IoCContainer): void {
+    const target = ioc as Indexable;
+
+    const protocolAware = (target?.[IOC_PROTOCOL] ?? 0) >= 1;
+
+    const chain = [...this.chain()].reverse();
+
+    for (const container of chain) {
+      for (const [symbol, bank] of container.services) {
+        for (const [name, entry] of bank) {
+          if (protocolAware) {
+            target.RegisterDirect(symbol, name, entry);
+          } else {
+            // Older containers only know symbols from their own `Symbol(id)` registry.
+            if (symbol.description === undefined) continue;
+
+            const reg = registrationOf(entry);
+
+            target.RegisterDirect(
+              target.Symbol(symbol.description),
+              name,
+              reg ? createLegacyThunk(reg, target) : entry,
+            );
+          }
+        }
+      }
+
+      // RegisterDirect already tracked the classes that own their name bank entries; this
+      // carries over same-named classes whose entries were shadowed by a later registration.
+      if (protocolAware && typeof target.trackCtor === 'function') {
+        for (const [ctor, entries] of container.byCtor) {
+          for (const [name, entry] of entries) {
+            target.trackCtor(ctor, name, entry);
+          }
+        }
+      }
+    }
+  }
+
+  /**
+   * Disposes, in reverse creation order, the instances this container (or scope) created that
+   * implement `Symbol.asyncDispose` or `Symbol.dispose`, then clears its registrations. Values
+   * registered with `RegisterValue` and transient instances are never disposed. Errors are
+   * collected into an `AggregateError`. Disposing a container does not dispose its scopes.
+   */
+  public async Dispose(): Promise<void> {
+    const self = this.self();
+
+    if (self.disposed) return;
+
+    self.disposed = true;
+
+    const owned = self.owned.splice(0).reverse();
+
+    const errors: unknown[] = [];
+
+    for (const value of owned) {
+      try {
+        const v = value as Indexable;
+
+        if (typeof v[Symbol.asyncDispose] === 'function') {
+          await v[Symbol.asyncDispose]();
+        } else if (typeof v[Symbol.dispose] === 'function') {
+          v[Symbol.dispose]();
+        }
+      } catch (err) {
+        errors.push(err);
+      }
+    }
+
+    self.scopedHolders.clear();
+    self.services.clear();
+    self.byCtor.clear();
+
+    if (errors.length) {
+      throw new AggregateError(errors, 'Errors occurred while disposing the IoC container.');
+    }
+  }
+
+  /** Same as {@link IoCContainer.Dispose}; enables `await using`. */
+  public async [Symbol.asyncDispose](): Promise<void> {
+    await this.Dispose();
+  }
+
+  //#endregion
+
   //#region Internals
 
   /** The resolution frame a call continues: the view's frame, else the running factory's. */
@@ -336,6 +723,17 @@ export class IoCContainer {
   /** The real container behind a context view (or this container). */
   protected self(): IoCContainer {
     return (this as Indexable)[IOC_SELF] ?? this;
+  }
+
+  /** This container followed by its ancestors. */
+  protected *chain(): Generator<IoCContainer> {
+    for (let c: IoCContainer | undefined = this.self(); c; c = c.parent) {
+      yield c;
+    }
+  }
+
+  protected assertNotDisposed(): void {
+    if (this.self().disposed) throw new IoCContainerDisposedError();
   }
 
   /** The name bank for `symbol`, created on demand for any symbol. */
@@ -371,42 +769,90 @@ export class IoCContainer {
     }
   }
 
-  /** Finds the stored entry for a key, never mutating the container. */
+  /** Records an instance this container created, for disposal. */
+  protected trackOwned(value: unknown): void {
+    if (isDisposable(value)) this.owned.push(value);
+  }
+
+  /**
+   * This scope's holder for a `scoped` registration owned by an ancestor (created on demand), or
+   * undefined when this container is not a child scope of the owner.
+   */
+  protected scopedHolderFor(reg: IoCRegistration): IoCHolder | undefined {
+    if (!this.parent || reg.owner === this) return undefined;
+
+    let holder = this.scopedHolders.get(reg);
+
+    if (!holder) {
+      holder = { state: 'empty' };
+      this.scopedHolders.set(reg, holder);
+    }
+
+    return holder;
+  }
+
+  /** Finds the stored entry for a key in this container only. */
+  protected findOwn(key: AnyFunction | symbol, name: string): FoundEntry | undefined {
+    const bank = this.services.get(keySymbol(key));
+
+    if (!bank?.has(name)) {
+      // The name owner was removed; a same-named class may still have its own registration.
+      if (typeof key === 'function') {
+        const own = this.byCtor.get(key);
+
+        if (own?.has(name)) return { entry: own.get(name) };
+      }
+
+      return undefined;
+    }
+
+    const entry = bank.get(name);
+
+    if (typeof key === 'function') {
+      const reg = registrationOf(entry);
+
+      // A different class with the same name owns the name bank entry; prefer this class's
+      // own registration when there is one.
+      if (reg?.ctor && reg.ctor !== key) {
+        const own = this.byCtor.get(key);
+
+        if (own?.has(name)) return { entry: own.get(name) };
+      }
+    }
+
+    return { entry };
+  }
+
+  /** Finds the stored entry for a key, nearest scope first. Never mutates. */
+  protected find(key: AnyFunction | symbol, name: string): FoundEntry | undefined {
+    for (const container of this.chain()) {
+      const found = container.findOwn(key, name);
+
+      if (found) return found;
+    }
+
+    return undefined;
+  }
+
+  /** Like `find`, but throws {@link IoCServiceNotFoundError} when nothing is registered. */
   protected lookup(
     key: AnyFunction | symbol,
     name: string,
     frame: IoCResolveFrame | undefined,
   ): unknown {
-    const self = this.self();
+    const found = this.find(key, name);
 
-    const symbol = typeof key === 'symbol' ? key : Symbol.for(key.name);
+    if (found) return found.entry;
 
-    const bank = self.services.get(symbol);
+    const symbol = keySymbol(key);
 
-    if (bank?.has(name)) {
-      const entry = bank.get(name);
+    const names = new Set<string>();
 
-      if (typeof key === 'function') {
-        const reg = registrationOf(entry);
-
-        // A different class with the same name owns the name bank entry; prefer this class's
-        // own registration when there is one.
-        if (reg?.ctor && reg.ctor !== key) {
-          const own = self.byCtor.get(key);
-
-          if (own?.has(name)) return own.get(name);
-        }
-      }
-
-      return entry;
+    for (const container of this.chain()) {
+      for (const n of container.services.get(symbol)?.keys() ?? []) names.add(n);
     }
 
-    throw new IoCServiceNotFoundError(
-      symbol,
-      name,
-      bank ? [...bank.keys()] : [],
-      framePath(frame),
-    );
+    throw new IoCServiceNotFoundError(symbol, name, [...names], framePath(frame));
   }
 
   /** Turns a stored entry into the service value (or a promise of it). */
@@ -423,23 +869,30 @@ export class IoCContainer {
     return entry;
   }
 
-  /** Creates, stores and (unless lazy or transient) eagerly builds a registration. */
+  /**
+   * Creates and stores a registration, building it now unless it is lazy or transient. Returns
+   * a function that removes exactly this registration.
+   */
   protected addRegistration(spec: {
     symbol: symbol;
     name: string;
     lifetime: IoCLifetime;
-    kind: 'class' | 'factory' | 'value';
+    kind: IoCRegistration['kind'];
     ctor?: AnyFunction;
     factory: (ioc: IoCContainer) => unknown;
     lazy: boolean;
-  }): void | (() => void) {
+  }): () => void {
     const self = this.self();
+
+    self.assertNotDisposed();
 
     const { symbol, name, lifetime, factory } = spec;
 
     const holder: IoCHolder | undefined = lifetime === 'transient' ? undefined : { state: 'empty' };
 
     const label = labelFor(symbol, name);
+
+    const owns = spec.kind !== 'value';
 
     /**
      * Invokes the factory as one frame of a resolution chain. Factories normally receive a view
@@ -476,6 +929,50 @@ export class IoCContainer {
       return result;
     };
 
+    /** Builds into `h` (if empty) against `buildOn`, recording the instance on `tracker`. */
+    const fromHolder = (
+      h: IoCHolder,
+      buildOn: IoCContainer,
+      tracker: IoCContainer,
+      frame: IoCResolveFrame | undefined,
+    ): unknown => {
+      if (h.state === 'ready') return h.value;
+
+      if (h.state === 'pending') {
+        // A synchronous factory re-entering itself, or a chain waiting on its own result.
+        if (!h.promise || isOnActivePath(frame, h)) {
+          throw new IoCCircularDependencyError([...framePath(frame), label]);
+        }
+
+        return h.promise;
+      }
+
+      h.state = 'pending';
+
+      let result: unknown;
+
+      try {
+        result = run(buildOn, frame, h);
+      } catch (err) {
+        h.state = 'empty';
+        throw err;
+      }
+
+      return track(h, settleInto(h, result), tracker);
+    };
+
+    const track = (h: IoCHolder, result: unknown, tracker: IoCContainer): unknown => {
+      if (!owns) return result;
+
+      if (h.state === 'ready') {
+        tracker.trackOwned(result);
+      } else if (result instanceof Promise) {
+        result.then((value) => tracker.trackOwned(value), noop);
+      }
+
+      return result;
+    };
+
     const reg: IoCRegistration = {
       v: 1,
       symbol,
@@ -495,30 +992,19 @@ export class IoCContainer {
           return run(container, frame, reg);
         }
 
-        if (holder.state === 'ready') return holder.value;
+        if (lifetime === 'scoped') {
+          const c = container as Indexable;
 
-        if (holder.state === 'pending') {
-          // A synchronous factory re-entering itself, or a chain waiting on its own result.
-          if (!holder.promise || isOnActivePath(frame, holder)) {
-            throw new IoCCircularDependencyError([...framePath(frame), label]);
-          }
+          const scoped: IoCHolder | undefined = typeof c.scopedHolderFor === 'function'
+            ? c.scopedHolderFor(reg)
+            : undefined;
 
-          return holder.promise;
+          // One instance per child scope, built against (and disposed by) that scope.
+          if (scoped) return fromHolder(scoped, c, c, frame);
         }
 
-        holder.state = 'pending';
-
-        let result: unknown;
-
-        try {
-          // Singletons always build against their owner, never against whoever resolved them.
-          result = run(self, frame, holder);
-        } catch (err) {
-          holder.state = 'empty';
-          throw err;
-        }
-
-        return settleInto(holder, result);
+        // Singletons always build against their owner, never against whoever resolved them.
+        return fromHolder(holder, self, self, frame);
       },
     };
 
@@ -540,23 +1026,21 @@ export class IoCContainer {
         throw err;
       }
 
-      settleInto(holder, result);
+      track(holder, settleInto(holder, result), self);
     }
 
     self.RegisterDirect(symbol, name, thunk as unknown as IoCServiceConstructed);
 
-    if (lifetime === 'scoped') {
-      return () => {
-        const bank = self.services.get(symbol);
+    return () => {
+      const bank = self.services.get(symbol);
 
-        // Only remove the registration this call created, not a later re-registration.
-        if (bank && bank.get(name) === (thunk as unknown)) {
-          bank.delete(name);
-        }
+      // Only remove the registration this call created, not a later re-registration.
+      if (bank && bank.get(name) === (thunk as unknown)) {
+        bank.delete(name);
+      }
 
-        if (spec.ctor) self.untrackCtor(spec.ctor, name, thunk);
-      };
-    }
+      if (spec.ctor) self.untrackCtor(spec.ctor, name, thunk);
+    };
   }
 
   //#endregion

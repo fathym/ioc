@@ -35,6 +35,25 @@ export class IoCServiceNotFoundError extends Error {
   }
 }
 
+/** Thrown when a container (or scope) is used after it has been disposed. */
+export class IoCContainerDisposedError extends Error {
+  public override name = 'IoCContainerDisposedError';
+
+  constructor() {
+    super('The IoC container has been disposed.');
+  }
+}
+
+/** Thrown by `Validate()`, listing every problem found in the registrations. */
+export class IoCValidationError extends Error {
+  public override name = 'IoCValidationError';
+
+  /** @param Problems One readable line per problem. */
+  constructor(public readonly Problems: string[]) {
+    super(`IoC validation failed:\n${Problems.map((p) => `  - ${p}`).join('\n')}`);
+  }
+}
+
 /**
  * Thrown when resolving a service would require the service itself, directly or through other
  * services (`A -> B -> A`). Without this check such a graph would wait on itself forever.
