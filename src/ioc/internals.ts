@@ -25,6 +25,12 @@ export type AnyFunction = Function;
 
 export type IoCLifetime = 'singleton' | 'transient' | 'scoped';
 
+/** A normalized declared dependency: what to resolve, and under which name. */
+export interface IoCDependencyRecord {
+  key: AnyFunction | symbol;
+  name: string;
+}
+
 /** Shared, memoized state of a singleton (or of one scope's scoped instance). */
 export interface IoCHolder {
   state: 'empty' | 'pending' | 'ready';
@@ -58,6 +64,8 @@ export interface IoCRegistration {
   readonly owner: object;
   readonly holder?: IoCHolder;
   readonly label: string;
+  /** Declared constructor dependencies (`RegisterClass(…, { Deps })`), used by `Validate()`. */
+  readonly deps?: readonly IoCDependencyRecord[];
   resolveIn(container: object, frame?: IoCResolveFrame): unknown;
 }
 

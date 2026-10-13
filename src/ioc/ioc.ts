@@ -2,6 +2,7 @@ import {
   IoCCircularDependencyError,
   IoCContainerDisposedError,
   IoCServiceNotFoundError,
+  IoCValidationError,
 } from './errors.ts';
 import {
   type AnyFunction,
@@ -14,6 +15,7 @@ import {
   IOC_PROTOCOL,
   IOC_PROTOCOL_VERSION,
   IOC_SELF,
+  type IoCDependencyRecord,
   type IoCHolder,
   type IoCLifetime,
   type IoCRegistration,
@@ -69,6 +71,29 @@ export type IoCServiceOptions = {
   Type?: symbol;
 };
 
+/** A dependency key: a typed token / symbol, or a class (abstract classes included). */
+export type IoCDependencyKey<T> = IoCToken<T> | IoCServiceKeyConstructor<T>;
+
+/** A declared dependency: a key, or `[key, name]` for a named registration. */
+export type IoCDependency<T> = IoCDependencyKey<T> | readonly [IoCDependencyKey<T>, string];
+
+/** One dependency per constructor parameter, each typed to match its parameter. */
+export type IoCDependenciesFor<P extends readonly unknown[]> = {
+  readonly [K in keyof P]: IoCDependency<P[K]>;
+};
+
+/** Options accepted by {@link IoCContainer.RegisterClass}. */
+export type IoCRegisterClassOptions<C extends IoCServiceConstructor<unknown>> =
+  & IoCServiceOptions
+  & {
+    /**
+     * The services to pass to the constructor, in parameter order, checked against the
+     * constructor's parameter types. The container resolves them (in the resolving scope) and
+     * calls `new clazz(...deps)`. Declared dependencies are also checked by `Validate()`.
+     */
+    Deps?: IoCDependenciesFor<ConstructorParameters<C>>;
+  };
+
 /** Options for registrations whose key is given separately (no `Type`). */
 export type IoCRegisterOptions = Omit<IoCServiceOptions, 'Type'>;
 
@@ -93,6 +118,18 @@ const DEFAULT_NAME = '$default';
 
 function keySymbol(key: AnyFunction | symbol): symbol {
   return typeof key === 'symbol' ? key : Symbol.for(key.name);
+}
+
+function normalizeDependency(dep: unknown): IoCDependencyRecord {
+  if (Array.isArray(dep)) {
+    return { key: dep[0] as AnyFunction | symbol, name: (dep[1] as string) || DEFAULT_NAME };
+  }
+
+  return { key: dep as AnyFunction | symbol, name: DEFAULT_NAME };
+}
+
+function dependencyLabel(dep: IoCDependencyRecord): string {
+  return labelFor(keySymbol(dep.key), dep.name);
 }
 
 function isDisposable(value: unknown): value is object {
@@ -265,6 +302,120 @@ export class IoCContainer {
     }
   }
 
+  /**
+   * Checks the registrations visible from this container and throws an
+   * {@link IoCValidationError} listing every problem found:
+   *
+   * - a declared dependency (`RegisterClass(…, { Deps })`) that is not registered;
+   * - a cycle between declared dependencies;
+   * - a singleton that declares a `scoped` dependency (it would capture one instance forever);
+   * - a class registered without a factory or `Deps` whose constructor takes parameters (it
+   *   would be constructed with `undefined` arguments).
+   *
+   * Factories are opaque, so dependencies resolved inside them are not checked; `Activate()`
+   * covers those by building everything.
+   */
+  public Validate(): void {
+    const problems: string[] = [];
+
+    const seen = new Set<IoCRegistration>();
+
+    const registrations: IoCRegistration[] = [];
+
+    for (const container of this.chain()) {
+      for (const bank of container.services.values()) {
+        for (const entry of bank.values()) {
+          const reg = registrationOf(entry);
+
+          if (reg && !seen.has(reg)) {
+            seen.add(reg);
+            registrations.push(reg);
+          }
+        }
+      }
+
+      for (const entries of container.byCtor.values()) {
+        for (const entry of entries.values()) {
+          const reg = registrationOf(entry);
+
+          if (reg && !seen.has(reg)) {
+            seen.add(reg);
+            registrations.push(reg);
+          }
+        }
+      }
+    }
+
+    const resolveDep = (dep: IoCDependencyRecord) => {
+      const found = this.find(dep.key, dep.name);
+
+      return found ? registrationOf(found.entry) : undefined;
+    };
+
+    for (const reg of registrations) {
+      if (reg.kind === 'class' && !reg.deps && reg.ctor && reg.ctor.length > 0) {
+        problems.push(
+          `${reg.label} is constructed without arguments, but its constructor declares ` +
+            `${reg.ctor.length} parameter(s); register it with a factory or with Deps.`,
+        );
+      }
+
+      for (const dep of reg.deps ?? []) {
+        if (!this.find(dep.key, dep.name)) {
+          problems.push(
+            `${reg.label} depends on ${dependencyLabel(dep)}, which is not registered.`,
+          );
+          continue;
+        }
+
+        const depReg = resolveDep(dep);
+
+        if (reg.lifetime === 'singleton' && depReg?.lifetime === 'scoped') {
+          problems.push(
+            `Singleton ${reg.label} depends on scoped ${depReg.label}; it would capture a ` +
+              `single instance. Make ${reg.label} scoped or transient.`,
+          );
+        }
+      }
+    }
+
+    // Cycles through declared dependencies (depth-first, reporting each cycle once).
+    const state = new Map<IoCRegistration, 'visiting' | 'done'>();
+
+    const reported = new Set<string>();
+
+    const visit = (reg: IoCRegistration, path: IoCRegistration[]) => {
+      if (state.get(reg) === 'done') return;
+
+      if (state.get(reg) === 'visiting') {
+        const cycle = [...path.slice(path.indexOf(reg)), reg].map((r) => r.label);
+
+        const key = [...cycle].sort().join('|');
+
+        if (!reported.has(key)) {
+          reported.add(key);
+          problems.push(`Circular dependency: ${cycle.join(' -> ')}.`);
+        }
+
+        return;
+      }
+
+      state.set(reg, 'visiting');
+
+      for (const dep of reg.deps ?? []) {
+        const depReg = resolveDep(dep);
+
+        if (depReg) visit(depReg, [...path, reg]);
+      }
+
+      state.set(reg, 'done');
+    };
+
+    for (const reg of registrations) visit(reg, []);
+
+    if (problems.length) throw new IoCValidationError(problems);
+  }
+
   //#endregion
 
   //#region Registration
@@ -389,7 +540,7 @@ export class IoCContainer {
    */
   public RegisterClass<C extends IoCServiceConstructor<unknown>>(
     clazz: C,
-    options?: IoCServiceOptions,
+    options?: IoCRegisterClassOptions<C>,
   ): () => void {
     if (!isClassLike(clazz)) {
       throw new Error(`RegisterClass expects a class.`);
@@ -401,14 +552,22 @@ export class IoCContainer {
 
     if (!type) throw new Error(`The Type was missing for the registration.`);
 
+    const deps = opts.Deps?.map(normalizeDependency);
+
     return this.addRegistration({
       symbol: type,
       name: opts.Name || DEFAULT_NAME,
       lifetime: opts.Lifetime ?? 'singleton',
       kind: 'class',
       ctor: type === Symbol.for(clazz.name) ? clazz : undefined,
-      factory: () => new clazz(),
+      factory: deps
+        ? async (ioc) =>
+          new clazz(
+            ...await Promise.all(deps.map((d) => ioc.Resolve(d.key as symbol, d.name))),
+          )
+        : () => new clazz(),
       lazy: !!opts.Lazy,
+      deps,
     });
   }
 
@@ -504,6 +663,7 @@ export class IoCContainer {
           : decorator(inner as T, ioc);
       },
       lazy: true,
+      deps: originalReg?.deps,
     });
 
     return () => {
@@ -881,6 +1041,7 @@ export class IoCContainer {
     ctor?: AnyFunction;
     factory: (ioc: IoCContainer) => unknown;
     lazy: boolean;
+    deps?: readonly IoCDependencyRecord[];
   }): () => void {
     const self = this.self();
 
@@ -983,6 +1144,7 @@ export class IoCContainer {
       owner: self,
       holder,
       label,
+      deps: spec.deps,
       resolveIn(container: object, frame?: IoCResolveFrame): unknown {
         if (!holder) {
           if (isOnActivePath(frame, reg)) {

@@ -19,3 +19,5 @@ import './ioc/conveniences.tests.ts';
 import './ioc/activate.tests.ts';
 import './ioc/decorate.tests.ts';
 import './ioc/types.tests.ts';
+import './ioc/deps.tests.ts';
+import './ioc/validate.tests.ts';

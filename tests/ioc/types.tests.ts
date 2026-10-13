@@ -80,5 +80,28 @@ Deno.test('Types', async () => {
   // Plain symbols accept any factory (untyped, as before).
   ioc.Register(ioc.Symbol('Anything'), () => 42);
 
+  // Deps are checked against the constructor's parameters.
+  class Repo {
+    constructor(public db: Db, public logger: Logger, public name: string) {}
+  }
+
+  const $Name = IoCToken<string>('TypesName');
+
+  ioc.RegisterClass(Repo, { Deps: [$Db, Logger, $Name] });
+  ioc.RegisterClass(Repo, { Deps: [[$Db, 'replica'], Logger, [$Name, 'n']], Name: 'named' });
+
+  // @ts-expect-error wrong order: Logger is not a Db
+  ioc.RegisterClass(Repo, { Deps: [Logger, $Db, $Name] });
+
+  // @ts-expect-error missing a dependency
+  ioc.RegisterClass(Repo, { Deps: [$Db, Logger] });
+
+  // @ts-expect-error a number token for a string parameter
+  ioc.RegisterClass(Repo, { Deps: [$Db, Logger, IoCToken<number>('N')] });
+
+  // Subclasses satisfy their base class parameter.
+  class FileLogger extends Logger {}
+  ioc.RegisterClass(Repo, { Deps: [$Db, FileLogger, $Name], Name: 'file' });
+
   assertEquals(typeof db.query, 'function');
 });
