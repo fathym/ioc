@@ -20,11 +20,13 @@
     "deploy": "deno task build && deno task test && fathym git",
     "test": "deno test -A tests/tests.ts --parallel --coverage=cov",
     "bench": "deno bench -A tests/ioc/resolve.bench.ts",
+    "docs:check": "deno run -A scripts/docs-check.ts",
+    "docs:llms": "deno run -A scripts/docs-check.ts --write",
     "version": "deno run -A jsr:@fathym/common@0.2.325/build/version"
   },
   "imports": {},
   "lint": {
-    "include": ["src/", "tests/"],
+    "include": ["src/", "tests/", "scripts/", "examples/"],
     "exclude": ["tests/fixtures/"],
     "rules": {
       "tags": ["recommended"],
@@ -33,7 +35,7 @@
     }
   },
   "fmt": {
-    "include": ["src/", "tests/", "docs/", "README.md", "GUIDE.md"],
+    "include": ["src/", "tests/", "scripts/", "examples/", "docs/", ".github/", "*.md"],
     "exclude": ["tests/fixtures/"],
     "indentWidth": 2,
     "lineWidth": 100,
