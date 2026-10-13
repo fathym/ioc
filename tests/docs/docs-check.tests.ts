@@ -252,6 +252,19 @@ Deno.test('docs-check - checkDocs', async (t) => {
     );
   });
 
+  await t.step('GitHub templates are exempt from frontmatter but links are checked', () => {
+    const files = cleanSite();
+
+    files.set(
+      '.github/pull_request_template.md',
+      '## Checklist\n\n- [ ] [docs](../docs/README.md)\n- [ ] [gone](../gone.md)',
+    );
+
+    assertEquals(checkDocs(files, { RepoBlobUrl: BLOB }), [
+      { file: '.github/pull_request_template.md', message: 'broken link: ../gone.md' },
+    ]);
+  });
+
   await t.step('reports missing required files', () => {
     const problems = checkDocs(cleanSite(), { RepoBlobUrl: BLOB, RequiredFiles: ['llms.txt'] });
 

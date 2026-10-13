@@ -16,7 +16,7 @@ legacy.Register(Svc);
 current.Register(Svc, () => new Svc(), { Lifetime: 'transient', Name: 't' });
 legacy.Register(Svc, () => new Svc(), { Lifetime: 'transient', Name: 't' });
 
-current.Register(Svc, async () => new Svc(), { Lazy: true, Name: 'lazy' });
+current.Register(Svc, () => Promise.resolve(new Svc()), { Lazy: true, Name: 'lazy' });
 
 for (let i = 0; i < 200; i++) {
   current.Register(() => i, { Type: current.Symbol(`S${i}`) });

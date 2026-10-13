@@ -1,0 +1,72 @@
+# @fathym/ioc
+
+> Small, async-first, decorator-free dependency injection for Deno, with typed tokens, scopes, disposal and startup validation.
+
+Every code example in these docs is type-checked in CI. Import from `jsr:@fathym/ioc`.
+
+## Start here
+
+- [@fathym/ioc Documentation](https://raw.githubusercontent.com/fathym/ioc/main/docs/README.md): The map of the @fathym/ioc docs - tutorial, concepts, how-to guides, reference, migration and background.
+- [@fathym/ioc](https://raw.githubusercontent.com/fathym/ioc/main/README.md): Small, async-first, decorator-free dependency injection for Deno, with typed tokens, scopes, disposal and startup validation.
+- [What Is IoC, and When Not to Use It](https://raw.githubusercontent.com/fathym/ioc/main/docs/what-is-ioc.md): The problem a dependency-injection container solves, what you gain, what it costs, and when you are better off without one.
+
+## Getting started (tutorial)
+
+- [Getting Started](https://raw.githubusercontent.com/fathym/ioc/main/docs/getting-started/README.md): A five-step tutorial that builds a small notes API with @fathym/ioc, from install to tests.
+- [Step 3: Async Services](https://raw.githubusercontent.com/fathym/ioc/main/docs/getting-started/async-services.md): Open Deno KV lazily with an async factory, check startup with Activate(), and close everything with Dispose().
+- [Step 2: Your First Container](https://raw.githubusercontent.com/fathym/ioc/main/docs/getting-started/first-container.md): Register a class, a factory and a value, use a typed token, and see how lifetimes change what you get back.
+- [Step 1: Installation](https://raw.githubusercontent.com/fathym/ioc/main/docs/getting-started/installation.md): Add @fathym/ioc to a Deno, Node.js or Bun project and import it.
+- [Step 4: Per-Request Scopes](https://raw.githubusercontent.com/fathym/ioc/main/docs/getting-started/per-request-scopes.md): Serve HTTP with Deno.serve and give every request its own scope, request value and scoped services, disposed when the response is sent.
+- [Step 5: Testing Your App](https://raw.githubusercontent.com/fathym/ioc/main/docs/getting-started/testing-your-app.md): Test the notes service with a fake store by overriding a registration in a test scope - no module mocking needed.
+
+## Concepts
+
+- [Concepts](https://raw.githubusercontent.com/fathym/ioc/main/docs/concepts/README.md): How @fathym/ioc thinks - keys, lifetimes, scopes, async resolution, disposal, cycles and design principles.
+- [Async Resolution](https://raw.githubusercontent.com/fathym/ioc/main/docs/concepts/async-resolution.md): Why Resolve is always async, how concurrent resolves share one creation, how failures are retried, and the one caveat (thenables).
+- [Cycles and Errors](https://raw.githubusercontent.com/fathym/ioc/main/docs/concepts/cycles-and-errors.md): How the container detects circular dependencies, how resolution paths appear in errors, and the one limit (resolving through a captured container after an await).
+- [Design Principles](https://raw.githubusercontent.com/fathym/ioc/main/docs/concepts/design-principles.md): The trade-offs behind @fathym/ioc - decorator-free, async-first, explicit, loud on failure, and stable across versions.
+- [Disposal](https://raw.githubusercontent.com/fathym/ioc/main/docs/concepts/disposal.md): Which instances the container owns and disposes, in what order, what it never disposes, and how errors during disposal are reported.
+- [Keys and Registrations](https://raw.githubusercontent.com/fathym/ioc/main/docs/concepts/keys-and-registrations.md): What you can register services under (classes, abstract classes, typed tokens, symbols, names) and how the container decides between a class and a factory.
+- [Lifetimes](https://raw.githubusercontent.com/fathym/ioc/main/docs/concepts/lifetimes.md): Singleton, transient and scoped - how many instances exist, when each is built, which container builds it, and who disposes it.
+- [Scopes](https://raw.githubusercontent.com/fathym/ioc/main/docs/concepts/scopes.md): What a scope is (a cheap child container you create), how lookups, overrides and lifetimes behave in it, and what it is not.
+
+## Guides
+
+- [Guides](https://raw.githubusercontent.com/fathym/ioc/main/docs/guides/README.md): Task-focused recipes for @fathym/ioc - registering, async startup, scopes, testing, plugins, decorators and app structure.
+- [Async Initialization](https://raw.githubusercontent.com/fathym/ioc/main/docs/guides/async-initialization.md): Recipes for async services - lazy connections, retries with backoff, timeouts, startup ordering without priority numbers, and fail-fast startup with Activate().
+- [Copying Containers](https://raw.githubusercontent.com/fathym/ioc/main/docs/guides/copying-containers.md): What CopyTo copies and shares, how it works across different versions of @fathym/ioc in one process, and how to replace CopyTo child containers with CreateScope.
+- [Declared Dependencies](https://raw.githubusercontent.com/fathym/ioc/main/docs/guides/declared-dependencies.md): Let the container construct classes from typed Deps lists checked against the constructor, use named dependencies, and validate the graph at startup.
+- [Decorating Services](https://raw.githubusercontent.com/fathym/ioc/main/docs/guides/decorating-services.md): Wrap an existing registration with logging, caching or retries using Decorate - keeping its lifetime, composing several decorators, and undoing or scoping them.
+- [Guidelines and Anti-Patterns](https://raw.githubusercontent.com/fathym/ioc/main/docs/guides/guidelines.md): Nine named anti-patterns - captive dependency, captured container, service locator and more - each with the symptom, the cause, WRONG and CORRECT code, and how to catch it.
+- [Organizing Registrations](https://raw.githubusercontent.com/fathym/ioc/main/docs/guides/organizing-registrations.md): Structure a real app's registrations - a composition root, feature modules that register themselves, environment overrides, and a startup sequence that validates, activates and shuts down cleanly.
+- [Per-Request Scopes](https://raw.githubusercontent.com/fathym/ioc/main/docs/guides/per-request-scopes.md): Give every HTTP request its own scope, request value and scoped services, with Deno.serve or any middleware-based framework, and dispose them when the response is done.
+- [Plugins and Named Services](https://raw.githubusercontent.com/fathym/ioc/main/docs/guides/plugins-and-named-services.md): Register several implementations under one key, then pick one by name, check for one, or collect them all - the building blocks of a plugin system.
+- [Registering Services](https://raw.githubusercontent.com/fathym/ioc/main/docs/guides/registering-services.md): Choose the right way to register a class, factory or value - with a decision table and an example of every form.
+- [Testing with the Container](https://raw.githubusercontent.com/fathym/ioc/main/docs/guides/testing.md): Copy-paste recipes for Deno tests - override a dependency, use a fresh container, fake vs spy, reset between tests, test disposal, validate wiring and test startup failures.
+
+## Reference
+
+- [Reference](https://raw.githubusercontent.com/fathym/ioc/main/docs/reference/README.md): Reference material for @fathym/ioc - the API, every error message, and the glossary.
+- [Comparison with Other Containers](https://raw.githubusercontent.com/fathym/ioc/main/docs/comparison.md): An honest comparison of @fathym/ioc with InversifyJS, tsyringe, awilix, typed-inject, needle-di, NestJS and .NET's container - including when to choose something else.
+- [FAQ](https://raw.githubusercontent.com/fathym/ioc/main/docs/faq.md): Short answers to common questions about @fathym/ioc - decorators, runtimes, sync resolution, HTTP scopes, performance and stability.
+- [API Reference](https://raw.githubusercontent.com/fathym/ioc/main/docs/reference/api.md): Every public method, option and type of @fathym/ioc - signature, behavior, return value, errors and a runnable example for each.
+- [Error Catalog](https://raw.githubusercontent.com/fathym/ioc/main/docs/reference/errors.md): Every error message @fathym/ioc can produce, keyed by its exact text - what each part means, the likely causes, and the fix - plus the TypeScript errors you will meet.
+- [Glossary](https://raw.githubusercontent.com/fathym/ioc/main/docs/reference/glossary.md): The terms used throughout the @fathym/ioc docs, each defined in a sentence or two with a link to where it is explained.
+- [Troubleshooting](https://raw.githubusercontent.com/fathym/ioc/main/docs/troubleshooting.md): Symptoms that don't throw an error - a factory running twice, an ignored override, a lazy service built early, disposal that didn't run - with their causes and fixes.
+
+## Migration
+
+- [Migration](https://raw.githubusercontent.com/fathym/ioc/main/docs/migration/README.md): Upgrade from earlier @fathym/ioc releases, or move to it from another DI container.
+- [Migrating from 0.0.x](https://raw.githubusercontent.com/fathym/ioc/main/docs/migration/from-0.0.x.md): Every behavior change since @fathym/ioc 0.0.36, with old and new code side by side and the reason for each change.
+- [Migrating from Other Containers](https://raw.githubusercontent.com/fathym/ioc/main/docs/migration/from-other-containers.md): API mapping tables from InversifyJS, tsyringe, awilix, needle-di and typed-inject to @fathym/ioc, with a worked conversion.
+
+## Examples
+
+- [Examples](https://raw.githubusercontent.com/fathym/ioc/main/examples/README.md): Small, runnable programs, each showing one @fathym/ioc idea; every one is run in CI.
+
+## Optional
+
+- [Changelog](https://raw.githubusercontent.com/fathym/ioc/main/CHANGELOG.md): Notable changes to @fathym/ioc, newest first, following Keep a Changelog.
+- [Contributing](https://raw.githubusercontent.com/fathym/ioc/main/CONTRIBUTING.md): How to set up, test, document and propose changes to @fathym/ioc.
+- [IoC Next](https://raw.githubusercontent.com/fathym/ioc/main/docs/design/ioc-next.md): Design, decisions and migration notes for the 2026-10 iteration of @fathym/ioc (correctness fixes, typed tokens, scopes, disposal, declared dependencies).
+- [DI Ecosystem Feedback](https://raw.githubusercontent.com/fathym/ioc/main/docs/research/di-ecosystem-feedback.md): What developers like and dislike about TypeScript/JavaScript and .NET dependency-injection containers, and what it means for @fathym/ioc.

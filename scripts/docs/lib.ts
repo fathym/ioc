@@ -320,7 +320,14 @@ export function checkDocs(files: DocFiles, options: DocCheckOptions): DocProblem
 
     const { attrs, error } = splitFrontmatter(content);
 
-    if (error) report(file, `frontmatter does not parse: ${error}`);
+    // GitHub inserts these templates into new issues and pull requests verbatim (and issue
+    // templates use frontmatter for their own settings), so the house frontmatter is not applied.
+    const isGitHubTemplate = file === '.github/pull_request_template.md' ||
+      file.startsWith('.github/ISSUE_TEMPLATE/');
+
+    if (isGitHubTemplate) {
+      // Links are still checked below.
+    } else if (error) report(file, `frontmatter does not parse: ${error}`);
     else if (!attrs) report(file, 'missing frontmatter');
     else {
       for (const key of REQUIRED_FRONTMATTER) {

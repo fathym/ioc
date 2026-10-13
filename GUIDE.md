@@ -38,7 +38,8 @@ Use this playbook to keep IoC container work predictable and discoverable.
   so containers from several versions call each other's `CopyTo`
   (`tests/ioc/interop.tests.ts`). Never use `#private` fields or `instanceof`
   across containers.
-- Provide usage examples for common scenarios in the README.
+- Keep the documentation in `docs/` complete and verified: `deno task docs:check` runs every
+  example and checks links, frontmatter, footers and the error catalog.
 - Align APIs with other ref-arch libraries and the CLI where integration
   matters. See [`docs/design/ioc-next.md`](./docs/design/ioc-next.md).
 
@@ -46,19 +47,21 @@ Use this playbook to keep IoC container work predictable and discoverable.
 
 1. **Align scope** in [`README.md`](./README.md): note intended change (feature,
    fix, release prep) and target repo/branch if it moves.
-2. **Design & docs**: capture API proposals or examples in `docs/` (create if
-   needed) with frontmatter and links to upstream assumptions.
+2. **Design & docs**: capture API proposals in `docs/design/`, and update the
+   user docs (`docs/`, `examples/`) in the same change as the code. Follow the
+   conventions in [`CONTRIBUTING.md`](./CONTRIBUTING.md#documentation).
 3. **Capture provenance**: record upstream source, release channel, and version
    pins in `UPSTREAM.md` once publishing.
-4. **Validate behavior**: run `deno task test` for coverage; use
-   `deno task
-   build` or `deno task deploy` before releases, and add/update
-   smoke examples as APIs evolve.
+4. **Validate behavior**: run `deno task test` (container suites, docs checker
+   tests and every example) and `deno task build` (format, lint, types, docs
+   check, `deno doc --lint`) before pushing; use `deno task deploy` for releases.
 5. **Communicate changes**: document breaking changes with migration guidance
    and notify consumers (CLI, other libraries, micro-frameworks).
 
 ## Verification
 
+- `deno task docs:check` passes (links, anchors, frontmatter, orphans, What's
+  Next sections, error catalog, `llms.txt`, runnable examples).
 - Ensure links stay relative and parent guides remain discoverable.
 - Keep the roster entry in `../README.md` current when docs or status change.
 - When workspace tasks exist, also run: `deno task prompts:verify-frontmatter`,

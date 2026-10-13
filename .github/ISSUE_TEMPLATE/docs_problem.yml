@@ -1,0 +1,23 @@
+name: Documentation problem
+description: Something in the docs is unclear, missing, wrong or out of date.
+labels: [documentation]
+body:
+  - type: input
+    id: page
+    attributes:
+      label: Page
+      description: A link to the page (or "missing" if the page you needed doesn't exist).
+      placeholder: https://github.com/fathym/ioc/blob/main/docs/guides/testing.md
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: What was unclear or wrong?
+    validations:
+      required: true
+  - type: textarea
+    id: goal
+    attributes:
+      label: What were you trying to do?
+      description: The task helps us decide whether to fix a page or write a new guide.

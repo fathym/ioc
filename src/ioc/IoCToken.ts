@@ -2,11 +2,21 @@
  * A symbol that carries the type of the service registered under it, so resolving it needs no
  * explicit generic:
  *
+ * @example Register and resolve by token
  * ```ts
- * export const $Db = IoCToken<Db>('Db');
+ * import { IoCContainer, IoCToken } from '@fathym/ioc';
  *
- * ioc.Register($Db, () => openDb());   // the factory must return a Db
- * const db = await ioc.Resolve($Db);   // db: Db
+ * interface Db {
+ *   query(sql: string): string;
+ * }
+ *
+ * const $Db = IoCToken<Db>('Db');
+ *
+ * const ioc = new IoCContainer();
+ *
+ * ioc.Register($Db, () => ({ query: (sql) => sql })); // the factory must return a Db
+ *
+ * const db = await ioc.Resolve($Db); // db: Db
  * ```
  *
  * Tokens are plain `Symbol.for(id)` symbols at runtime, so `IoCToken('Db')` and `ioc.Symbol('Db')`

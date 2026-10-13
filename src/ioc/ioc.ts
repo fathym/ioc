@@ -142,11 +142,22 @@ function isDisposable(value: unknown): value is object {
 /**
  * A small, async-first, decorator-free inversion-of-control container.
  *
+ * Docs: https://github.com/fathym/ioc/blob/main/docs/README.md
+ *
+ * @example Register and resolve
  * ```ts
+ * import { IoCContainer, IoCToken } from '@fathym/ioc';
+ *
+ * const $DbUrl = IoCToken<string>('DbUrl');
+ *
+ * class Repo {
+ *   constructor(public url: string) {}
+ * }
+ *
  * const ioc = new IoCContainer();
  *
- * ioc.Register(Config, () => new Config(Deno.env.get('DB_URL')!));
- * ioc.Register(Repo, async (c) => new Repo(await c.Resolve(Config)));
+ * ioc.RegisterValue($DbUrl, 'kv://local');
+ * ioc.RegisterClass(Repo, { Deps: [$DbUrl] });
  *
  * const repo = await ioc.Resolve(Repo);
  * ```
@@ -185,6 +196,19 @@ export class IoCContainer {
    * Instances this container created and must dispose, in creation order.
    *
    * @ignore
+   *
+   * @example
+   * ```ts
+   * import { IoCContainer, IoCToken } from '@fathym/ioc';
+   *
+   * const $Port = IoCToken<number>('Port');
+   *
+   * const ioc = new IoCContainer();
+   *
+   * ioc.RegisterValue($Port, 8080);
+   *
+   * const port = await ioc.Resolve($Port); // number
+   * ```
    */
   protected readonly owned: object[];
 
@@ -282,6 +306,17 @@ export class IoCContainer {
    * failed ones), so configuration errors surface at startup rather than on first use. Rejects
    * with an `AggregateError` naming every service that failed. Transient and scoped services are
    * not built: they belong to each resolve and to each scope.
+   *
+   * @example Fail fast at startup
+   * ```ts
+   * import { IoCContainer, IoCToken } from '@fathym/ioc';
+   *
+   * const ioc = new IoCContainer();
+   *
+   * ioc.Register(IoCToken('Cache'), () => new Map(), { Lazy: true });
+   *
+   * await ioc.Activate(); // builds Cache now; throws an AggregateError naming every failure
+   * ```
    */
   public async Activate(): Promise<void> {
     const self = this.self();
@@ -331,6 +366,24 @@ export class IoCContainer {
    *
    * Factories are opaque, so dependencies resolved inside them are not checked; `Activate()`
    * covers those by building everything.
+   *
+   * @example
+   * ```ts
+   * import { IoCContainer } from '@fathym/ioc';
+   *
+   * class Config {}
+   *
+   * class Repo {
+   *   constructor(public config: Config) {}
+   * }
+   *
+   * const ioc = new IoCContainer();
+   *
+   * ioc.RegisterClass(Config);
+   * ioc.RegisterClass(Repo, { Deps: [Config], Lazy: true });
+   *
+   * ioc.Validate(); // throws IoCValidationError if anything is missing, cyclic or captive
+   * ```
    */
   public Validate(): void {
     const problems: string[] = [];
@@ -487,6 +540,20 @@ export class IoCContainer {
   /**
    * Registers a class (keyed by the class, or `options.Type`), or a factory (`options.Type` is
    * required).
+   *
+   * @example
+   * ```ts
+   * import { IoCContainer, IoCToken } from '@fathym/ioc';
+   *
+   * const $Db = IoCToken<{ url: string }>('Db');
+   *
+   * class Clock {}
+   *
+   * const ioc = new IoCContainer();
+   *
+   * ioc.Register(Clock); // a class (singleton by default)
+   * ioc.Register($Db, async () => ({ url: 'kv://local' }), { Lazy: true }); // an async factory
+   * ```
    */
   public Register<T>(
     clazzInstance: IoCServiceConstructor<T> | IoCServiceResolver<T>,
@@ -554,6 +621,22 @@ export class IoCContainer {
   /**
    * Registers a class that the container constructs (`new clazz()`), keyed by the class (or
    * `options.Type`). Returns a function that removes the registration.
+   *
+   * @example With declared dependencies
+   * ```ts
+   * import { IoCContainer, IoCToken } from '@fathym/ioc';
+   *
+   * const $Url = IoCToken<string>('Url');
+   *
+   * class Repo {
+   *   constructor(public url: string) {}
+   * }
+   *
+   * const ioc = new IoCContainer();
+   *
+   * ioc.RegisterValue($Url, 'kv://local');
+   * ioc.RegisterClass(Repo, { Deps: [$Url] }); // checked against Repo's constructor
+   * ```
    */
   public RegisterClass<C extends IoCServiceConstructor<unknown>>(
     clazz: C,
@@ -643,6 +726,21 @@ export class IoCContainer {
    * decorated service keeps the original's lifetime; decorators applied in order wrap each
    * other. In a scope, decorating a parent's registration only affects the scope. Returns a
    * function that restores the previous registration.
+   *
+   * @example Add caching around a service
+   * ```ts
+   * import { IoCContainer, IoCToken } from '@fathym/ioc';
+   *
+   * const $Prices = IoCToken<{ quote(symbol: string): number }>('Prices');
+   *
+   * const ioc = new IoCContainer();
+   *
+   * ioc.Register($Prices, () => ({ quote: (symbol) => symbol.length }));
+   * ioc.Decorate($Prices, (inner) => {
+   *   const cache = new Map<string, number>();
+   *   return { quote: (s) => cache.get(s) ?? cache.set(s, inner.quote(s)).get(s)! };
+   * });
+   * ```
    */
   public Decorate<T>(
     key: IoCServiceKey<T>,
@@ -785,6 +883,25 @@ export class IoCContainer {
    * on the scope override the parent's for this scope only (handy for per-request services and
    * for test overrides). Dispose the scope when done — `await using scope = ioc.CreateScope()`
    * — to dispose the instances it created.
+   *
+   * @example One scope per request
+   * ```ts
+   * import { IoCContainer, IoCToken } from '@fathym/ioc';
+   *
+   * const $Request = IoCToken<Request>('Request');
+   *
+   * const ioc = new IoCContainer();
+   *
+   * async function handle(req: Request): Promise<Response> {
+   *   await using scope = ioc.CreateScope();
+   *
+   *   scope.RegisterValue($Request, req);
+   *
+   *   return new Response(new URL((await scope.Resolve($Request)).url).pathname);
+   * }
+   *
+   * await handle(new Request('http://localhost/notes'));
+   * ```
    */
   public CreateScope(): IoCContainer {
     const self = this.self();

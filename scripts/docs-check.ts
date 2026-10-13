@@ -1,6 +1,6 @@
 // Checks the documentation: frontmatter, links and anchors, orphan pages, "What's Next" footers,
-// error-catalog coverage, llms.txt freshness, and that every code block in the docs type-checks
-// and runs.
+// error-catalog coverage, llms.txt freshness, that every code block in the Markdown docs and the
+// JSDoc type-checks and runs, and that the public API is fully documented (deno doc --lint).
 //
 //   deno run -A scripts/docs-check.ts            check everything
 //   deno run -A scripts/docs-check.ts --write    also regenerate llms.txt
@@ -70,6 +70,10 @@ const markdown = [...files.keys()].filter(isCheckedMarkdown).sort();
 
 const examples = [...files.keys()].filter((p) => p.startsWith('examples/') && p.endsWith('.ts'));
 
+const sources = [...files.keys()].filter((p) =>
+  p === 'mod.ts' || (p.startsWith('src/') && p.endsWith('.ts'))
+);
+
 const checks: [string, string[]][] = [
   ['code blocks in Markdown (type-checked and run)', [
     'test',
@@ -78,6 +82,8 @@ const checks: [string, string[]][] = [
     '--doc',
     ...markdown,
   ]],
+  ['JSDoc examples (type-checked and run)', ['test', '-A', '--quiet', '--doc', ...sources]],
+  ['API documentation (deno doc --lint)', ['doc', '--lint', 'mod.ts']],
   ...(examples.length ? [['examples', ['check', ...examples]] as [string, string[]]] : []),
 ];
 

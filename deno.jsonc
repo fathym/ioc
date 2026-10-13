@@ -12,8 +12,9 @@
     ".": "./mod.ts"
   },
   "tasks": {
-    "build": "deno task build:fmt && deno task build:lint && deno task build:check && deno task build:mod",
+    "build": "deno task build:fmt && deno task build:lint && deno task build:check && deno task build:docs && deno task build:mod",
     "build:check": "deno check **/*.ts",
+    "build:docs": "deno task docs:check",
     "build:mod": "deno run -A mod.ts build",
     "build:fmt": "deno fmt",
     "build:lint": "deno lint",
