@@ -95,6 +95,13 @@ export interface IoCRegistration {
   readonly deps?: readonly IoCDependencyRecord[];
   /** A framework default (`Default: true`): it yields to any other registration of its key. */
   readonly default?: boolean;
+  /** For scoped registrations: the scope level the instance lives in (`ScopeLevel`). */
+  readonly scopeLevel?: string;
+  /**
+   * Creates an unstored copy of this registration owned by `owner` (a fresh holder, the same
+   * factory), returning its thunk. Used by `Isolate()`.
+   */
+  fork?(owner: object): unknown;
   resolveIn(container: object, frame?: IoCResolveFrame): unknown;
 }
 

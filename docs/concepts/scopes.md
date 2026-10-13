@@ -88,6 +88,73 @@ factory receives the scope, so it sees the scope's `$Greeting`.
 > from the scope. A **singleton** is always built by the container that registered it, so it never
 > sees a scope's overrides. This is by design: one shared instance can't depend on one request.
 
+## Scope levels
+
+Real apps nest scopes: a tenant inside the app, a request inside a tenant, an agent inside a run.
+Give a scope a level with `CreateScope({ Level })`, and bind a `scoped` registration to a level
+with `ScopeLevel`. Its instance then lives in the nearest scope of that level, so every scope
+nested inside shares it, and it is disposed with that scope:
+
+```ts
+import { IoCContainer } from '@fathym/ioc';
+
+class TenantDb {
+  public id = crypto.randomUUID();
+}
+
+class RequestLog {
+  public lines: string[] = [];
+}
+
+const ioc = new IoCContainer()
+  .RegisterClass(TenantDb, { Lifetime: 'scoped', ScopeLevel: 'tenant' })
+  .RegisterClass(RequestLog, { Lifetime: 'scoped', Lazy: true });
+
+await using acme = ioc.CreateScope({ Level: 'tenant' });
+
+await using req1 = acme.CreateScope({ Level: 'request' });
+await using req2 = acme.CreateScope({ Level: 'request' });
+
+console.log((await req1.Resolve(TenantDb)) === (await req2.Resolve(TenantDb))); // true: one per tenant
+console.log((await req1.Resolve(RequestLog)) === (await req2.Resolve(RequestLog))); // false: one per request
+```
+
+Resolving a level-bound service with no scope of its level above throws `IoCScopeRequiredError`,
+whether or not the container is strict. Levels are plain strings: use whatever your app's units
+are.
+
+## Isolating services in a scope
+
+A scope shares its parent's singletons. When a sub-unit needs its own copy of a few of them (an
+agent's memory, a command group's settings), `scope.Isolate(...keys)` registers those keys again
+in the scope with the parent's recipe. The scope then builds, caches and disposes its own
+instance, and everything else stays shared:
+
+```ts
+import { IoCContainer } from '@fathym/ioc';
+
+class Memory {
+  public notes: string[] = [];
+}
+
+class Tools {}
+
+const ioc = new IoCContainer()
+  .RegisterClass(Memory, { Lazy: true })
+  .RegisterClass(Tools, { Lazy: true });
+
+await using planner = ioc.CreateScope({ Level: 'agent' }).Isolate(Memory);
+await using writer = ioc.CreateScope({ Level: 'agent' }).Isolate(Memory);
+
+(await planner.Resolve(Memory)).notes.push('plan');
+
+console.log((await writer.Resolve(Memory)).notes); // []
+console.log((await planner.Resolve(Tools)) === (await writer.Resolve(Tools))); // true
+```
+
+An isolated service's dependencies are resolved from the scope, so isolate them too when they
+must be separate. Values can't be isolated; register the scope's own value instead.
+
 ## No bubbling
 
 Some frameworks change a service's lifetime when it depends on a request-scoped one (NestJS calls

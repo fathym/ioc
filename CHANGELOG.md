@@ -71,6 +71,10 @@ Recommended release: **0.1.0**. See [migrating from 0.0.x](./docs/migration/from
 - **Lifecycle:** `Start()` validates, builds every singleton and runs `OnStart` in module order,
   rolling back on failure (`IoCStartError`). `Dispose()` runs `OnStop` in reverse before
   disposing instances, so `await using` covers shutdown.
+- **Scope levels:** `CreateScope({ Level })` and `ScopeLevel` on `scoped` registrations: the
+  instance lives in the nearest scope of that level (one per tenant, shared by its requests).
+- **`scope.Isolate(...keys)`** gives a scope its own instances of a parent's registrations (same
+  recipe, decorators included), for sub-units that must not share state.
 - **`Register(symbol, factory)`.**
 - **Node.js and Bun support, checked in CI:** `deno task build:npm` builds an npm package (ESM +
   `.d.ts`), and `deno task test:runtimes` runs a smoke test on Node.js 20/22/24 and Bun and

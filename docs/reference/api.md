@@ -30,7 +30,7 @@ runnable example, checked in CI.
 - **Registration:** [Register](#registerkey-factory-options), [RegisterClass](#registerclassclass-options), [RegisterFactory](#registerfactorykey-factory-options), [RegisterValue](#registervaluekey-value-options), [Decorate](#decoratekey-decorator-options), [Unregister](#unregisterkey-name)
 - **Typed containers:** [Typed](#typed), [Expect](#expectkeys)
 - **Resolution:** [Resolve](#resolvekey-name), [TryResolve](#tryresolvekey-name), [ResolveAll](#resolveallkey), [Has](#haskey-name)
-- **Lifecycle:** [Validate](#validate), [Activate](#activate), [Use](#usemodules), [ModuleFromContainer](#modulefromcontainername-container-options), [Start](#startoptions), [CreateScope](#createscope), [Dispose](#dispose)
+- **Lifecycle:** [Validate](#validate), [Activate](#activate), [Use](#usemodules), [ModuleFromContainer](#modulefromcontainername-container-options), [Start](#startoptions), [CreateScope](#createscopeoptions), [Isolate](#isolatekeys), [Dispose](#dispose)
 - **Copying and low level:** [CopyTo](#copytotarget), [Symbol](#symbolid), [RegisterDirect / ResolveDirect](#registerdirect-and-resolvedirect), [services / symbols](#services-and-symbols)
 - **Types:** [IoCToken](#ioctokenid), [options](#options), [dependency types](#dependency-types), [registry types](#registry-types), [other types](#other-types), [errors](#error-classes)
 
@@ -593,13 +593,14 @@ const ioc = new IoCContainer().Use({
 await ioc.Start(); // started
 ```
 
-### CreateScope()
+### CreateScope(options?)
 
 ```ts ignore
-CreateScope(): IoCContainer<TKeys>   // a typed container's scope keeps its keys
+CreateScope(options?: { Level?: string }): IoCContainer<TKeys>   // a typed container's scope keeps its keys
 ```
 
-Creates a child scope.
+Creates a child scope. A `Level` (`'tenant'`, `'request'`, `'agent'`, …) makes it the home of
+`scoped` registrations with a matching `ScopeLevel`; see [scope levels](../concepts/scopes.md#scope-levels).
 
 - **It resolves everything its parent can,** and its own registrations override the parent's for
   the scope only.
@@ -626,6 +627,36 @@ await using a = ioc.CreateScope();
 await using b = ioc.CreateScope();
 
 console.log((await a.Resolve(RequestId)) !== (await b.Resolve(RequestId))); // true
+```
+
+### Isolate(...keys)
+
+```ts ignore
+Isolate(...keys: (key | [key, name])[]): this
+```
+
+Registers each key again in this scope with the parent's recipe (factory, lifetime, `Deps`,
+`Dispose` option, decorators), so the scope builds, caches and disposes its own instance while
+everything else stays shared. Dependencies are resolved from the scope.
+
+**Throws:** [`IoCNotIsolatableError`](./errors.md#-cant-be-isolated-) for values and for
+registrations made by an older version; `IoCRegistrationError` on a root container;
+`IoCServiceNotFoundError` for an unregistered key.
+
+```ts
+import { IoCContainer } from '@fathym/ioc';
+
+class Memory {
+  public notes: string[] = [];
+}
+
+const ioc = new IoCContainer().RegisterClass(Memory, { Lazy: true });
+
+await using agent = ioc.CreateScope({ Level: 'agent' }).Isolate(Memory);
+
+(await agent.Resolve(Memory)).notes.push('mine');
+
+console.log((await ioc.Resolve(Memory)).notes); // []
 ```
 
 ### Dispose()
@@ -777,15 +808,16 @@ console.log(typeof $Port, port); // symbol 8080
 | `IoCRegisterOptions<TName>`            | `IoCServiceOptions` without `Type`; `Name` typed as `TName`                                                               | `Register(token, …)`, `RegisterFactory`   |
 | `IoCRegisterClassOptions<C, TKeys, …>` | `Lifetime`, `Lazy`, `Name`, `Deps?: IoCDependenciesFor<ConstructorParameters<C>, TKeys>`, `Type?` (a token `C` satisfies) | `RegisterClass`                           |
 
-| Option     | Default      | Meaning                                                                                                                                                                           |
-| ---------- | ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `Lifetime` | singleton    | `'transient'`: new per resolve; `'scoped'`: one per scope                                                                                                                         |
-| `Lazy`     | `false`      | Build a singleton or scoped service on first resolve instead of at registration                                                                                                   |
-| `Name`     | `'$default'` | Register several services under one key                                                                                                                                           |
-| `Type`     | the class    | The key, as a symbol or token                                                                                                                                                     |
-| `Default`  | —            | A default that yields to any other registration of the key and name, in any order; never built if overridden; a merged plugin's default never replaces a host registration        |
-| `Replace`  | —            | Replace an existing registration on purpose (required in strict mode)                                                                                                             |
-| `Dispose`  | —            | `(instance) => …`: cleanup run when the owner is disposed, for resources without `Symbol.dispose` (`kv => kv.close()`). On `RegisterClass`, `RegisterFactory` and `RegisterValue` |
+| Option       | Default      | Meaning                                                                                                                                                                                    |
+| ------------ | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `Lifetime`   | singleton    | `'transient'`: new per resolve; `'scoped'`: one per scope                                                                                                                                  |
+| `Lazy`       | `false`      | Build a singleton or scoped service on first resolve instead of at registration                                                                                                            |
+| `Name`       | `'$default'` | Register several services under one key                                                                                                                                                    |
+| `Type`       | the class    | The key, as a symbol or token                                                                                                                                                              |
+| `Default`    | —            | A default that yields to any other registration of the key and name, in any order; never built if overridden; a merged plugin's default never replaces a host registration                 |
+| `Replace`    | —            | Replace an existing registration on purpose (required in strict mode)                                                                                                                      |
+| `ScopeLevel` | —            | For `Lifetime: 'scoped'`: live in the nearest scope created with `CreateScope({ Level })` of this level, shared by the scopes inside it; throws `IoCScopeRequiredError` with no such scope |
+| `Dispose`    | —            | `(instance) => …`: cleanup run when the owner is disposed, for resources without `Symbol.dispose` (`kv => kv.close()`). On `RegisterClass`, `RegisterFactory` and `RegisterValue`          |
 
 ### Dependency types
 
@@ -844,6 +876,7 @@ Every class has a stable `code`; check it with `isIoCError(err, code?)`.
 | `IoCKeyCollisionError`          | `Key`                                              | [The key '…' is used by both …](./errors.md#the-key--is-used-by-both-a-class-and-a-token)          |
 | `IoCModuleCycleError`           | `Path`                                             | [Module dependency cycle …](./errors.md#module-dependency-cycle-a---b---a)                         |
 | `IoCStartError`                 | `Module`, `cause`, `RollbackErrors`                | [Module '…' failed to start …](./errors.md#module--failed-to-start-)                               |
+| `IoCNotIsolatableError`         | `Service`, `Reason`                                | [… can't be isolated: …](./errors.md#-cant-be-isolated-)                                           |
 
 ## What's Next
 

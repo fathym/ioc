@@ -36,6 +36,7 @@ here, and CI fails if a new one is added without an entry. For problems that don
 | `IoCKeyCollisionError`          | `IOC_KEY_COLLISION`                           | [The key '…' is used by both a class and a token](#the-key--is-used-by-both-a-class-and-a-token) (strict mode) |
 | `IoCModuleCycleError`           | `IOC_MODULE_CYCLE`                            | [Module dependency cycle: …](#module-dependency-cycle-a---b---a)                                               |
 | `IoCStartError`                 | `IOC_START_FAILED`                            | [Module '…' failed to start: …](#module--failed-to-start-)                                                     |
+| `IoCNotIsolatableError`         | `IOC_NOT_ISOLATABLE`                          | [… can't be isolated: …](#-cant-be-isolated-)                                                                  |
 | TypeScript                      | —                                             | [Compile errors](#typescript-errors)                                                                           |
 
 All error classes are exported from `@fathym/ioc`. Each one has a stable `code`; match on the code
@@ -298,6 +299,28 @@ or a circular import. **Fix:** check the import, and give the object a `Name` an
 `Use()` was called after `Start()`, so the module's `OnStart` would never run. **Fix:** add every
 module before `Start()`. To load plugins later, create a scope for them
 (`ioc.CreateScope().Use(plugin)`) and start the scope.
+
+### Isolate() works on scopes; call it on a container created with CreateScope().
+
+`Isolate()` was called on a root container, which has no parent to copy from. **Fix:** call it on
+a scope: `ioc.CreateScope().Isolate(Memory)`.
+
+---
+
+## … can't be isolated: …
+
+```text
+Clock can't be isolated: it is a value, which every scope shares as is.
+```
+
+`IoCNotIsolatableError` (`IOC_NOT_ISOLATABLE`) from `Isolate()`. The reasons:
+
+- **`it is a value, which every scope shares as is`:** a `RegisterValue` registration has no
+  recipe to build a second one. **Fix:** register the scope's own value with `RegisterValue` on
+  the scope instead.
+- **`it was registered by a version of @fathym/ioc without Isolate() support`:** the registration
+  came from an older version's container (for example through `CopyTo`). **Fix:** register the
+  service again on the scope, or upgrade the package that registers it.
 
 ---
 

@@ -6,6 +6,7 @@ import {
   IoCDuplicateRegistrationError,
   IoCKeyCollisionError,
   IoCModuleCycleError,
+  IoCNotIsolatableError,
   IoCRegistrationError,
   IoCScopeRequiredError,
   IoCServiceNotFoundError,
@@ -143,6 +144,15 @@ export type IoCServiceOptions = {
 
   /** Replaces an existing registration on purpose. Required in strict mode; otherwise optional. */
   Replace?: boolean;
+
+  /**
+   * For `Lifetime: 'scoped'`: the scope level the instance lives in. It is created in (and
+   * disposed with) the nearest scope created with `CreateScope({ Level })` of this level, so
+   * every request scope inside one tenant scope shares the tenant's instance. Resolving it with
+   * no such scope above throws `IoCScopeRequiredError`. Without it, a scoped instance lives in
+   * the scope it is resolved from.
+   */
+  ScopeLevel?: string;
 };
 
 /** A dependency key: a typed token, or a class (abstract classes included). */
@@ -487,6 +497,13 @@ export class IoCContainer<TKeys = any> {
    * @ignore
    */
   protected disposing?: Promise<void>;
+
+  /**
+   * The level given to `CreateScope({ Level })`, if any.
+   *
+   * @ignore
+   */
+  protected level?: string;
 
   /**
    * Creates a container. With no options it behaves exactly like earlier versions; see
@@ -995,6 +1012,7 @@ export class IoCContainer<TKeys = any> {
       lazy: this.lazyFor(opts.Lazy),
       default: opts.Default,
       replace: opts.Replace,
+      scopeLevel: opts.ScopeLevel,
     });
 
     // Historically only scoped registrations return their disposer.
@@ -1146,6 +1164,7 @@ export class IoCContainer<TKeys = any> {
       dispose: opts.Dispose as ((instance: unknown) => unknown) | undefined,
       default: opts.Default,
       replace: opts.Replace,
+      scopeLevel: opts.ScopeLevel,
     });
 
     return this as unknown as IoCContainer<
@@ -1185,6 +1204,7 @@ export class IoCContainer<TKeys = any> {
       dispose: opts.Dispose as ((instance: unknown) => unknown) | undefined,
       default: opts.Default,
       replace: opts.Replace,
+      scopeLevel: opts.ScopeLevel,
     });
 
     return this as unknown as IoCContainer<TKeys | IoCRegistered<K, TName>>;
@@ -1278,19 +1298,23 @@ export class IoCContainer<TKeys = any> {
     const lifetime: IoCLifetime = originalReg?.lifetime ??
       (typeof original === 'function' && !original.name ? 'transient' : 'singleton');
 
+    const decorate = (inner: unknown) => (ioc: IoCContainer) => {
+      const value = ioc.realize(inner, ioc.frame());
+
+      return value instanceof Promise
+        ? value.then((v) => decorator(v as T, ioc))
+        : decorator(value as T, ioc);
+    };
+
     const remove = self.addRegistration({
       symbol,
       name,
       lifetime,
       kind: 'factory',
       ctor: typeof key === 'function' ? key : originalReg?.ctor,
-      factory: (ioc) => {
-        const inner = ioc.realize(original, ioc.frame());
-
-        return inner instanceof Promise
-          ? inner.then((value) => decorator(value as T, ioc))
-          : decorator(inner as T, ioc);
-      },
+      factory: decorate(original),
+      // An isolated decorator wraps an isolated copy of what it decorates.
+      fork: (owner) => decorate(registrationOf(original)?.fork?.(owner) ?? original),
       lazy: true,
       deps: originalReg?.deps,
       replace: true,
@@ -1420,6 +1444,10 @@ export class IoCContainer<TKeys = any> {
    * for test overrides). Dispose the scope when done — `await using scope = ioc.CreateScope()`
    * — to dispose the instances it created.
    *
+   * Give a scope a `Level` (`'tenant'`, `'request'`, …) to host `scoped` registrations made with
+   * a matching `ScopeLevel`: they live in the nearest scope of that level, so scopes nested
+   * inside it share its instance.
+   *
    * @example One scope per request
    * ```ts
    * import { IoCContainer, IoCToken } from '@fathym/ioc';
@@ -1439,7 +1467,7 @@ export class IoCContainer<TKeys = any> {
    * await handle(new Request('http://localhost/notes'));
    * ```
    */
-  public CreateScope(): IoCContainer<TKeys> {
+  public CreateScope(options?: { Level?: string }): IoCContainer<TKeys> {
     const self = this.self();
 
     self.assertNotDisposed();
@@ -1448,7 +1476,80 @@ export class IoCContainer<TKeys = any> {
 
     scope.parent = self;
 
+    scope.level = options?.Level;
+
     return scope;
+  }
+
+  /**
+   * Gives this scope its own instances of services registered in a parent: each key (or
+   * `[key, name]`) is registered again here with the parent's recipe (same factory, lifetime,
+   * dependencies and `Dispose` option), so this scope builds, caches and disposes a fresh one
+   * while everything else stays shared. Use it for sub-units that must not share state with
+   * their siblings, such as one agent's memory or one CLI command group's settings. Its
+   * dependencies are resolved from this scope, so isolate those too when they must be separate.
+   *
+   * @example
+   * ```ts
+   * import { IoCContainer } from '@fathym/ioc';
+   *
+   * class Memory {
+   *   public notes: string[] = [];
+   * }
+   *
+   * const ioc = new IoCContainer().RegisterClass(Memory, { Lazy: true });
+   *
+   * await using agent = ioc.CreateScope({ Level: 'agent' }).Isolate(Memory);
+   *
+   * (await agent.Resolve(Memory)).notes.push('only mine');
+   *
+   * console.log((await ioc.Resolve(Memory)).notes.length); // 0
+   * ```
+   */
+  public Isolate(
+    ...keys:
+      (IoCServiceKey<unknown> | symbol | readonly [IoCServiceKey<unknown> | symbol, string])[]
+  ): this {
+    const self = this.self();
+
+    self.assertNotDisposed();
+
+    const parent = self.parent;
+
+    if (!parent) {
+      throw new IoCRegistrationError(
+        'Isolate() works on scopes; call it on a container created with CreateScope().',
+      );
+    }
+
+    for (const item of keys) {
+      const [key, name] = Array.isArray(item)
+        ? item as readonly [IoCServiceKey<unknown> | symbol, string]
+        : [item as IoCServiceKey<unknown> | symbol, DEFAULT_NAME];
+
+      const symbol = keySymbol(key);
+
+      const entry = parent.lookup(key, name, undefined);
+
+      const reg = registrationOf(entry);
+
+      const label = labelFor(symbol, name);
+
+      if (!reg?.fork) {
+        throw new IoCNotIsolatableError(
+          label,
+          'it was registered by a version of @fathym/ioc without Isolate() support',
+        );
+      }
+
+      if (reg.kind === 'value') {
+        throw new IoCNotIsolatableError(label, 'it is a value, which every scope shares as is');
+      }
+
+      self.RegisterDirect(symbol, name, reg.fork(self) as IoCServiceConstructed);
+    }
+
+    return this;
   }
 
   /**
@@ -1880,6 +1981,20 @@ export class IoCContainer<TKeys = any> {
   }
 
   /**
+   * The container a level-bound `scoped` registration (`ScopeLevel`) lives in: the nearest scope,
+   * from this one up, created with that level.
+   *
+   * @ignore
+   */
+  protected scopedSiteFor(reg: IoCRegistration): IoCContainer | undefined {
+    for (const c of this.chain()) {
+      if (c.level !== undefined && c.level === reg.scopeLevel) return c;
+    }
+
+    return undefined;
+  }
+
+  /**
    * This scope's holder for a `scoped` registration owned by an ancestor (created on demand), or
    * undefined when this container is not a child scope of the owner.
    *
@@ -2061,6 +2176,11 @@ export class IoCContainer<TKeys = any> {
     dispose?: (instance: unknown) => unknown;
     default?: boolean;
     replace?: boolean;
+    scopeLevel?: string;
+    /** Makes the factory for an isolated copy owned by `owner` (default: the same factory). */
+    fork?: (owner: IoCContainer) => (ioc: IoCContainer) => unknown;
+    /** Create the registration without checks or storing it, and return its thunk. */
+    detached?: boolean;
   }): () => void {
     const self = this.self();
 
@@ -2073,7 +2193,7 @@ export class IoCContainer<TKeys = any> {
     const exactKey = spec.ctor ?? symbol;
 
     // A default yields to any registration of the same key and name, here or in a parent.
-    if (spec.default) {
+    if (spec.default && !spec.detached) {
       for (const c of self.chain()) {
         const existing = c.findExactOwn(exactKey, name);
 
@@ -2249,6 +2369,19 @@ export class IoCContainer<TKeys = any> {
       label,
       deps: spec.deps,
       default: spec.default || undefined,
+      scopeLevel: spec.scopeLevel,
+      fork(owner: object): unknown {
+        const target = owner as IoCContainer;
+
+        return target.addRegistration({
+          ...spec,
+          factory: spec.fork ? spec.fork(target) : factory,
+          lazy: true,
+          default: undefined,
+          replace: true,
+          detached: true,
+        });
+      },
       resolveIn(container: object, frame?: IoCResolveFrame): unknown {
         if (!holder) {
           if (isOnActivePath(frame, reg)) {
@@ -2256,6 +2389,23 @@ export class IoCContainer<TKeys = any> {
           }
 
           return run(container, frame, reg);
+        }
+
+        if (lifetime === 'scoped' && reg.scopeLevel !== undefined) {
+          const c = container as Indexable;
+
+          // The nearest scope of the required level owns the instance.
+          const site: Indexable = typeof c.scopedSiteFor === 'function'
+            ? c.scopedSiteFor(reg)
+            : undefined;
+
+          if (!site) throw new IoCScopeRequiredError(label, reg.scopeLevel);
+
+          const scoped: IoCHolder | undefined = site.scopedHolderFor(reg);
+
+          return scoped
+            ? fromHolder(scoped, site, site, frame)
+            : fromHolder(holder!, self, self, frame);
         }
 
         if (lifetime === 'scoped') {
@@ -2281,8 +2431,11 @@ export class IoCContainer<TKeys = any> {
 
     // Defaults are always lazy (an overridden default is never built), and in strict mode a root
     // `scoped` registration is never built at the root.
-    const lazy = spec.lazy || !!spec.default ||
+    const lazy = spec.lazy || !!spec.default || spec.scopeLevel !== undefined ||
       (lifetime === 'scoped' && strict && !self.parent);
+
+    // An isolated copy (see Isolate) is returned to the caller to store.
+    if (spec.detached) return thunk as unknown as () => void;
 
     if (holder && !lazy) {
       // Eager: build now. A synchronous throw propagates and leaves any previous registration in

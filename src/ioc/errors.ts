@@ -364,3 +364,22 @@ export class IoCStartError extends IoCError {
     );
   }
 }
+
+/** Thrown by `Isolate()` for a registration that can't be copied into a scope. */
+export class IoCNotIsolatableError extends IoCError {
+  /** The error name, for logs and `instanceof`-free checks. */
+  public override name = 'IoCNotIsolatableError';
+
+  /** The stable error code. */
+  public readonly code = 'IOC_NOT_ISOLATABLE' as const;
+
+  /**
+   * Creates the error.
+   *
+   * @param Service The registration that was to be isolated.
+   * @param Reason Why it can't be.
+   */
+  constructor(public readonly Service: string, public readonly Reason: string) {
+    super(`${Service} can't be isolated: ${Reason}.`);
+  }
+}

@@ -56,17 +56,18 @@ All markers are `Symbol.for` keys, so every copy of the library gets the same sy
 Older containers call these on newer ones (and the reverse), so they keep their names and
 signatures for as long as protocol v1 lasts.
 
-| Member                            | Contract                                                                                                         |
-| --------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| `services`                        | `Map<symbol, Map<string, entry>>`: the container's own registrations, by symbol and then by name                 |
-| `symbols`                         | `Map<string, symbol>`: ids registered through `Symbol(id)`                                                       |
-| `Symbol(id)`                      | Returns `Symbol.for(id)` and records it in `symbols`                                                             |
-| `RegisterDirect(symbol, name, e)` | Stores a raw entry. Last write wins, except that an incoming default never replaces a non-default (see below)    |
-| `ResolveDirect(symbol, name)`     | Resolves a raw entry by symbol and name                                                                          |
-| `CopyTo(target)`                  | Copies every registration into `target` through `RegisterDirect`; to a protocol-unaware target, as legacy thunks |
-| `trackCtor(ctor, name, entry)`    | Records that `entry` is the registration of class `ctor`, so same-named classes resolve their own registrations  |
-| `scopedHolderFor(reg)`            | The calling scope's holder for a `scoped` registration owned by an ancestor, or `undefined`                      |
-| `trackOwned(value)`               | Offers a created instance for disposal; the first container to create it becomes its owner                       |
+| Member                            | Contract                                                                                                                                                          |
+| --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `services`                        | `Map<symbol, Map<string, entry>>`: the container's own registrations, by symbol and then by name                                                                  |
+| `symbols`                         | `Map<string, symbol>`: ids registered through `Symbol(id)`                                                                                                        |
+| `Symbol(id)`                      | Returns `Symbol.for(id)` and records it in `symbols`                                                                                                              |
+| `RegisterDirect(symbol, name, e)` | Stores a raw entry. Last write wins, except that an incoming default never replaces a non-default (see below)                                                     |
+| `ResolveDirect(symbol, name)`     | Resolves a raw entry by symbol and name                                                                                                                           |
+| `CopyTo(target)`                  | Copies every registration into `target` through `RegisterDirect`; to a protocol-unaware target, as legacy thunks                                                  |
+| `trackCtor(ctor, name, entry)`    | Records that `entry` is the registration of class `ctor`, so same-named classes resolve their own registrations                                                   |
+| `scopedHolderFor(reg)`            | The calling scope's holder for a `scoped` registration owned by an ancestor, or `undefined`                                                                       |
+| `scopedSiteFor(reg)`              | Optional, feature-detected: the scope a level-bound `scoped` registration lives in, or `undefined`. Containers without it can't resolve level-bound registrations |
+| `trackOwned(value)`               | Offers a created instance for disposal; the first container to create it becomes its owner                                                                        |
 
 ## Entries
 
@@ -80,20 +81,22 @@ A stored entry is one of:
 
 ## The registration record (v1)
 
-| Field       | Type                                     | Meaning                                                                 |
-| ----------- | ---------------------------------------- | ----------------------------------------------------------------------- |
-| `v`         | `1`                                      | The record version                                                      |
-| `symbol`    | `symbol`                                 | The key's symbol                                                        |
-| `name`      | `string`                                 | The registration name (`'$default'` when unnamed)                       |
-| `lifetime`  | `'singleton' \| 'transient' \| 'scoped'` | The lifetime                                                            |
-| `kind`      | `'class' \| 'factory' \| 'value'`        | How it was registered                                                   |
-| `ctor`      | `Function?`                              | The exact class, when the registration is keyed by its own class        |
-| `owner`     | `object`                                 | The container that created it; singletons always build against it       |
-| `holder`    | `IoCHolder?`                             | The memoized state of a singleton                                       |
-| `label`     | `string`                                 | The name used in error messages                                         |
-| `deps`      | `{ key, name }[]?`                       | Declared dependencies, read by `Validate()`                             |
-| `default`   | `boolean?`                               | A framework default: it yields to any registration that isn't a default |
-| `resolveIn` | `(container, frame?) => unknown`         | Produces the value, running the creating version's own logic            |
+| Field        | Type                                     | Meaning                                                                   |
+| ------------ | ---------------------------------------- | ------------------------------------------------------------------------- |
+| `v`          | `1`                                      | The record version                                                        |
+| `symbol`     | `symbol`                                 | The key's symbol                                                          |
+| `name`       | `string`                                 | The registration name (`'$default'` when unnamed)                         |
+| `lifetime`   | `'singleton' \| 'transient' \| 'scoped'` | The lifetime                                                              |
+| `kind`       | `'class' \| 'factory' \| 'value'`        | How it was registered                                                     |
+| `ctor`       | `Function?`                              | The exact class, when the registration is keyed by its own class          |
+| `owner`      | `object`                                 | The container that created it; singletons always build against it         |
+| `holder`     | `IoCHolder?`                             | The memoized state of a singleton                                         |
+| `label`      | `string`                                 | The name used in error messages                                           |
+| `deps`       | `{ key, name }[]?`                       | Declared dependencies, read by `Validate()`                               |
+| `default`    | `boolean?`                               | A framework default: it yields to any registration that isn't a default   |
+| `scopeLevel` | `string?`                                | For `scoped`: the level of the scope the instance lives in (`ScopeLevel`) |
+| `fork`       | `(owner) => thunk`?                      | Creates an unstored copy owned by `owner`, for `Isolate()`                |
+| `resolveIn`  | `(container, frame?) => unknown`         | Produces the value, running the creating version's own logic              |
 
 Fields marked `?` were added within v1 and are optional: a reader must treat a missing field as
 "not set".
