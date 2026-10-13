@@ -30,9 +30,14 @@ Recommended release: **0.1.0**. See [migrating from 0.0.x](./docs/migration/from
 ### Added
 
 - **Typed tokens:** `IoCToken<T>(id)`, so `Resolve($Db)` is typed without generics. Abstract
-  classes also work as typed keys.
+  classes also work as typed keys. `IoCToken<T, 'Id'>('Id')` also puts the id in the type.
 - **Explicit registration:** `RegisterClass` (with `Deps` constructor dependencies, checked at
-  compile time), `RegisterFactory` and `RegisterValue`.
+  compile time, and a `Type` token checked against the class), `RegisterFactory` and
+  `RegisterValue`. Each returns the container, so registrations chain.
+- **Typed containers:** `Typed()` starts tracking registrations in the container's type. Chained
+  registrations add their keys, and `Deps` may only name keys registered earlier, so a missing or
+  misordered registration doesn't compile. `Expect(...keys)` declares keys registered elsewhere
+  (another module, each scope). Untyped containers (`new IoCContainer()`) behave as before.
 - **Scopes:** `CreateScope()` creates child containers. `scoped` services get one instance per
   scope, scope registrations act as local overrides, and nothing is copied.
 - **Disposal:** `Dispose()` and `[Symbol.asyncDispose]` (`await using`). Instances are disposed

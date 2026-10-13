@@ -22,12 +22,12 @@ apart from a factory.
 
 ## Kinds of key
 
-| Key               | Example                                        | Resolve returns       | Use it for                          |
-| ----------------- | ---------------------------------------------- | --------------------- | ----------------------------------- |
-| A class           | `ioc.RegisterClass(Repo)`                      | `Repo`                | Concrete services                   |
-| An abstract class | `ioc.Register(Cache, () => new MemoryCache())` | `Cache`               | An "interface" with implementations |
-| A typed token     | `const $Db = IoCToken<Db>('Db')`               | `Db`                  | Interfaces, primitives, functions   |
-| A symbol          | `ioc.Symbol('Db')` or `Symbol.for('Db')`       | whatever you annotate | Older code; `Resolve<T>(symbol)`    |
+| Key               | Example                                       | Resolve returns       | Use it for                          |
+| ----------------- | --------------------------------------------- | --------------------- | ----------------------------------- |
+| A class           | `ioc.RegisterClass(Repo)`                     | `Repo`                | Concrete services                   |
+| An abstract class | `ioc.RegisterFactory(Cache, () => new Mem())` | `Cache`               | An "interface" with implementations |
+| A typed token     | `const $Db = IoCToken<Db>('Db')`              | `Db`                  | Interfaces, primitives, functions   |
+| A symbol          | `ioc.Symbol('Db')` or `Symbol.for('Db')`      | whatever you annotate | Older code; `Resolve<T>(symbol)`    |
 
 ```ts
 import { IoCContainer, IoCToken } from '@fathym/ioc';
@@ -44,8 +44,8 @@ const $Db = IoCToken<Db>('Db');
 
 const ioc = new IoCContainer();
 
-ioc.Register($Db, () => ({ query: (sql) => `ran ${sql}` }));
-ioc.Register(Cache, () => ({ get: (key) => `cached ${key}` }));
+ioc.RegisterFactory($Db, () => ({ query: (sql) => `ran ${sql}` }));
+ioc.RegisterFactory(Cache, () => ({ get: (key) => `cached ${key}` }));
 
 const db = await ioc.Resolve($Db); // Db
 const cache = await ioc.Resolve(Cache); // Cache
@@ -54,8 +54,22 @@ console.log(db.query('select 1'), cache.get('a'));
 ```
 
 **Tokens are symbols.** `IoCToken<Db>('Db')`, `ioc.Symbol('Db')` and `Symbol.for('Db')` are all
-the same value, so code using any of them interoperates. The token adds only a compile-time type.
-Declare each token once, in a module, and import it where needed.
+the same value at runtime, so code using any of them finds the same registration. The token adds
+only a compile-time type. Declare each token once, in a module, and import it where needed.
+
+**But a plain symbol isn't a token.** It has no service type, so the compiler can't check what
+it resolves to (`Resolve<Db>(symbol)` takes your word for it), and `Deps` won't accept it. Use
+tokens in new code.
+
+**A token's id can be part of its type.** `IoCToken<string, 'DbUrl'>('DbUrl')` has a different
+type from `IoCToken<string, 'Title'>('Title')`. A
+[typed container](../guides/declared-dependencies.md#depend-only-on-whats-registered-typed-containers)
+needs that to tell two tokens of the same service type apart. Tokens of distinct interfaces are
+already distinct, so the id type matters most for plain types like `string` and `number`.
+
+**Token ids share one global namespace.** `Symbol.for` is process-wide, so two packages that both
+declare `IoCToken('Config')` share a key. Prefix ids in shared libraries:
+`IoCToken<Config, '@acme/notes/Config'>('@acme/notes/Config')`.
 
 **A class key is its name.** `Register(Repo)` stores the service under `Symbol.for('Repo')`, so
 `Resolve(Repo)` and `Resolve(ioc.Symbol('Repo'))` find the same thing.
@@ -88,8 +102,8 @@ all of them, use `ResolveAll`, `Has` and `TryResolve`
 ## Registering again replaces
 
 Registering the same key and name again **replaces** the earlier registration (last one wins).
-That is how test scopes and decorators work. A removal function returned by an _earlier_
-registration never removes a _later_ one.
+That is how test scopes and decorators work. The removal function `Register` returns for a
+scoped registration never removes a _later_ registration.
 
 ## Class or factory?
 

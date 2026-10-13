@@ -260,6 +260,34 @@ TS2322: Type 'typeof Logger' is not assignable to type 'IoCDependency<Db>'.
 **Means:** an entry in `Deps` doesn't match the constructor parameter in the same position, often
 because two entries are in the wrong order. **Fix:** list `Deps` in constructor-parameter order.
 
+### `… is not assignable to type 'IoCDependency<Y> & (IoCNoKeys | …)'`
+
+```text
+TS2322: Type 'typeof Clock' is not assignable to type 'IoCDependency<Clock> & (IoCNoKeys | typeof Config)'.
+```
+
+**Means:** on a [typed container](./api.md#typed), a `Deps` entry names a key that isn't
+registered yet. The part in parentheses lists what **is** registered so far (`IoCNoKeys` is the
+empty start). With nothing registered yet, it ends in `& IoCNoKeys` and continues
+`Property ''@fathym/ioc/no-keys'' is missing`. **Fix:** register the key earlier in the chain. If it's
+registered elsewhere (another module, each scope), declare it with `Expect(key)`. If it's a
+`[key, name]` entry, register that name.
+
+### `Type 'symbol' is not assignable to type 'IoCDependency<Y>'`
+
+**Means:** a plain symbol (`Symbol.for('Db')`, `ioc.Symbol('Db')`) in `Deps`. A plain symbol
+carries no type, so it can't be checked. **Fix:** use a typed token (`IoCToken<Db>('Db')`) for the
+same id.
+
+### `… is not assignable to type 'IoCTypeMismatch<X, Y> | undefined'`
+
+```text
+TS2322: Type 'IoCToken<Db, string>' is not assignable to type 'IoCTypeMismatch<NotADb, Db> | undefined'.
+```
+
+**Means:** `RegisterClass(X, { Type: $Y })`, but an `X` isn't a `Y`. **Fix:** make the class
+implement the token's type, or register it under the right token.
+
 ### `Source has 1 element(s) but target requires 2`
 
 **Means:** `Deps` has fewer entries than the constructor has parameters. **Fix:** declare one

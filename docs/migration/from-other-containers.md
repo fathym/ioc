@@ -154,16 +154,17 @@ console.log(await repo.all()); // [ "select * from notes" ]
 
 ## typed-inject
 
-| typed-inject                                         | @fathym/ioc                                                                |
-| ---------------------------------------------------- | -------------------------------------------------------------------------- |
-| `static inject = ['a', 'b'] as const`                | `RegisterClass(X, { Deps: [$A, $B] })`                                     |
-| `createInjector().provideValue('a', v)`              | `RegisterValue($A, v)`                                                     |
-| `.provideFactory('a', fn)` / `.provideClass('a', C)` | `Register($A, fn)` / `RegisterClass(C, { Type: $A })`                      |
-| `Scope.Singleton` / `Scope.Transient`                | default / `'transient'`                                                    |
-| `injector.injectClass(C)`                            | `await ioc.Resolve(C)` after registering it                                |
-| `createChildInjector()`                              | `ioc.CreateScope()`                                                        |
-| `injector.dispose()`                                 | `await ioc.Dispose()`                                                      |
-| compile-time graph checking                          | `Deps` checked per class at compile time; `Validate()` for the whole graph |
+| typed-inject                                         | @fathym/ioc                                                       |
+| ---------------------------------------------------- | ----------------------------------------------------------------- |
+| `static inject = ['a', 'b'] as const`                | `RegisterClass(X, { Deps: [$A, $B] })`                            |
+| `createInjector().provideValue('a', v)`              | `new IoCContainer().Typed().RegisterValue($A, v)`                 |
+| `.provideFactory('a', fn)` / `.provideClass('a', C)` | `.RegisterFactory($A, fn)` / `.RegisterClass(C, { Type: $A })`    |
+| `Scope.Singleton` / `Scope.Transient`                | default / `'transient'`                                           |
+| `injector.injectClass(C)`                            | `await ioc.Resolve(C)` after registering it                       |
+| `createChildInjector()`                              | `ioc.CreateScope()`                                               |
+| `injector.dispose()`                                 | `await ioc.Dispose()`                                             |
+| compile-time graph checking (ordered `provide…`)     | `Typed()` chains: `Deps` may only name keys registered earlier    |
+| string tokens (`'a'`)                                | `IoCToken<A, 'a'>('a')`, so tokens of the same type stay distinct |
 
 ## After migrating
 

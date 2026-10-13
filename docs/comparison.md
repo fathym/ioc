@@ -36,6 +36,7 @@ fairly as we can, including **when you should pick something else**.
 | No `reflect-metadata`                       | ✓           | ✗           | ✗        | ✓      | ✓            | ✓         | ✗      | ✓ (n/a)    |
 | Typed keys for interfaces                   | ✓           | ~           | ~        | ~      | ✓            | ✓         | ~      | ✓          |
 | Constructor deps checked at compile time    | ✓ (`Deps`)  | ✗           | ✗        | ✗      | ✓            | ~         | ✗      | ✗          |
+| Registration order checked at compile time  | ✓ (`Typed`) | ✗           | ✗        | ✗      | ✓            | ✗         | ✗      | ✗          |
 | Async factories / async resolve             | ✓           | ✓           | ✗        | ✗      | ✗            | ✓         | ✓      | ✗          |
 | Shared in-flight creation, retry on failure | ✓           | ~           | ✗        | ✗      | ✗            | ~         | ~      | ✗          |
 | Explicit child scopes                       | ✓           | ✓           | ✓        | ✓      | ✓            | ✓         | ~      | ✓          |
@@ -44,6 +45,8 @@ fairly as we can, including **when you should pick something else**.
 | Startup validation                          | ✓           | ✗           | ✗        | ~      | ✓ (types)    | ✗         | ✓      | ✓          |
 | Error catalog in docs                       | ✓           | ✗           | ✗        | ~      | ✗            | ✗         | ✓      | ✗          |
 | Standalone library                          | ✓           | ✓           | ✓        | ✓      | ✓            | ✓         | ✗      | ✓          |
+| Synchronous resolve                         | ✗           | ✓           | ✓        | ✓      | ✓            | ✓         | ✓      | ✓          |
+| Mature, widely used                         | ✗ (0.x)     | ✓           | ✓        | ✓      | ✓            | ~         | ✓      | ✓          |
 
 ## Where each one shines
 
@@ -65,8 +68,12 @@ fairly as we can, including **when you should pick something else**.
   registrations explicit.
 - **You need property injection, interception or tagged or conditional bindings.** Inversify has
   them; we don't.
-- **You want compile-time proof of the _entire_ graph.** typed-inject goes further. We check each
-  class's `Deps` at compile time and the whole declared graph with `Validate()` at runtime.
+- **You want compile-time proof of the _entire_ graph.** A [typed container](./guides/declared-dependencies.md#depend-only-on-whats-registered-typed-containers)
+  proves every `Deps` key is registered earlier, like typed-inject. It doesn't see what factories
+  resolve inside their bodies, or whether lifetimes are safe; `Validate()` and `Activate()` cover
+  those at startup.
+- **You need a mature, widely used container.** This one is pre-1.0 and used mostly inside
+  Fathym. Its maintenance depends on a small team.
 - **You're building on a framework with its own DI** (NestJS, Angular). Use the framework's.
 
 ## How the differences play out

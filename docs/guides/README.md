@@ -18,18 +18,18 @@ References:
 
 Each guide answers one "how do I…?" question with complete code you can copy.
 
-| Guide                                                                       | How do I…                                                       |
-| --------------------------------------------------------------------------- | --------------------------------------------------------------- |
-| [registering-services.md](./registering-services.md) _[How-to]_             | …choose the right way to register a class, factory or value?    |
-| [declared-dependencies.md](./declared-dependencies.md) _[How-to]_           | …let the container call my constructor with typed dependencies? |
-| [async-initialization.md](./async-initialization.md) _[How-to]_             | …start databases and clients, retry, and fail fast at startup?  |
-| [per-request-scopes.md](./per-request-scopes.md) _[How-to]_                 | …give each HTTP request its own services, with any framework?   |
-| [testing.md](./testing.md) _[How-to]_                                       | …override, fake and reset services in tests?                    |
-| [plugins-and-named-services.md](./plugins-and-named-services.md) _[How-to]_ | …register several implementations and pick or collect them?     |
-| [decorating-services.md](./decorating-services.md) _[How-to]_               | …add logging, caching or retries around an existing service?    |
-| [organizing-registrations.md](./organizing-registrations.md) _[How-to]_     | …structure registrations in a real app?                         |
-| [copying-containers.md](./copying-containers.md) _[How-to]_                 | …copy registrations between containers, or move to scopes?      |
-| [guidelines.md](./guidelines.md) _[How-to]_                                 | …avoid the common mistakes (with named anti-patterns)?          |
+| Guide                                                                       | How do I…                                                                          |
+| --------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| [registering-services.md](./registering-services.md) _[How-to]_             | …choose the right way to register a class, factory or value?                       |
+| [declared-dependencies.md](./declared-dependencies.md) _[How-to]_           | …let the container call my constructor, and check its dependencies are registered? |
+| [async-initialization.md](./async-initialization.md) _[How-to]_             | …start databases and clients, retry, and fail fast at startup?                     |
+| [per-request-scopes.md](./per-request-scopes.md) _[How-to]_                 | …give each HTTP request its own services, with any framework?                      |
+| [testing.md](./testing.md) _[How-to]_                                       | …override, fake and reset services in tests?                                       |
+| [plugins-and-named-services.md](./plugins-and-named-services.md) _[How-to]_ | …register several implementations and pick or collect them?                        |
+| [decorating-services.md](./decorating-services.md) _[How-to]_               | …add logging, caching or retries around an existing service?                       |
+| [organizing-registrations.md](./organizing-registrations.md) _[How-to]_     | …structure registrations in a real app?                                            |
+| [copying-containers.md](./copying-containers.md) _[How-to]_                 | …copy registrations between containers, or move to scopes?                         |
+| [guidelines.md](./guidelines.md) _[How-to]_                                 | …avoid the common mistakes (with named anti-patterns)?                             |
 
 ## What's Coming
 

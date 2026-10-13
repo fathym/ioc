@@ -59,15 +59,18 @@ class NotesService {
 }
 
 // The app's real wiring, shared by main.ts and the tests.
-function registerApp(ioc: IoCContainer): void {
-  ioc.Register(Deno.Kv, () => Deno.openKv(':memory:'), { Lazy: true });
-  ioc.Register(NotesStore, async (c) => new KvNotesStore(await c.Resolve(Deno.Kv)), { Lazy: true });
-  ioc.RegisterClass(NotesService, { Deps: [NotesStore], Lifetime: 'transient' });
+function registerApp(ioc: IoCContainer) {
+  return ioc
+    .Typed()
+    .RegisterFactory(Deno.Kv, () => Deno.openKv(':memory:'), { Lazy: true })
+    .RegisterFactory(NotesStore, async (c) => new KvNotesStore(await c.Resolve(Deno.Kv)), {
+      Lazy: true,
+    })
+    .RegisterClass(NotesService, { Deps: [NotesStore], Lifetime: 'transient' });
 }
 
 Deno.test('NotesService trims notes before saving', async () => {
-  const ioc = new IoCContainer();
-  registerApp(ioc);
+  const ioc = registerApp(new IoCContainer());
 
   await using test = ioc.CreateScope();
 

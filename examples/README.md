@@ -40,3 +40,4 @@ deno test -A examples/testing-overrides.test.ts
 | [plugins.ts](./plugins.ts)                               | Named implementations, `ResolveAll`, `TryResolve`, `Has`                                | [plugins-and-named-services.md](../docs/guides/plugins-and-named-services.md) |
 | [startup-validation.ts](./startup-validation.ts)         | `Validate()` catching a missing dependency and a captive dependency                     | [organizing-registrations.md](../docs/guides/organizing-registrations.md)     |
 | [decorators.ts](./decorators.ts)                         | Caching and timing with `Decorate`, composed in order                                   | [decorating-services.md](../docs/guides/decorating-services.md)               |
+| [typed-container.ts](./typed-container.ts)               | `Typed()` chains, modules that require keys, `Expect` for a per-request key             | [declared-dependencies.md](../docs/guides/declared-dependencies.md)           |

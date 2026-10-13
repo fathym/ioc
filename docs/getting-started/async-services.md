@@ -42,11 +42,11 @@ class NotesStore {
   }
 }
 
-const ioc = new IoCContainer();
-
-// Deno.Kv is a class, so it works as a key. The factory is async; that's fine.
-ioc.Register(Deno.Kv, () => Deno.openKv(':memory:'), { Lazy: true });
-ioc.RegisterClass(NotesStore, { Deps: [Deno.Kv], Lazy: true });
+const ioc = new IoCContainer()
+  .Typed()
+  // Deno.Kv is a class, so it works as a key. The factory is async; that's fine.
+  .RegisterFactory(Deno.Kv, () => Deno.openKv(':memory:'), { Lazy: true })
+  .RegisterClass(NotesStore, { Deps: [Deno.Kv], Lazy: true });
 
 await ioc.Activate(); // open KV now, so a bad connection fails at startup
 

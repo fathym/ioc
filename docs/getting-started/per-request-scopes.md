@@ -24,7 +24,7 @@ References:
 ```ts
 import { IoCContainer, IoCToken } from '@fathym/ioc';
 
-const $Request = IoCToken<Request>('Request');
+const $Request = IoCToken<Request, 'Request'>('Request');
 
 class RequestContext {
   public readonly id = crypto.randomUUID();
@@ -38,10 +38,11 @@ class NotesHandler {
   }
 }
 
-const ioc = new IoCContainer();
-
-ioc.RegisterClass(RequestContext, { Lifetime: 'scoped', Lazy: true });
-ioc.RegisterClass(NotesHandler, { Deps: [RequestContext, $Request], Lifetime: 'transient' });
+const ioc = new IoCContainer()
+  .Typed()
+  .Expect($Request) // registered on each request's scope, below
+  .RegisterClass(RequestContext, { Lifetime: 'scoped', Lazy: true })
+  .RegisterClass(NotesHandler, { Deps: [RequestContext, $Request], Lifetime: 'transient' });
 
 const server = Deno.serve({ port: 0, onListen() {} }, async (req) => {
   await using scope = ioc.CreateScope(); // disposed when the handler returns
@@ -65,7 +66,7 @@ await server.shutdown();
 - **`scoped` services get one instance per scope.** Every service in this request shares the same
   `RequestContext`; the next request gets a new one.
 - **Registrations on a scope stay in that scope.** `$Request` exists only inside this request's
-  scope.
+  scope. `Expect($Request)` tells the typed container it will be there, so `Deps` may name it.
 - **Transient services built in a scope receive the scope.** That's how `NotesHandler` sees this
   request's `$Request` and `RequestContext`.
 - **`await using` disposes the scope** when the handler finishes, cleaning up anything the scope

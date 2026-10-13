@@ -28,10 +28,11 @@ runnable example, checked in CI.
 **Contents:**
 
 - **Registration:** [Register](#registerkey-factory-options), [RegisterClass](#registerclassclass-options), [RegisterFactory](#registerfactorykey-factory-options), [RegisterValue](#registervaluekey-value-options), [Decorate](#decoratekey-decorator-options), [Unregister](#unregisterkey-name)
+- **Typed containers:** [Typed](#typed), [Expect](#expectkeys)
 - **Resolution:** [Resolve](#resolvekey-name), [TryResolve](#tryresolvekey-name), [ResolveAll](#resolveallkey), [Has](#haskey-name)
 - **Lifecycle:** [Validate](#validate), [Activate](#activate), [CreateScope](#createscope), [Dispose](#dispose)
 - **Copying and low level:** [CopyTo](#copytotarget), [Symbol](#symbolid), [RegisterDirect / ResolveDirect](#registerdirect-and-resolvedirect), [services / symbols](#services-and-symbols)
-- **Types:** [IoCToken](#ioctokenid), [options](#options), [dependency types](#dependency-types), [other types](#other-types), [errors](#error-classes)
+- **Types:** [IoCToken](#ioctokenid), [options](#options), [dependency types](#dependency-types), [registry types](#registry-types), [other types](#other-types), [errors](#error-classes)
 
 ---
 
@@ -42,7 +43,7 @@ runnable example, checked in CI.
 The flexible, original registration method. It accepts several forms:
 
 ```ts ignore
-Register(token: IoCToken<T>, factory: (ioc) => T | Promise<T>, options?: IoCRegisterOptions)
+Register(token: IoCToken<T> | symbol, factory: (ioc) => T | Promise<T>, options?: IoCRegisterOptions)
 Register(clazz: Class<T>, factory: (ioc) => T | Promise<T>, options?: IoCServiceOptions)
 Register(clazz: Class<T>, options?: IoCServiceOptions)          // the container constructs it
 Register(factory: (ioc) => T | Promise<T>, options: IoCServiceOptions & { Type: symbol })
@@ -66,6 +67,8 @@ Register(factory: (ioc) => T | Promise<T>, options: IoCServiceOptions & { Type: 
   (see [the rule](../concepts/keys-and-registrations.md#class-or-factory)).
   `RegisterClass` / `RegisterFactory` never guess.
 - **Registering the same key and name again replaces** the earlier registration.
+- **It doesn't chain or add to a [typed container](#typed)'s keys.** Use the explicit methods for
+  that.
 
 ```ts
 import { IoCContainer, IoCToken } from '@fathym/ioc';
@@ -86,14 +89,19 @@ console.log((await ioc.Resolve($Db)).url, ioc.Has($Db, 'tmp')); // kv://local fa
 ### RegisterClass(class, options?)
 
 ```ts ignore
-RegisterClass<C extends new (...args: any[]) => unknown>(clazz: C, options?: IoCRegisterClassOptions<C>): () => void
+RegisterClass<C, TName = '$default', TType = never>(clazz: C, options?: IoCRegisterClassOptions<C, TKeys, TName, TType>): IoCContainer<TKeys | IoCRegistered<C or TType, TName>>
 ```
 
 Registers a class the container constructs. With `Deps`, the listed services are resolved (in the
-resolving container or scope) and passed to the constructor in order. `Deps` is type-checked
-against `ConstructorParameters<C>`.
+resolving container or scope) and passed to the constructor in order.
 
-**Returns:** a function that removes this registration. **Throws:**
+- **`Deps` is type-checked against `ConstructorParameters<C>`,** and on a [typed container](#typed)
+  against the keys registered so far.
+- **`Type` registers the class under a token instead** (`{ Type: $Db }`). The class's instances
+  must satisfy the token's type.
+
+**Returns:** the same container, typed with the new key, so calls chain. Remove the registration
+with [`Unregister`](#unregisterkey-name). **Throws:**
 [`RegisterClass expects a class.`](./errors.md#registerclass-expects-a-class), and
 [`The Type was missing …`](./errors.md#the-type-was-missing-for-the-registration) for an anonymous
 class without `Type`.
@@ -118,14 +126,14 @@ console.log((await ioc.Resolve(Repo)).url); // kv://local
 ### RegisterFactory(key, factory, options?)
 
 ```ts ignore
-RegisterFactory<T>(key: IoCToken<T> | Class<T>, factory: (ioc: IoCContainer) => T | Promise<T>, options?: IoCRegisterOptions): () => void
+RegisterFactory<K, TName = '$default'>(key: K, factory: (ioc: IoCContainer) => IoCServiceOf<K> | Promise<IoCServiceOf<K>>, options?: IoCRegisterOptions<TName>): IoCContainer<TKeys | IoCRegistered<K, TName>>
 ```
 
-Registers a factory under a token or class key. Unlike `Register`, it never treats the function as
-a class, so named `function` declarations are safe. The factory's return type is checked against
-the key.
+Registers a factory under a token, class or symbol key. Unlike `Register`, it never treats the
+function as a class, so named `function` declarations are safe. The factory's return type is
+checked against the key.
 
-**Returns:** a removal function. **Throws:**
+**Returns:** the same container, typed with the new key. **Throws:**
 [`RegisterFactory expects a factory function.`](./errors.md#registerfactory-expects-a-factory-function)
 
 ```ts
@@ -149,11 +157,13 @@ console.log((await ioc.Resolve(Clock)).start); // 0
 ### RegisterValue(key, value, options?)
 
 ```ts ignore
-RegisterValue<T>(key: IoCToken<T> | Class<T>, value: T, options?: { Name?: string }): () => void
+RegisterValue<K, TName = '$default'>(key: K, value: IoCServiceOf<K>, options?: { Name?: TName }): IoCContainer<TKeys | IoCRegistered<K, TName>>
 ```
 
-Registers an existing value as a singleton. Functions and thenables are stored as-is. The
-container never invokes or disposes values. **Returns:** a removal function.
+Registers an existing value as a singleton. Functions are stored as-is, never called. A thenable
+is stored as-is too, but `Resolve` awaits it, so you get its result (see
+[the caveat](../concepts/async-resolution.md#caveat-thenables-are-unwrapped)). The container never
+disposes values. **Returns:** the same container, typed with the new key.
 
 ```ts
 import { IoCContainer, IoCToken } from '@fathym/ioc';
@@ -170,7 +180,7 @@ console.log((await ioc.Resolve($Handler))('/notes')); // handled /notes
 ### Decorate(key, decorator, options?)
 
 ```ts ignore
-Decorate<T>(key: IoCToken<T> | Class<T>, decorator: (inner: T, ioc: IoCContainer) => T | Promise<T>, options?: { Name?: string }): () => void
+Decorate<T>(key: IoCToken<T> | Class<T> | symbol, decorator: (inner: T, ioc: IoCContainer) => T | Promise<T>, options?: { Name?: string }): () => void
 ```
 
 Replaces the current registration with one that wraps it.
@@ -227,6 +237,75 @@ ioc.RegisterValue($Flag, true);
 console.log(ioc.Unregister($Flag), ioc.Unregister($Flag), ioc.Has($Flag)); // true false false
 ```
 
+### Typed()
+
+```ts ignore
+Typed(): IoCContainer<IoCNoKeys>
+```
+
+Starts tracking registrations in the container's **type**. It returns the same container, typed as
+having no keys. Each chained `RegisterClass`, `RegisterFactory`, `RegisterValue` or `Expect` then
+adds its key, and `Deps` may only name keys already added. A key registered later in the chain
+doesn't compile, so registration order is checked.
+
+- **Chain the calls.** A registration made as a statement still works at runtime but doesn't
+  change a variable's type.
+- **Nothing changes at runtime.** A typed container behaves exactly like any other, and is
+  assignable to a plain `IoCContainer`.
+- **Scopes keep the type:** `CreateScope()` returns `IoCContainer<TKeys>`.
+
+See [typed containers](../guides/declared-dependencies.md#depend-only-on-whats-registered-typed-containers).
+
+```ts
+import { IoCContainer, IoCToken } from '@fathym/ioc';
+
+const $Url = IoCToken<string, 'Url'>('Url');
+
+class Repo {
+  constructor(public url: string) {}
+}
+
+const ioc = new IoCContainer()
+  .Typed()
+  .RegisterValue($Url, 'kv://local')
+  .RegisterClass(Repo, { Deps: [$Url] });
+
+console.log((await ioc.Resolve(Repo)).url); // kv://local
+```
+
+### Expect(...keys)
+
+```ts ignore
+Expect<const TDeps extends readonly (IoCDependencyKey<any> | [IoCDependencyKey<any>, string])[]>(...keys: TDeps): IoCContainer<TKeys | IoCExpected<TDeps>>
+```
+
+Declares keys registered somewhere else (by another module, a parent, or each scope), so a typed
+container's `Deps` may name them. Pass `[key, name]` for a named registration.
+
+**Type-only:** nothing is registered, and `Validate()` still reports a dependency that nothing
+registers. **Returns:** the same container.
+
+```ts
+import { IoCContainer, IoCToken } from '@fathym/ioc';
+
+const $Request = IoCToken<Request, 'Request'>('Request');
+
+class Handler {
+  constructor(public req: Request) {}
+}
+
+const ioc = new IoCContainer()
+  .Typed()
+  .Expect($Request)
+  .RegisterClass(Handler, { Deps: [$Request], Lifetime: 'scoped', Lazy: true });
+
+await using scope = ioc.CreateScope();
+
+scope.RegisterValue($Request, new Request('http://localhost/'));
+
+console.log((await scope.Resolve(Handler)).req.url); // http://localhost/
+```
+
 ---
 
 ## Resolution
@@ -236,6 +315,7 @@ console.log(ioc.Unregister($Flag), ioc.Unregister($Flag), ioc.Has($Flag)); // tr
 ```ts ignore
 Resolve<T>(token: IoCToken<T>, name?: string): Promise<T>
 Resolve<T>(clazz: abstract new (...args: any[]) => T, name?: string): Promise<T>
+Resolve<T>(symbol: symbol, name?: string): Promise<T>   // T is yours to state: Resolve<Db>(sym)
 ```
 
 Resolves a service from this container, or from its parents for a scope, building it if needed.
@@ -399,7 +479,7 @@ console.log(built); // true
 ### CreateScope()
 
 ```ts ignore
-CreateScope(): IoCContainer
+CreateScope(): IoCContainer<TKeys>   // a typed container's scope keeps its keys
 ```
 
 Creates a child scope.
@@ -547,13 +627,18 @@ holds only the scope's own registrations.
 ### IoCToken(id)
 
 ```ts ignore
-type IoCToken<T> = symbol & { readonly '@fathym/ioc/type'?: T }
-function IoCToken<T>(id: string): IoCToken<T>        // Symbol.for(id)
+type IoCToken<T, TId extends string = string> = symbol & { readonly '@fathym/ioc/type': T; readonly '@fathym/ioc/id': TId }
+function IoCToken<T, TId extends string = string>(id: TId): IoCToken<T, TId>   // Symbol.for(id)
 type IoCTokenOf<TToken> = /* the T of an IoCToken<T> */
 ```
 
 A symbol that carries the type of the service registered under it, so `Resolve($Db)` is typed
-without a generic. A plain symbol is accepted anywhere a token is.
+without a generic. The markers exist only in the type; at runtime a token is `Symbol.for(id)`.
+
+- **The optional `TId`** puts the id in the type: `IoCToken<string, 'Url'>('Url')`. A
+  [typed container](#typed) can then tell two `string` tokens apart.
+- **A plain symbol is not a token.** It finds the same registration, and every method that takes a
+  key accepts one, but it carries no type. `Deps` doesn't accept plain symbols.
 
 ```ts
 import { IoCToken, type IoCTokenOf } from '@fathym/ioc';
@@ -567,11 +652,11 @@ console.log(typeof $Port, port); // symbol 8080
 
 ### Options
 
-| Type                         | Fields                                                                                   | Used by                                 |
-| ---------------------------- | ---------------------------------------------------------------------------------------- | --------------------------------------- |
-| `IoCServiceOptions`          | `Lifetime?: 'transient' \| 'scoped'`, `Lazy?: boolean`, `Name?: string`, `Type?: symbol` | `Register(class/factory, …)`            |
-| `IoCRegisterOptions`         | `IoCServiceOptions` without `Type`                                                       | `Register(token, …)`, `RegisterFactory` |
-| `IoCRegisterClassOptions<C>` | `IoCServiceOptions` plus `Deps?: IoCDependenciesFor<ConstructorParameters<C>>`           | `RegisterClass`                         |
+| Type                                   | Fields                                                                                                                    | Used by                                 |
+| -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- | --------------------------------------- |
+| `IoCServiceOptions`                    | `Lifetime?: 'transient' \| 'scoped'`, `Lazy?: boolean`, `Name?: string`, `Type?: symbol`                                  | `Register(class/factory, …)`            |
+| `IoCRegisterOptions<TName>`            | `IoCServiceOptions` without `Type`; `Name` typed as `TName`                                                               | `Register(token, …)`, `RegisterFactory` |
+| `IoCRegisterClassOptions<C, TKeys, …>` | `Lifetime`, `Lazy`, `Name`, `Deps?: IoCDependenciesFor<ConstructorParameters<C>, TKeys>`, `Type?` (a token `C` satisfies) | `RegisterClass`                         |
 
 | Option     | Default      | Meaning                                                                         |
 | ---------- | ------------ | ------------------------------------------------------------------------------- |
@@ -582,11 +667,31 @@ console.log(typeof $Port, port); // symbol 8080
 
 ### Dependency types
 
-| Type                    | Definition                                                 |
-| ----------------------- | ---------------------------------------------------------- |
-| `IoCDependencyKey<T>`   | `IoCToken<T>` or an (abstract) class producing `T`         |
-| `IoCDependency<T>`      | `IoCDependencyKey<T>` or `[IoCDependencyKey<T>, name]`     |
-| `IoCDependenciesFor<P>` | One `IoCDependency` per element of the parameter tuple `P` |
+| Type                           | Definition                                                                                          |
+| ------------------------------ | --------------------------------------------------------------------------------------------------- |
+| `IoCDependencyKey<T>`          | `IoCToken<T>` or an (abstract) class producing `T`                                                  |
+| `IoCDependency<T>`             | `IoCDependencyKey<T>` or `[IoCDependencyKey<T>, name]`                                              |
+| `IoCDependenciesFor<P, TKeys>` | One `IoCDependency` per element of the parameter tuple `P`, limited to `TKeys` on a typed container |
+
+### Registry types
+
+The type parameter of `IoCContainer<TKeys>` is the container's **registry**: the keys a
+[typed container](#typed) has registered so far. It's `any` (untyped) unless you call `Typed()`.
+
+| Type                                        | Meaning                                                                                               |
+| ------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `IoCContainer<TKeys = any>`                 | `any`: untyped, `Deps` accepts any key of the right type. Otherwise the registered keys               |
+| `IoCNoKeys`                                 | The registry of a typed container with nothing registered yet                                         |
+| `IoCRegistered<K, TName>`                   | What a registration adds: `K` for the default name, `[K, TName]` otherwise; plain symbols add nothing |
+| `IoCExpected<TDeps>`                        | What `Expect(...keys)` adds                                                                           |
+| `IoCAllowedKeys<TKeys>`                     | `unknown` for an untyped container, otherwise `TKeys`                                                 |
+| `IoCServiceOf<K>`                           | The service type a key resolves to (`unknown` for a plain symbol)                                     |
+| `IoCTypeFor<I, K>`, `IoCTypeMismatch<I, T>` | The checked `Type` option of `RegisterClass`, and the error type it reports                           |
+
+A typed container is still an `IoCContainer`: pass it anywhere an `IoCContainer` is expected. A
+module can require keys with a type parameter for the rest:
+`function registerNotes<K>(ioc: IoCContainer<K | typeof Config | typeof $Db>)`. See
+[modules](../guides/declared-dependencies.md#modules).
 
 ### Other types
 

@@ -6,7 +6,8 @@
  *
  * - **Async-first:** async factories, shared in-flight creation, failures retried, not cached.
  * - **Typed:** {@link IoCToken typed tokens}, abstract classes as keys, and constructor
- *   dependencies (`Deps`) checked against the constructor.
+ *   dependencies (`Deps`) checked against the constructor and, on a
+ *   {@link IoCContainer.Typed typed container}, against what is already registered.
  * - **Scopes and disposal:** {@link IoCContainer.CreateScope} with `await using`, disposed in
  *   reverse creation order.
  * - **Fails early:** errors name the resolution path, cycles throw, and
@@ -23,7 +24,7 @@
  *   log(message: string): void;
  * }
  *
- * const $Logger = IoCToken<Logger>('Logger');
+ * const $Logger = IoCToken<Logger, 'Logger'>('Logger');
  *
  * class Config {
  *   public url = 'kv://local';
@@ -33,11 +34,11 @@
  *   constructor(public config: Config, public logger: Logger) {}
  * }
  *
- * const ioc = new IoCContainer();
- *
- * ioc.RegisterClass(Config);
- * ioc.Register($Logger, () => ({ log: (message) => console.log(message) }));
- * ioc.RegisterClass(Repo, { Deps: [Config, $Logger] });
+ * const ioc = new IoCContainer()
+ *   .Typed() // Deps may only name keys registered above them
+ *   .RegisterClass(Config)
+ *   .RegisterFactory($Logger, () => ({ log: (message) => console.log(message) }))
+ *   .RegisterClass(Repo, { Deps: [Config, $Logger] });
  *
  * ioc.Validate();
  *

@@ -45,11 +45,12 @@ step.
 - **Nothing to configure.** Plain functions and classes. Works with Deno, esbuild, Vite and
   standard decorators, because it never needs decorator metadata.
 - **Typed end to end.** Typed tokens, abstract classes as keys, and constructor dependencies that
-  are checked against your constructor's parameters at compile time.
+  are checked against your constructor's parameters at compile time. On a typed container,
+  dependencies must also be registered first, or the code doesn't compile.
 - **Scopes and cleanup.** One scope per request with `await using`. Instances are disposed last
   created, first disposed.
 - **Fails loudly, early.** Missing services name the resolution path, cycles throw instead of
-  hanging, and `Validate()` / `Activate()` catch wiring mistakes at startup.
+  hanging on a single resolution, and `Validate()` / `Activate()` catch wiring mistakes at startup.
 
 ## Install
 
@@ -68,7 +69,7 @@ interface Logger {
   log(message: string): void;
 }
 
-const $Logger = IoCToken<Logger>('Logger');
+const $Logger = IoCToken<Logger, 'Logger'>('Logger');
 
 class Config {
   public url = Deno.env.get('DB_URL') ?? 'kv://local';
@@ -78,11 +79,11 @@ class Repo {
   constructor(public config: Config, public logger: Logger) {}
 }
 
-const ioc = new IoCContainer();
-
-ioc.RegisterClass(Config);
-ioc.Register($Logger, () => ({ log: (message) => console.log(message) }));
-ioc.RegisterClass(Repo, { Deps: [Config, $Logger] }); // checked against Repo's constructor
+const ioc = new IoCContainer()
+  .Typed() // from here on, Deps may only name what's registered above
+  .RegisterClass(Config)
+  .RegisterFactory($Logger, () => ({ log: (message) => console.log(message) }))
+  .RegisterClass(Repo, { Deps: [Config, $Logger] }); // checked against Repo's constructor
 
 ioc.Validate(); // throws, listing every missing dependency, cycle or captive dependency
 
@@ -93,16 +94,17 @@ repo.logger.log(`Connected to ${repo.config.url}`);
 
 ## A quick tour
 
-| You want to…                           | Use                                                             | Learn more                                                                                                  |
-| -------------------------------------- | --------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| Register a class, factory or value     | `Register`, `RegisterClass`, `RegisterFactory`, `RegisterValue` | [Registering services](https://github.com/fathym/ioc/blob/main/docs/guides/registering-services.md)         |
-| Resolve without generics               | `IoCToken<T>('Name')`                                           | [Keys and registrations](https://github.com/fathym/ioc/blob/main/docs/concepts/keys-and-registrations.md)   |
-| Start async services (DB, KV, clients) | async factories, `Lazy: true`, `Activate()`                     | [Async initialization](https://github.com/fathym/ioc/blob/main/docs/guides/async-initialization.md)         |
-| One set of services per HTTP request   | `CreateScope()` + `await using`                                 | [Per-request scopes](https://github.com/fathym/ioc/blob/main/docs/guides/per-request-scopes.md)             |
-| Swap a dependency in a test            | register on a scope                                             | [Testing](https://github.com/fathym/ioc/blob/main/docs/guides/testing.md)                                   |
-| Wrap a service (logging, caching)      | `Decorate`                                                      | [Decorating services](https://github.com/fathym/ioc/blob/main/docs/guides/decorating-services.md)           |
-| Catch wiring mistakes at startup       | `Validate()`, `Activate()`                                      | [Organizing registrations](https://github.com/fathym/ioc/blob/main/docs/guides/organizing-registrations.md) |
-| Understand an error                    | —                                                               | [Error catalog](https://github.com/fathym/ioc/blob/main/docs/reference/errors.md)                           |
+| You want to…                           | Use                                                 | Learn more                                                                                                  |
+| -------------------------------------- | --------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| Register a class, factory or value     | `RegisterClass`, `RegisterFactory`, `RegisterValue` | [Registering services](https://github.com/fathym/ioc/blob/main/docs/guides/registering-services.md)         |
+| Depend only on what's registered       | `Typed()` + chained registrations, `Deps`           | [Declared dependencies](https://github.com/fathym/ioc/blob/main/docs/guides/declared-dependencies.md)       |
+| Resolve without generics               | `IoCToken<T>('Name')`                               | [Keys and registrations](https://github.com/fathym/ioc/blob/main/docs/concepts/keys-and-registrations.md)   |
+| Start async services (DB, KV, clients) | async factories, `Lazy: true`, `Activate()`         | [Async initialization](https://github.com/fathym/ioc/blob/main/docs/guides/async-initialization.md)         |
+| One set of services per HTTP request   | `CreateScope()` + `await using`                     | [Per-request scopes](https://github.com/fathym/ioc/blob/main/docs/guides/per-request-scopes.md)             |
+| Swap a dependency in a test            | register on a scope                                 | [Testing](https://github.com/fathym/ioc/blob/main/docs/guides/testing.md)                                   |
+| Wrap a service (logging, caching)      | `Decorate`                                          | [Decorating services](https://github.com/fathym/ioc/blob/main/docs/guides/decorating-services.md)           |
+| Catch wiring mistakes at startup       | `Validate()`, `Activate()`                          | [Organizing registrations](https://github.com/fathym/ioc/blob/main/docs/guides/organizing-registrations.md) |
+| Understand an error                    | —                                                   | [Error catalog](https://github.com/fathym/ioc/blob/main/docs/reference/errors.md)                           |
 
 ## Documentation
 
@@ -139,7 +141,8 @@ when to choose something else.
 
 Pre-1.0 and used across the Fathym ecosystem (CLI, EaC runtime and libraries).
 
-- The API is additive and stable.
+- The API is still settling: everything new since 0.0.36 is listed under _Unreleased_ in the
+  changelog, and older call shapes keep working.
 - Behavior changes come with migration notes in the [changelog](https://github.com/fathym/ioc/blob/main/CHANGELOG.md).
 - Older versions of the container interoperate in the same process.
 

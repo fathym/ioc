@@ -22,6 +22,13 @@ No. Dependencies are declared in code (`Deps`) and checked by the compiler, so n
 `emitDecoratorMetadata`, and esbuild, Vite and standard decorators all work. See
 [design principles](./concepts/design-principles.md#1-no-decorators-no-reflection).
 
+## Can the compiler check that my dependencies are registered?
+
+Yes, on a **typed container**. Call `Typed()` and chain the registrations; `Deps` may then only
+name keys registered earlier in the chain, so a missing or misordered registration doesn't
+compile. Statement-style registrations are checked by `Validate()` at startup instead. See
+[typed containers](./guides/declared-dependencies.md#depend-only-on-whats-registered-typed-containers).
+
 ## Does it work on Node.js and Bun?
 
 The core API is plain TypeScript and works anywhere JSR packages install (`npx jsr add

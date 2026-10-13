@@ -147,13 +147,26 @@ does not dispose its scopes, because the parent does not track them.
 
 ### Typing
 
-- **`IoCToken<T>`** is `symbol & { '@fathym/ioc/type'?: T }`. A plain symbol is still assignable,
-  so existing `Resolve<T>(ioc.Symbol('X'))` calls compile unchanged.
+- **`IoCToken<T, TId>`** is `symbol & { '@fathym/ioc/type': T; '@fathym/ioc/id': TId }`. The
+  markers are required, so a plain symbol is not a token and can't slip into `Deps`. Every method
+  that takes a key also accepts `symbol` (and `Resolve<T>(symbol)` has its own overload), so
+  existing `Resolve<T>(ioc.Symbol('X'))` and `Register(ioc.Symbol('X'), factory)` calls compile
+  unchanged.
 - **Register overloads are ordered** so the factory parameter is typed in every form: the
   class-plus-factory forms first, and a single union signature for the class-only and
   factory-only forms.
 - **Token-keyed forms check the factory** against the token's type, using `NoInfer`.
-- **`Deps`** is typed with `IoCDependenciesFor<ConstructorParameters<C>>`.
+- **`Deps`** is typed with `IoCDependenciesFor<ConstructorParameters<C>, TKeys>`: each entry
+  must match its parameter and, on a typed container, be one of the registry's keys.
+- **Typed containers.** `IoCContainer<TKeys = any>`. `any` is untyped: `IoCAllowedKeys<any>` is
+  `unknown`, so `Deps` only checks parameter types, and every existing annotation (`IoCContainer`)
+  keeps meaning "any container". `Typed()` returns `IoCContainer<IoCNoKeys>` (a unique empty
+  marker, not `never`, which `any` can't be assigned to). Each explicit registration returns
+  `IoCContainer<TKeys | IoCRegistered<K, TName>>`, and `Deps` entries must be assignable to
+  `IoCDependency<P> & TKeys`. No conditional type sits on `TKeys` itself, so generic module
+  functions (`<K>(ioc: IoCContainer<K | typeof Config>)`) type-check. A phantom
+  `(keys: TKeys) => void` property makes `TKeys` invariant, so a module's required keys are
+  enforced at the call site; `any` keeps untyped containers compatible both ways.
 
 ## Decisions
 
@@ -167,6 +180,9 @@ does not dispose its scopes, because the parent does not track them.
 | A synchronous `Dispose` for `using`?                              | **Not provided**; only `await using`.                                                                        | Avoids .NET's trap where a synchronous dispose meets an async-only resource.                                                                                   |
 | `Decorate()`?                                                     | **Included**: keeps the lifetime, composes, and returns an undo function.                                    | .NET users reach for Scrutor for exactly this.                                                                                                                 |
 | A sync `ResolveSync`?                                             | **Not provided.**                                                                                            | One naming rule (Inversify's v7/v8 flip is a warning); async is the point.                                                                                     |
+| Check at compile time that `Deps` are registered?                 | **Yes, opt-in:** `Typed()` plus chained registrations; statements stay untyped.                              | TypeScript can't change a variable's type after a statement, so only a chain carries the registry. Opt-in keeps every existing call shape compiling.           |
+| Explicit registrations return a remover or the container?         | **The container** (typed), so they chain. Removal is `Unregister`. `Register` keeps its old return values.   | Chaining is what carries the registry type. The explicit methods are unreleased, so nothing depends on their old return value.                                 |
+| Put the token id in its type?                                     | **Optional:** `IoCToken<T, 'Id'>('Id')`.                                                                     | TypeScript can't infer one type argument while another is given, so `IoCToken<T>('Id')` keeps `string`; tokens of plain types need the id to stay distinct.    |
 
 ## Behavior changes (migration)
 

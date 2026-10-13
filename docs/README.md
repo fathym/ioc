@@ -62,19 +62,19 @@ Pick the path that fits you:
 
 ## Guides
 
-| Document                                                                           | Description                                              |
-| ---------------------------------------------------------------------------------- | -------------------------------------------------------- |
-| [guides/](./guides/README.md) _[How-to]_                                           | Task-focused recipes                                     |
-| [registering-services.md](./guides/registering-services.md) _[How-to]_             | Pick the right way to register anything                  |
-| [declared-dependencies.md](./guides/declared-dependencies.md) _[How-to]_           | Typed constructor dependencies with `Deps`               |
-| [async-initialization.md](./guides/async-initialization.md) _[How-to]_             | Connections, warm-up, retries and fail-fast startup      |
-| [per-request-scopes.md](./guides/per-request-scopes.md) _[How-to]_                 | One scope per HTTP request, with any framework           |
-| [testing.md](./guides/testing.md) _[How-to]_                                       | Copy-paste recipes for overriding and resetting services |
-| [plugins-and-named-services.md](./guides/plugins-and-named-services.md) _[How-to]_ | Several implementations of one key                       |
-| [decorating-services.md](./guides/decorating-services.md) _[How-to]_               | Add logging, caching or retries around a service         |
-| [organizing-registrations.md](./guides/organizing-registrations.md) _[How-to]_     | Structure the composition root of a real app             |
-| [copying-containers.md](./guides/copying-containers.md) _[How-to]_                 | `CopyTo`, mixed versions, and moving to scopes           |
-| [guidelines.md](./guides/guidelines.md) _[How-to]_                                 | Named anti-patterns, each with the fix                   |
+| Document                                                                           | Description                                                      |
+| ---------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| [guides/](./guides/README.md) _[How-to]_                                           | Task-focused recipes                                             |
+| [registering-services.md](./guides/registering-services.md) _[How-to]_             | Pick the right way to register anything                          |
+| [declared-dependencies.md](./guides/declared-dependencies.md) _[How-to]_           | Typed `Deps`, and typed containers that check registration order |
+| [async-initialization.md](./guides/async-initialization.md) _[How-to]_             | Connections, warm-up, retries and fail-fast startup              |
+| [per-request-scopes.md](./guides/per-request-scopes.md) _[How-to]_                 | One scope per HTTP request, with any framework                   |
+| [testing.md](./guides/testing.md) _[How-to]_                                       | Copy-paste recipes for overriding and resetting services         |
+| [plugins-and-named-services.md](./guides/plugins-and-named-services.md) _[How-to]_ | Several implementations of one key                               |
+| [decorating-services.md](./guides/decorating-services.md) _[How-to]_               | Add logging, caching or retries around a service                 |
+| [organizing-registrations.md](./guides/organizing-registrations.md) _[How-to]_     | Structure the composition root of a real app                     |
+| [copying-containers.md](./guides/copying-containers.md) _[How-to]_                 | `CopyTo`, mixed versions, and moving to scopes                   |
+| [guidelines.md](./guides/guidelines.md) _[How-to]_                                 | Named anti-patterns, each with the fix                           |
 
 ## Reference
 
@@ -111,27 +111,29 @@ Runnable programs, each showing one idea, run in CI: [examples/](../examples/REA
 
 ### API at a glance
 
-| Task                       | Call                                                            |
-| -------------------------- | --------------------------------------------------------------- |
-| Register a class           | `ioc.RegisterClass(Repo)` or `ioc.Register(Repo)`               |
-| Register with dependencies | `ioc.RegisterClass(Repo, { Deps: [Config, $Logger] })`          |
-| Register a factory         | `ioc.Register($Db, async (c) => openDb())`                      |
-| Register a value           | `ioc.RegisterValue($Port, 8080)`                                |
-| Resolve                    | `await ioc.Resolve(Repo)` / `await ioc.Resolve($Db, 'replica')` |
-| Maybe resolve              | `await ioc.TryResolve($Db)` / `ioc.Has($Db)`                    |
-| All named implementations  | `await ioc.ResolveAll($Plugin)`                                 |
-| Per-request scope          | `await using scope = ioc.CreateScope()`                         |
-| Wrap a service             | `ioc.Decorate($Db, (inner) => withLogging(inner))`              |
-| Check wiring / build early | `ioc.Validate()` / `await ioc.Activate()`                       |
-| Clean up                   | `await ioc.Dispose()`                                           |
+| Task                         | Call                                                                                       |
+| ---------------------------- | ------------------------------------------------------------------------------------------ |
+| Register a class             | `ioc.RegisterClass(Repo)` or `ioc.Register(Repo)`                                          |
+| Register with dependencies   | `ioc.RegisterClass(Repo, { Deps: [Config, $Logger] })`                                     |
+| Check registration order     | `new IoCContainer().Typed().RegisterClass(Config).RegisterClass(Repo, { Deps: [Config] })` |
+| Declare a key from elsewhere | `.Expect($Request)` on a typed container                                                   |
+| Register a factory           | `ioc.Register($Db, async (c) => openDb())`                                                 |
+| Register a value             | `ioc.RegisterValue($Port, 8080)`                                                           |
+| Resolve                      | `await ioc.Resolve(Repo)` / `await ioc.Resolve($Db, 'replica')`                            |
+| Maybe resolve                | `await ioc.TryResolve($Db)` / `ioc.Has($Db)`                                               |
+| All named implementations    | `await ioc.ResolveAll($Plugin)`                                                            |
+| Per-request scope            | `await using scope = ioc.CreateScope()`                                                    |
+| Wrap a service               | `ioc.Decorate($Db, (inner) => withLogging(inner))`                                         |
+| Check wiring / build early   | `ioc.Validate()` / `await ioc.Activate()`                                                  |
+| Clean up                     | `await ioc.Dispose()`                                                                      |
 
 ### Lifetimes
 
-| Lifetime            | Instances              | Built when                                     |
-| ------------------- | ---------------------- | ---------------------------------------------- |
-| singleton (default) | one, shared everywhere | at registration (or first resolve with `Lazy`) |
-| `transient`         | a new one per resolve  | on every resolve                               |
-| `scoped`            | one per scope          | first resolve in each scope                    |
+| Lifetime            | Instances              | Built when                                                     |
+| ------------------- | ---------------------- | -------------------------------------------------------------- |
+| singleton (default) | one, shared everywhere | at registration (or first resolve with `Lazy`)                 |
+| `transient`         | a new one per resolve  | on every resolve                                               |
+| `scoped`            | one per scope          | first resolve in each scope (where registered: as a singleton) |
 
 ### Errors
 

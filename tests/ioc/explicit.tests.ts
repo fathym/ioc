@@ -44,12 +44,12 @@ Deno.test('RegisterClass', async (t) => {
     );
   });
 
-  await t.step('returns a function that removes the registration (any lifetime)', async () => {
+  await t.step('returns the same container, so registrations chain', async () => {
     const ioc = new IoCContainer();
-    const remove = ioc.RegisterClass(Clock);
 
-    remove();
+    assertStrictEquals(ioc.RegisterClass(Clock), ioc);
 
+    assert(ioc.Unregister(Clock));
     await assertRejects(() => ioc.Resolve(Clock));
   });
 
@@ -122,15 +122,19 @@ Deno.test('RegisterFactory', async (t) => {
     assertEquals(await ioc.Resolve(IoCToken<{ url: string }>('Conn')), { url: 'kv://local' });
   });
 
-  await t.step('returns a remover that leaves later registrations alone', async () => {
-    const ioc = new IoCContainer();
-    const removeFirst = ioc.RegisterFactory($Handler, () => () => 'first');
+  await t.step(
+    'returns the same container; a later registration replaces an earlier one',
+    async () => {
+      const ioc = new IoCContainer();
 
-    ioc.RegisterFactory($Handler, () => () => 'second');
-    removeFirst();
+      const chained = ioc
+        .RegisterFactory($Handler, () => () => 'first')
+        .RegisterFactory($Handler, () => () => 'second');
 
-    assertEquals((await ioc.Resolve($Handler))(''), 'second');
-  });
+      assertStrictEquals(chained, ioc);
+      assertEquals((await ioc.Resolve($Handler))(''), 'second');
+    },
+  );
 
   await t.step('rejects a non-function factory', () => {
     const ioc = new IoCContainer();

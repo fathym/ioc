@@ -74,9 +74,10 @@ results). Wrap the object: `RegisterValue($Query, { query })`. See
 
 ## My factory's `ioc` isn't `===` my container
 
-Factories run during resolution receive a **view** of the container. It shares all the
+Lazy, transient and scoped factories receive a **view** of the container. It shares all the
 container's state and is an `IoCContainer`, but it isn't the same object. It carries the
-resolution path that powers cycle detection. Compare state (`c.services === ioc.services`), not
+resolution path that powers cycle detection. (An eager singleton's factory, run during
+registration, receives the container itself.) Compare state (`c.services === ioc.services`), not
 identity.
 
 ## Disposal didn't run
@@ -96,9 +97,16 @@ everything else it created. Register objects you own with `RegisterValue`. See
 
 ## Startup hangs
 
-Two lazy services that need each other, resolved through a **captured** container after an
-`await`, wait for each other forever. Through the factory's parameter, the same cycle throws
-`IoCCircularDependencyError`. Resolve through the parameter, then break the cycle. See
+Two services that need each other can wait for each other forever when:
+
+- they resolve each other through a **captured** container after an `await`;
+- an **eager** singleton's factory resolves the other after an `await`;
+- both are being built **at the same time** (`Promise.all`, or `Activate()`, which builds
+  singletons in parallel).
+
+On a single resolution through the factory's parameter, the same cycle throws
+`IoCCircularDependencyError`. Run `Validate()` before `Activate()` to report cycles between
+declared dependencies, resolve through the parameter, then break the cycle. See
 [cycles and errors](./concepts/cycles-and-errors.md).
 
 ## My registration order matters
@@ -106,6 +114,24 @@ Two lazy services that need each other, resolved through a **captured** containe
 Eager singletons are built when you register them, so their dependencies must already be
 registered. Use `Lazy: true` for services with dependencies, and call `Activate()` at startup to
 keep fail-fast behavior.
+
+On a [typed container](./guides/declared-dependencies.md#depend-only-on-whats-registered-typed-containers),
+order matters at compile time too, by design: `Deps` may only name keys registered earlier in the
+chain.
+
+## My `Deps` doesn't compile on a typed container
+
+The error lists what's registered so far, after `IoCNoKeys`. The key you named isn't in it:
+
+- **It's registered later in the chain.** Move that registration up.
+- **It's registered as a statement** (`ioc.RegisterClass(X);` on its own line) or with
+  `Register`. Neither adds to the type. Chain it, or declare it with `Expect(X)`.
+- **It's registered under a name.** Use `[key, 'name']`, or register the default name.
+- **It's a plain symbol.** Use a typed token.
+- **It's a token of a plain type, and the ids differ.** `IoCToken<string, 'A'>` and
+  `IoCToken<string, 'B'>` are different keys.
+
+See [the error catalog](./reference/errors.md#typescript-errors).
 
 ## What's Next
 

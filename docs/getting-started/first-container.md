@@ -58,7 +58,7 @@ const ioc = new IoCContainer();
 
 ioc.RegisterValue($AppName, 'Notes'); // 1. a value you already have
 ioc.RegisterClass(Clock); // 2. a class the container constructs
-ioc.Register(NotesService, async (c) => new NotesService(await c.Resolve(Clock))); // 3. a factory
+ioc.RegisterFactory(NotesService, async (c) => new NotesService(await c.Resolve(Clock))); // 3. a factory
 
 const notes = await ioc.Resolve(NotesService);
 
@@ -104,6 +104,42 @@ const notes = await ioc.Resolve(NotesService);
 
 console.log(notes.clock instanceof Clock); // true
 ```
+
+## Catch missing registrations at compile time
+
+`Deps` checks types, but on its own it can't tell whether `Clock` was registered at all. Make the
+container **typed** and chain the registrations. Then `Deps` may only name what's registered
+above it:
+
+```ts
+import { IoCContainer, IoCToken } from '@fathym/ioc';
+
+const $AppName = IoCToken<string, 'AppName'>('AppName');
+
+class Clock {
+  public now(): Date {
+    return new Date();
+  }
+}
+
+class NotesService {
+  constructor(public clock: Clock, public appName: string) {}
+}
+
+const ioc = new IoCContainer()
+  .Typed()
+  .RegisterValue($AppName, 'Notes')
+  .RegisterClass(Clock)
+  .RegisterClass(NotesService, { Deps: [Clock, $AppName] });
+
+const notes = await ioc.Resolve(NotesService);
+
+console.log(notes.appName); // Notes
+```
+
+Move `.RegisterClass(Clock)` below `NotesService` and the code no longer compiles. The error names
+what is registered so far, so you know what to move. The rest of this tutorial uses typed
+containers.
 
 ## Same instance, or a new one?
 
