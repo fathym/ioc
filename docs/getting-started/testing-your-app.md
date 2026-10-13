@@ -96,8 +96,9 @@ Run it with `deno test --unstable-kv`.
   the scope, including the fake store.
 - **The real KV store is never opened.** It is lazy, and nothing resolves it.
 
-> **Note:** A singleton that has _already been built_ keeps the dependencies it was built with.
-> Override before the service is first resolved, or make the service transient or scoped. The
+> **Note:** Scope overrides reach **transient and scoped** services. A **singleton** is always
+> built from the container it was registered in, so it never sees a scope's override. To fake a
+> singleton's dependency, register the fake on a fresh container per test instead. The
 > [testing guide](../guides/testing.md) covers this and eight more recipes.
 
 ## You're done
