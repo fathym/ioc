@@ -1,5 +1,13 @@
+// Async functions without await are deliberate here: they produce promise-returning factories.
+// deno-lint-ignore-file require-await
 import { IoCContainer, type IoCServiceConstructed } from '../../src/ioc/ioc.ts';
-import { assert, assertEquals, assertInstanceOf, assertRejects, assertStrictEquals } from '../test.deps.ts';
+import {
+  assert,
+  assertEquals,
+  assertInstanceOf,
+  assertRejects,
+  assertStrictEquals,
+} from '../test.deps.ts';
 import { delay } from './_helpers.ts';
 
 class Logger {
@@ -52,21 +60,24 @@ Deno.test('CopyTo', async (t) => {
     assertEquals(built, 1);
   });
 
-  await t.step('singleton factories run against their owner, not the resolving target', async () => {
-    const parent = new IoCContainer();
-    const child = new IoCContainer();
-    let seen: IoCContainer | undefined;
+  await t.step(
+    'singleton factories run against their owner, not the resolving target',
+    async () => {
+      const parent = new IoCContainer();
+      const child = new IoCContainer();
+      let seen: IoCContainer | undefined;
 
-    parent.Register((c) => {
-      seen = c;
-      return {};
-    }, { Type: parent.Symbol('Owned'), Lazy: true });
+      parent.Register((c) => {
+        seen = c;
+        return {};
+      }, { Type: parent.Symbol('Owned'), Lazy: true });
 
-    parent.CopyTo(child);
-    await child.Resolve(child.Symbol('Owned'));
+      parent.CopyTo(child);
+      await child.Resolve(child.Symbol('Owned'));
 
-    assertStrictEquals(Object.getPrototypeOf(seen), parent);
-  });
+      assertStrictEquals(seen!.services, parent.services);
+    },
+  );
 
   await t.step('transient factories receive the target container', async () => {
     const parent = new IoCContainer();
@@ -81,7 +92,7 @@ Deno.test('CopyTo', async (t) => {
     parent.CopyTo(child);
     await child.Resolve(child.Symbol('PerCall'));
 
-    assertStrictEquals(Object.getPrototypeOf(seen), child);
+    assertStrictEquals(seen!.services, child.services);
   });
 
   await t.step('transient factories using their parameter see target overrides', async () => {

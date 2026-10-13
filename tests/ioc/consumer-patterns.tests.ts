@@ -173,28 +173,31 @@ Deno.test('Consumer patterns', async (t) => {
     logger.info('Command started');
   });
 
-  await t.step('eac-preact: resolver objects with a Resolve method receiving a container', async () => {
-    class LoggingProvider {
-      public Package = { name: 'logger' };
-    }
+  await t.step(
+    'eac-preact: resolver objects with a Resolve method receiving a container',
+    async () => {
+      class LoggingProvider {
+        public Package = { name: 'logger' };
+      }
 
-    const ioc = new IoCContainer();
+      const ioc = new IoCContainer();
 
-    ioc.Register(LoggingProvider);
-    ioc.Register(() => ({
-      Resolve: async (resolverIoc: IoCContainer, appProcCfg: unknown) => {
-        const logger = await resolverIoc.Resolve(LoggingProvider);
-        return { logger, appProcCfg };
-      },
-    }), { Type: ioc.Symbol('EaCApplicationProcessorConfigResolver'), Name: 'preact' });
+      ioc.Register(LoggingProvider);
+      ioc.Register(() => ({
+        Resolve: async (resolverIoc: IoCContainer, appProcCfg: unknown) => {
+          const logger = await resolverIoc.Resolve(LoggingProvider);
+          return { logger, appProcCfg };
+        },
+      }), { Type: ioc.Symbol('EaCApplicationProcessorConfigResolver'), Name: 'preact' });
 
-    const resolver = await ioc.Resolve<{
-      Resolve(ioc: IoCContainer, cfg: unknown): Promise<{ logger: LoggingProvider }>;
-    }>(ioc.Symbol('EaCApplicationProcessorConfigResolver'), 'preact');
+      const resolver = await ioc.Resolve<{
+        Resolve(ioc: IoCContainer, cfg: unknown): Promise<{ logger: LoggingProvider }>;
+      }>(ioc.Symbol('EaCApplicationProcessorConfigResolver'), 'preact');
 
-    assertEquals(typeof resolver.Resolve, 'function');
-    assertInstanceOf((await resolver.Resolve(ioc, {})).logger, LoggingProvider);
-  });
+      assertEquals(typeof resolver.Resolve, 'function');
+      assertInstanceOf((await resolver.Resolve(ioc, {})).logger, LoggingProvider);
+    },
+  );
 
   await t.step('eac: module Services(ioc) registering into a shared container', async () => {
     const module = {

@@ -1,10 +1,18 @@
+// Async functions without await are deliberate here: they produce promise-returning factories.
+// deno-lint-ignore-file require-await
 // Generated coverage: every combination of lifetime x lazy x registration form x name, run against
 // the frozen 0.0.36 container and the current one. Identity semantics (same instance vs new
 // instance, dispose) must match between the two; creation timing is checked for the current
 // container only (0.0.36 ignored Lazy for factories).
 import { IoCContainer } from '../../src/ioc/ioc.ts';
 import { LegacyIoCContainer } from '../fixtures/legacy-ioc.ts';
-import { assert, assertEquals, assertInstanceOf, assertRejects, assertStrictEquals } from '../test.deps.ts';
+import {
+  assert,
+  assertEquals,
+  assertInstanceOf,
+  assertRejects,
+  assertStrictEquals,
+} from '../test.deps.ts';
 
 // deno-lint-ignore no-explicit-any
 type Any = any;
@@ -53,7 +61,8 @@ const forms: Form[] = [
   },
   {
     label: 'symbol + sync factory',
-    register: (ioc, opts) => ioc.Register(() => new Impl('sym-sync'), { ...opts, Type: ioc.Symbol('IImpl') }),
+    register: (ioc, opts) =>
+      ioc.Register(() => new Impl('sym-sync'), { ...opts, Type: ioc.Symbol('IImpl') }),
     key: (ioc) => ioc.Symbol('IImpl'),
     expectedLabel: 'sym-sync',
   },
@@ -83,7 +92,9 @@ for (const [implLabel, create] of impls) {
       for (const lazy of lazies) {
         for (const form of forms) {
           for (const name of names) {
-            const title = `${lifetime}${lazy ? ':lazy' : ''} | ${form.label} | ${name ?? 'default'}`;
+            const title = `${lifetime}${lazy ? ':lazy' : ''} | ${form.label} | ${
+              name ?? 'default'
+            }`;
 
             await t.step(title, async () => {
               const ioc = create();
@@ -106,7 +117,8 @@ for (const [implLabel, create] of impls) {
                 assertEquals(Impl.built, expectBuiltNow ? 1 : 0, 'creation timing');
               }
 
-              const resolve = () => (name ? ioc.Resolve(form.key(ioc), name) : ioc.Resolve(form.key(ioc)));
+              const resolve =
+                () => (name ? ioc.Resolve(form.key(ioc), name) : ioc.Resolve(form.key(ioc)));
 
               const [a, b, c] = await Promise.all([resolve(), resolve(), resolve()]);
               const d = await resolve();
@@ -123,7 +135,11 @@ for (const [implLabel, create] of impls) {
               }
 
               if (name) {
-                await assertRejects(() => ioc.Resolve(form.key(ioc)), Error, 'No Service for symbol');
+                await assertRejects(
+                  () => ioc.Resolve(form.key(ioc)),
+                  Error,
+                  'No Service for symbol',
+                );
               }
 
               if (lifetime === 'scoped') {

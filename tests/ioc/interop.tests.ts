@@ -1,10 +1,18 @@
+// Async functions without await are deliberate here: they produce promise-returning factories.
+// deno-lint-ignore-file require-await
 // Dependents pin different exact versions of this package, so containers from several versions
 // live in one process and call each other's CopyTo (e.g. eac-runtime on 0.0.12 copying plugin
 // containers built with 0.0.35/0.0.36). These tests copy in both directions between the frozen
 // 0.0.36 implementation and the current one.
 import { IoCContainer } from '../../src/ioc/ioc.ts';
 import { LegacyIoCContainer } from '../fixtures/legacy-ioc.ts';
-import { assert, assertEquals, assertInstanceOf, assertRejects, assertStrictEquals } from '../test.deps.ts';
+import {
+  assert,
+  assertEquals,
+  assertInstanceOf,
+  assertRejects,
+  assertStrictEquals,
+} from '../test.deps.ts';
 
 // deno-lint-ignore no-explicit-any
 type Any = any;
@@ -38,24 +46,27 @@ Deno.test('Interop - current container copied into a legacy container', async (t
     assertEquals(built, 1);
   });
 
-  await t.step('transients stay transient and their factory receives the legacy target', async () => {
-    const current = new IoCContainer();
-    const legacy = new LegacyIoCContainer();
-    let seen: unknown;
+  await t.step(
+    'transients stay transient and their factory receives the legacy target',
+    async () => {
+      const current = new IoCContainer();
+      const legacy = new LegacyIoCContainer();
+      let seen: unknown;
 
-    current.Register(Service, (c) => {
-      seen = c;
-      return new Service('transient');
-    }, { Lifetime: 'transient' });
+      current.Register(Service, (c) => {
+        seen = c;
+        return new Service('transient');
+      }, { Lifetime: 'transient' });
 
-    current.CopyTo(legacy as Any);
+      current.CopyTo(legacy as Any);
 
-    const a = await legacy.Resolve(Service);
-    const b = await legacy.Resolve(Service);
+      const a = await legacy.Resolve(Service);
+      const b = await legacy.Resolve(Service);
 
-    assert(a !== b);
-    assertStrictEquals(Object.getPrototypeOf(seen), legacy);
-  });
+      assert(a !== b);
+      assertStrictEquals((seen as { services: unknown }).services, legacy.services);
+    },
+  );
 
   await t.step('function-valued services stay functions in the legacy container', async () => {
     const current = new IoCContainer();
@@ -218,13 +229,16 @@ Deno.test('Interop - legacy container copied into a current container', async (t
     assertEquals((await current.Resolve(Service)).label, 'via-view');
   });
 
-  await t.step('unknown keys reject in both directions with the shared message prefix', async () => {
-    const legacy = new LegacyIoCContainer();
-    const current = new IoCContainer();
+  await t.step(
+    'unknown keys reject in both directions with the shared message prefix',
+    async () => {
+      const legacy = new LegacyIoCContainer();
+      const current = new IoCContainer();
 
-    legacy.CopyTo(current as Any);
+      legacy.CopyTo(current as Any);
 
-    await assertRejects(() => current.Resolve(Service), Error, 'No Service for symbol');
-    await assertRejects(() => legacy.Resolve(Service), Error, 'No Service for symbol');
-  });
+      await assertRejects(() => current.Resolve(Service), Error, 'No Service for symbol');
+      await assertRejects(() => legacy.Resolve(Service), Error, 'No Service for symbol');
+    },
+  );
 });

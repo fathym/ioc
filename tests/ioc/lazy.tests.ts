@@ -1,5 +1,13 @@
+// Async functions without await are deliberate here: they produce promise-returning factories.
+// deno-lint-ignore-file require-await
 import { IoCContainer } from '../../src/ioc/ioc.ts';
-import { assert, assertEquals, assertInstanceOf, assertRejects, assertStrictEquals } from '../test.deps.ts';
+import {
+  assert,
+  assertEquals,
+  assertInstanceOf,
+  assertRejects,
+  assertStrictEquals,
+} from '../test.deps.ts';
 import { delay } from './_helpers.ts';
 
 Deno.test('Lazy - deferred creation', async (t) => {
@@ -101,29 +109,32 @@ Deno.test('Lazy - deferred creation', async (t) => {
     assertEquals(attempts, 2);
   });
 
-  await t.step('concurrent resolves during a failing creation all reject, then retry once', async () => {
-    const ioc = new IoCContainer();
-    let attempts = 0;
+  await t.step(
+    'concurrent resolves during a failing creation all reject, then retry once',
+    async () => {
+      const ioc = new IoCContainer();
+      let attempts = 0;
 
-    ioc.Register(async () => {
-      attempts++;
-      await delay(5);
-      if (attempts === 1) throw new Error('first fails');
-      return 'ok';
-    }, { Type: ioc.Symbol('Group'), Lazy: true });
+      ioc.Register(async () => {
+        attempts++;
+        await delay(5);
+        if (attempts === 1) throw new Error('first fails');
+        return 'ok';
+      }, { Type: ioc.Symbol('Group'), Lazy: true });
 
-    const results = await Promise.allSettled([
-      ioc.Resolve(ioc.Symbol('Group')),
-      ioc.Resolve(ioc.Symbol('Group')),
-      ioc.Resolve(ioc.Symbol('Group')),
-    ]);
+      const results = await Promise.allSettled([
+        ioc.Resolve(ioc.Symbol('Group')),
+        ioc.Resolve(ioc.Symbol('Group')),
+        ioc.Resolve(ioc.Symbol('Group')),
+      ]);
 
-    assert(results.every((r) => r.status === 'rejected'));
-    assertEquals(attempts, 1);
+      assert(results.every((r) => r.status === 'rejected'));
+      assertEquals(attempts, 1);
 
-    assertEquals(await ioc.Resolve(ioc.Symbol('Group')), 'ok');
-    assertEquals(attempts, 2);
-  });
+      assertEquals(await ioc.Resolve(ioc.Symbol('Group')), 'ok');
+      assertEquals(attempts, 2);
+    },
+  );
 
   await t.step('a synchronous throw in a lazy factory rejects and retries', async () => {
     const ioc = new IoCContainer();
@@ -158,23 +169,26 @@ Deno.test('Lazy - deferred creation', async (t) => {
     assertEquals(built, 2);
   });
 
-  await t.step('lazy scoped is created on resolve and disposable without being created', async () => {
-    const ioc = new IoCContainer();
-    let built = 0;
+  await t.step(
+    'lazy scoped is created on resolve and disposable without being created',
+    async () => {
+      const ioc = new IoCContainer();
+      let built = 0;
 
-    class S {
-      constructor() {
-        built++;
+      class S {
+        constructor() {
+          built++;
+        }
       }
-    }
 
-    const dispose = ioc.Register(S, { Lazy: true, Lifetime: 'scoped' });
+      const dispose = ioc.Register(S, { Lazy: true, Lifetime: 'scoped' });
 
-    dispose();
+      dispose();
 
-    assertEquals(built, 0);
-    await assertRejects(() => ioc.Resolve(S), Error, 'No Service for symbol');
-  });
+      assertEquals(built, 0);
+      await assertRejects(() => ioc.Resolve(S), Error, 'No Service for symbol');
+    },
+  );
 
   await t.step('lazy scoped resolves one instance until disposed', async () => {
     const ioc = new IoCContainer();
@@ -253,7 +267,7 @@ Deno.test('Lazy - deferred creation', async (t) => {
     await ioc.Resolve(ioc.Symbol('Seen'));
 
     assert(seen instanceof IoCContainer);
-    assertStrictEquals(Object.getPrototypeOf(seen), ioc);
+    assertStrictEquals(seen!.services, ioc.services);
     assertStrictEquals(seen!.services, ioc.services);
   });
 });

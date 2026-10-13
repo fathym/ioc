@@ -1,5 +1,11 @@
 import { IoCContainer } from '../../src/ioc/ioc.ts';
-import { assert, assertEquals, assertInstanceOf, assertRejects, assertStrictEquals } from '../test.deps.ts';
+import {
+  assert,
+  assertEquals,
+  assertInstanceOf,
+  assertRejects,
+  assertStrictEquals,
+} from '../test.deps.ts';
 
 // Two distinct classes with the same name, as happens with same-named classes in different
 // packages (or the same package loaded twice at different versions).
@@ -59,24 +65,30 @@ Deno.test('Same-named classes', async (t) => {
     assertInstanceOf(await ioc.Resolve(ConfigB, 'y'), ConfigB);
   });
 
-  await t.step('an unregistered same-named class falls back to the name (module copies)', async () => {
-    const ioc = new IoCContainer();
+  await t.step(
+    'an unregistered same-named class falls back to the name (module copies)',
+    async () => {
+      const ioc = new IoCContainer();
 
-    ioc.Register(ConfigA);
+      ioc.Register(ConfigA);
 
-    // ConfigB was never registered: resolving it by its name finds ConfigA's registration, as
-    // before. This keeps lookups working when two copies of one package define the class.
-    assertInstanceOf(await ioc.Resolve(ConfigB), ConfigA);
-  });
+      // ConfigB was never registered: resolving it by its name finds ConfigA's registration, as
+      // before. This keeps lookups working when two copies of one package define the class.
+      assertInstanceOf(await ioc.Resolve(ConfigB), ConfigA);
+    },
+  );
 
-  await t.step('a symbol override replaces the class registration for every class lookup', async () => {
-    const ioc = new IoCContainer();
+  await t.step(
+    'a symbol override replaces the class registration for every class lookup',
+    async () => {
+      const ioc = new IoCContainer();
 
-    ioc.Register(ConfigA);
-    ioc.Register(() => ({ source: 'override' }), { Type: ioc.Symbol('Config') });
+      ioc.Register(ConfigA);
+      ioc.Register(() => ({ source: 'override' }), { Type: ioc.Symbol('Config') });
 
-    assertEquals((await ioc.Resolve(ConfigA)).source, 'override');
-  });
+      assertEquals((await ioc.Resolve(ConfigA)).source, 'override');
+    },
+  );
 
   await t.step('re-registering a class updates its own entry', async () => {
     const ioc = new IoCContainer();

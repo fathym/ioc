@@ -3,7 +3,13 @@
 // drift between the two is caught here.
 import { IoCContainer } from '../../src/ioc/ioc.ts';
 import { LegacyIoCContainer } from '../fixtures/legacy-ioc.ts';
-import { assert, assertEquals, assertInstanceOf, assertRejects, assertStrictEquals } from '../test.deps.ts';
+import {
+  assert,
+  assertEquals,
+  assertInstanceOf,
+  assertRejects,
+  assertStrictEquals,
+} from '../test.deps.ts';
 
 // deno-lint-ignore no-explicit-any
 type AnyContainer = any;

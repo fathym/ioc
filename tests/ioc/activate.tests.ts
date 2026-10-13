@@ -1,3 +1,5 @@
+// Async functions without await are deliberate here: they produce promise-returning factories.
+// deno-lint-ignore-file require-await
 import { IoCContainer } from '../../src/ioc/ioc.ts';
 import { IoCToken } from '../../src/ioc/IoCToken.ts';
 import { assert, assertEquals, assertRejects } from '../test.deps.ts';
@@ -8,7 +10,10 @@ Deno.test('Activate', async (t) => {
     const built: string[] = [];
 
     ioc.Register(IoCToken('Lazy'), () => built.push('lazy'), { Lazy: true });
-    ioc.Register(IoCToken('Scoped'), () => built.push('scoped'), { Lazy: true, Lifetime: 'scoped' });
+    ioc.Register(IoCToken('Scoped'), () => built.push('scoped'), {
+      Lazy: true,
+      Lifetime: 'scoped',
+    });
     ioc.Register(IoCToken('Transient'), () => built.push('transient'), { Lifetime: 'transient' });
 
     await ioc.Activate();

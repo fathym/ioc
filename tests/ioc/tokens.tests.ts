@@ -1,3 +1,5 @@
+// Async functions without await are deliberate here: they produce promise-returning factories.
+// deno-lint-ignore-file require-await
 import { IoCContainer } from '../../src/ioc/ioc.ts';
 import { IoCToken } from '../../src/ioc/IoCToken.ts';
 import { assertEquals, assertInstanceOf, assertStrictEquals } from '../test.deps.ts';

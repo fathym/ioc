@@ -132,7 +132,11 @@ Deno.test('Model-based randomized sequences', async (t) => {
               // deno-lint-ignore no-explicit-any
               const fromCopy = (await copy.Resolve(k as any, n)) as Built;
 
-              assertEquals(fromCopy.regId, entry.regId, `op ${op}: copy resolves same registration`);
+              assertEquals(
+                fromCopy.regId,
+                entry.regId,
+                `op ${op}: copy resolves same registration`,
+              );
 
               if (entry.lifetime !== 'transient') {
                 // deno-lint-ignore no-explicit-any

@@ -893,7 +893,7 @@ export class IoCContainer {
   }
 
   protected assertNotDisposed(): void {
-    if (this.self().disposed) throw new IoCContainerDisposedError();
+    if (((this as Indexable)[IOC_SELF] ?? this).disposed) throw new IoCContainerDisposedError();
   }
 
   /** The name bank for `symbol`, created on demand for any symbol. */
@@ -985,8 +985,8 @@ export class IoCContainer {
 
   /** Finds the stored entry for a key, nearest scope first. Never mutates. */
   protected find(key: AnyFunction | symbol, name: string): FoundEntry | undefined {
-    for (const container of this.chain()) {
-      const found = container.findOwn(key, name);
+    for (let c: IoCContainer | undefined = this.self(); c; c = c.parent) {
+      const found = c.findOwn(key, name);
 
       if (found) return found;
     }

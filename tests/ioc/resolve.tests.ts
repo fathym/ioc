@@ -1,3 +1,5 @@
+// Async functions without await are deliberate here: they produce promise-returning factories.
+// deno-lint-ignore-file require-await
 import { IoCCircularDependencyError, IoCServiceNotFoundError } from '../../src/ioc/errors.ts';
 import { IoCContainer, type IoCServiceConstructed } from '../../src/ioc/ioc.ts';
 import {

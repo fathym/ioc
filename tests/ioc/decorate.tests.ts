@@ -1,7 +1,15 @@
+// Async functions without await are deliberate here: they produce promise-returning factories.
+// deno-lint-ignore-file require-await
 import { IoCServiceNotFoundError } from '../../src/ioc/errors.ts';
 import { IoCContainer } from '../../src/ioc/ioc.ts';
 import { IoCToken } from '../../src/ioc/IoCToken.ts';
-import { assert, assertEquals, assertRejects, assertStrictEquals, assertThrows } from '../test.deps.ts';
+import {
+  assert,
+  assertEquals,
+  assertRejects,
+  assertStrictEquals,
+  assertThrows,
+} from '../test.deps.ts';
 
 interface Greeter {
   greet(name: string): string;

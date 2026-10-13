@@ -1,3 +1,5 @@
+// Async functions without await are deliberate here: they produce promise-returning factories.
+// deno-lint-ignore-file require-await
 import { IoCContainerDisposedError } from '../../src/ioc/errors.ts';
 import { IoCContainer } from '../../src/ioc/ioc.ts';
 import { IoCToken } from '../../src/ioc/IoCToken.ts';
@@ -27,9 +29,13 @@ function setup() {
 
   root.Register(Config);
   root.Register(RequestContext, { Lifetime: 'scoped', Lazy: true });
-  root.Register(Handler, async (c) => new Handler(await c.Resolve(RequestContext), await c.Resolve(Config)), {
-    Lifetime: 'transient',
-  });
+  root.Register(
+    Handler,
+    async (c) => new Handler(await c.Resolve(RequestContext), await c.Resolve(Config)),
+    {
+      Lifetime: 'transient',
+    },
+  );
 
   return root;
 }
@@ -109,25 +115,28 @@ Deno.test('CreateScope - resolution', async (t) => {
     assert(captive.ctx !== (await scope.Resolve(RequestContext)));
   });
 
-  await t.step('a scoped registration that is not lazy is still per scope in children', async () => {
-    const root = new IoCContainer();
-    let built = 0;
+  await t.step(
+    'a scoped registration that is not lazy is still per scope in children',
+    async () => {
+      const root = new IoCContainer();
+      let built = 0;
 
-    root.Register(RequestContext, () => {
-      built++;
-      return new RequestContext();
-    }, { Lifetime: 'scoped' });
+      root.Register(RequestContext, () => {
+        built++;
+        return new RequestContext();
+      }, { Lifetime: 'scoped' });
 
-    assertEquals(built, 1);
+      assertEquals(built, 1);
 
-    const scope = root.CreateScope();
+      const scope = root.CreateScope();
 
-    assertEquals(built, 1);
+      assertEquals(built, 1);
 
-    await scope.Resolve(RequestContext);
+      await scope.Resolve(RequestContext);
 
-    assertEquals(built, 2);
-  });
+      assertEquals(built, 2);
+    },
+  );
 
   await t.step('nested scopes get their own scoped instances', async () => {
     const root = setup();
@@ -181,7 +190,9 @@ Deno.test('CreateScope - overrides', async (t) => {
 
     test.Register($Mailer, () => ({ send: (to) => (sent.push(to), 'fake') }));
 
-    const signup = await test.Resolve<{ welcome(to: string): Promise<string> }>(test.Symbol('Signup'));
+    const signup = await test.Resolve<{ welcome(to: string): Promise<string> }>(
+      test.Symbol('Signup'),
+    );
 
     assertEquals(await signup.welcome('a@b.c'), 'fake');
     assertEquals(sent, ['a@b.c']);
@@ -261,9 +272,20 @@ Deno.test('CreateScope - disposal', async (t) => {
 
     const root = new IoCContainer();
 
-    root.Register(Resource, () => new Resource('first'), { Lifetime: 'scoped', Lazy: true, Name: 'a' });
-    root.Register(SyncResource, () => new SyncResource('second'), { Lifetime: 'scoped', Lazy: true });
-    root.Register(Resource, () => new Resource('third'), { Lifetime: 'scoped', Lazy: true, Name: 'c' });
+    root.Register(Resource, () => new Resource('first'), {
+      Lifetime: 'scoped',
+      Lazy: true,
+      Name: 'a',
+    });
+    root.Register(SyncResource, () => new SyncResource('second'), {
+      Lifetime: 'scoped',
+      Lazy: true,
+    });
+    root.Register(Resource, () => new Resource('third'), {
+      Lifetime: 'scoped',
+      Lazy: true,
+      Name: 'c',
+    });
 
     const scope = root.CreateScope();
 

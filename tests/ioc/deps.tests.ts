@@ -1,7 +1,13 @@
 import { IoCCircularDependencyError, IoCServiceNotFoundError } from '../../src/ioc/errors.ts';
 import { IoCContainer } from '../../src/ioc/ioc.ts';
 import { IoCToken } from '../../src/ioc/IoCToken.ts';
-import { assert, assertEquals, assertInstanceOf, assertRejects, assertStrictEquals } from '../test.deps.ts';
+import {
+  assert,
+  assertEquals,
+  assertInstanceOf,
+  assertRejects,
+  assertStrictEquals,
+} from '../test.deps.ts';
 import { withinTimeout } from './_helpers.ts';
 
 interface Logger {
@@ -81,17 +87,20 @@ Deno.test('RegisterClass with Deps', async (t) => {
     assertEquals((await ioc.Resolve(Service)).replicaUrl, 'late');
   });
 
-  await t.step('an eager registration whose deps arrive later succeeds on a later resolve', async () => {
-    const ioc = new IoCContainer();
+  await t.step(
+    'an eager registration whose deps arrive later succeeds on a later resolve',
+    async () => {
+      const ioc = new IoCContainer();
 
-    ioc.RegisterClass(Repo, { Deps: [Config, $Logger] });
-    ioc.RegisterClass(Config);
-    ioc.RegisterValue($Logger, { log: () => {} });
+      ioc.RegisterClass(Repo, { Deps: [Config, $Logger] });
+      ioc.RegisterClass(Config);
+      ioc.RegisterValue($Logger, { log: () => {} });
 
-    await new Promise((r) => setTimeout(r, 1));
+      await new Promise((r) => setTimeout(r, 1));
 
-    assertInstanceOf(await ioc.Resolve(Repo), Repo);
-  });
+      assertInstanceOf(await ioc.Resolve(Repo), Repo);
+    },
+  );
 
   await t.step('dependencies are resolved in the resolving scope', async () => {
     class RequestId {
@@ -151,7 +160,9 @@ Deno.test('RegisterClass with Deps', async (t) => {
     ioc.RegisterClass(A, { Deps: [B], Lazy: true });
     ioc.RegisterClass(B, { Deps: [A], Lazy: true });
 
-    const err = await withinTimeout(assertRejects(() => ioc.Resolve(A), IoCCircularDependencyError));
+    const err = await withinTimeout(
+      assertRejects(() => ioc.Resolve(A), IoCCircularDependencyError),
+    );
 
     assertEquals(err.Path, ['A', 'B', 'A']);
   });

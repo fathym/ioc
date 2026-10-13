@@ -1,3 +1,5 @@
+// Async functions without await are deliberate here: they produce promise-returning factories.
+// deno-lint-ignore-file require-await
 import { IoCContainer } from '../../src/ioc/ioc.ts';
 import { IoCToken } from '../../src/ioc/IoCToken.ts';
 import { assert, assertEquals, assertRejects } from '../test.deps.ts';
@@ -108,7 +110,11 @@ Deno.test('ResolveAll', async (t) => {
     scope.Register($Plugin, () => new Plugin('scope-b'), { Name: 'b' });
     scope.Register($Plugin, () => new Plugin('scope-c'), { Name: 'c' });
 
-    assertEquals((await scope.ResolveAll($Plugin)).map((p) => p.name), ['scope-b', 'scope-c', 'root-a']);
+    assertEquals((await scope.ResolveAll($Plugin)).map((p) => p.name), [
+      'scope-b',
+      'scope-c',
+      'root-a',
+    ]);
   });
 
   await t.step('works with class keys and respects lifetimes', async () => {
@@ -162,12 +168,14 @@ Deno.test('Unregister', async (t) => {
 });
 
 Deno.test('Unregister - same-named classes', async (t) => {
-  const A = (() => class Svc {
-    public which = 'A';
-  })();
-  const B = (() => class Svc {
-    public which = 'B';
-  })();
+  const A = (() =>
+    class Svc {
+      public which = 'A';
+    })();
+  const B = (() =>
+    class Svc {
+      public which = 'B';
+    })();
 
   await t.step('unregistering the shadowed class keeps the name owner', async () => {
     const ioc = new IoCContainer();

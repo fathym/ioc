@@ -109,26 +109,18 @@ export function registrationOf(entry: unknown): IoCRegistration | undefined {
 
 /** Creates the anonymous, marked thunk that is stored in `services` for a registration. */
 export function createThunk(reg: IoCRegistration): (ioc?: object) => unknown {
-  // Older containers invoke stored functions only when `fn.name` is empty, so force it.
-  const thunk = function (ioc?: object) {
-    return reg.resolveIn(ioc ?? reg.owner);
-  };
+  // Older containers invoke stored functions only when `fn.name` is empty. A function created
+  // inside an array literal gets no inferred name, which is cheaper than redefining `name`.
+  const thunk = [(ioc?: object) => reg.resolveIn(ioc ?? reg.owner)][0];
 
-  Object.defineProperty(thunk, 'name', { value: '' });
-  Object.defineProperty(thunk, IOC_REGISTRATION, { value: reg });
+  (thunk as Indexable)[IOC_REGISTRATION] = reg;
 
   return thunk;
 }
 
 /** Wraps a registration for a pre-protocol container, which calls stored thunks with no arguments. */
 export function createLegacyThunk(reg: IoCRegistration, target: object): () => unknown {
-  const thunk = function () {
-    return reg.resolveIn(target);
-  };
-
-  Object.defineProperty(thunk, 'name', { value: '' });
-
-  return thunk;
+  return [() => reg.resolveIn(target)][0];
 }
 
 /** True when `fn` should be constructed with `new` rather than called as a factory. */
@@ -189,11 +181,25 @@ export function labelFor(symbol: symbol, name: string): string {
 export function createView<T extends object>(container: T, frame: IoCResolveFrame): T {
   const self = (container as Indexable)[IOC_SELF] ?? container;
 
-  return Object.create(self, {
-    [IOC_CONTEXT]: { value: frame },
-    [IOC_SELF]: { value: self },
-  });
+  let View = viewConstructors.get(self);
+
+  if (!View) {
+    // One constructor per container keeps view creation to a single cheap allocation.
+    const ViewCtor = function (this: Indexable, f: IoCResolveFrame) {
+      this[IOC_CONTEXT] = f;
+    } as unknown as new (frame: IoCResolveFrame) => object;
+
+    ViewCtor.prototype = Object.create(self, { [IOC_SELF]: { value: self } });
+
+    View = ViewCtor;
+
+    viewConstructors.set(self, View);
+  }
+
+  return new View(frame) as T;
 }
+
+const viewConstructors = new WeakMap<object, new (frame: IoCResolveFrame) => object>();
 
 /** Records `result` into `holder`, memoizing successes and resetting on rejection (retry). */
 export function settleInto(holder: IoCHolder, result: unknown): unknown {

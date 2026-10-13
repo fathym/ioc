@@ -167,7 +167,9 @@ Deno.test('Cycles - no false positives', async (t) => {
       { Type: ioc.Symbol('A'), Lazy: true },
     );
 
-    const a = await withinTimeout(ioc.Resolve<{ b: { d: unknown }; c: { d: unknown } }>(ioc.Symbol('A')));
+    const a = await withinTimeout(
+      ioc.Resolve<{ b: { d: unknown }; c: { d: unknown } }>(ioc.Symbol('A')),
+    );
 
     assertStrictEquals(a.b.d, a.c.d);
     assertEquals(bottomBuilt, 1);

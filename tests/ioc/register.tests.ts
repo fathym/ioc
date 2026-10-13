@@ -1,3 +1,5 @@
+// Async functions without await are deliberate here: they produce promise-returning factories.
+// deno-lint-ignore-file require-await
 import { IoCContainer } from '../../src/ioc/ioc.ts';
 import {
   assert,
@@ -298,33 +300,39 @@ Deno.test('Register - keys, names and return values', async (t) => {
     const ioc = new IoCContainer();
 
     assertEquals(typeof ioc.Register(Alpha, { Lifetime: 'scoped' }), 'function');
-    assertEquals(typeof ioc.Register(() => 1, { Type: ioc.Symbol('S'), Lifetime: 'scoped' }), 'function');
+    assertEquals(
+      typeof ioc.Register(() => 1, { Type: ioc.Symbol('S'), Lifetime: 'scoped' }),
+      'function',
+    );
     assertEquals(typeof ioc.Register(Beta, () => new Beta(), { Lifetime: 'scoped' }), 'function');
     assertEquals(ioc.Register(Alpha, { Lazy: true }), undefined);
     assertEquals(ioc.Register(Alpha, { Lifetime: 'transient' }), undefined);
   });
 
-  await t.step('synchronous constructor errors propagate and keep the previous registration', async () => {
-    const ioc = new IoCContainer();
-    let fail = false;
+  await t.step(
+    'synchronous constructor errors propagate and keep the previous registration',
+    async () => {
+      const ioc = new IoCContainer();
+      let fail = false;
 
-    class Flaky {
-      public n = 1;
+      class Flaky {
+        public n = 1;
 
-      constructor() {
-        if (fail) throw new Error('ctor failed');
+        constructor() {
+          if (fail) throw new Error('ctor failed');
+        }
       }
-    }
 
-    ioc.Register(Flaky);
+      ioc.Register(Flaky);
 
-    const first = await ioc.Resolve(Flaky);
+      const first = await ioc.Resolve(Flaky);
 
-    fail = true;
+      fail = true;
 
-    assertThrows(() => ioc.Register(Flaky), Error, 'ctor failed');
-    assertStrictEquals(await ioc.Resolve(Flaky), first);
-  });
+      assertThrows(() => ioc.Register(Flaky), Error, 'ctor failed');
+      assertStrictEquals(await ioc.Resolve(Flaky), first);
+    },
+  );
 
   await t.step('a registration made inside a factory is visible afterwards', async () => {
     const ioc = new IoCContainer();
@@ -338,19 +346,22 @@ Deno.test('Register - keys, names and return values', async (t) => {
     assertEquals(await ioc.Resolve(ioc.Symbol('Inner')), 'inner');
   });
 
-  await t.step('registrations made through a lazy factory parameter land on the container', async () => {
-    const ioc = new IoCContainer();
+  await t.step(
+    'registrations made through a lazy factory parameter land on the container',
+    async () => {
+      const ioc = new IoCContainer();
 
-    ioc.Register((c) => {
-      c.Register(() => 'from-lazy', { Type: c.Symbol('Nested') });
-      return 'lazy';
-    }, { Type: ioc.Symbol('Lazy'), Lazy: true });
+      ioc.Register((c) => {
+        c.Register(() => 'from-lazy', { Type: c.Symbol('Nested') });
+        return 'lazy';
+      }, { Type: ioc.Symbol('Lazy'), Lazy: true });
 
-    await ioc.Resolve(ioc.Symbol('Lazy'));
+      await ioc.Resolve(ioc.Symbol('Lazy'));
 
-    assert(ioc.services.get(Symbol.for('Nested'))?.has('$default'));
-    assertEquals(await ioc.Resolve(ioc.Symbol('Nested')), 'from-lazy');
-  });
+      assert(ioc.services.get(Symbol.for('Nested'))?.has('$default'));
+      assertEquals(await ioc.Resolve(ioc.Symbol('Nested')), 'from-lazy');
+    },
+  );
 });
 
 Deno.test('Register - by symbol', async (t) => {
@@ -367,7 +378,9 @@ Deno.test('Register - by symbol', async (t) => {
 
     ioc.Register(ioc.Symbol('Per'), () => ({}), { Lifetime: 'transient', Name: 'n' });
 
-    assert((await ioc.Resolve(ioc.Symbol('Per'), 'n')) !== (await ioc.Resolve(ioc.Symbol('Per'), 'n')));
+    assert(
+      (await ioc.Resolve(ioc.Symbol('Per'), 'n')) !== (await ioc.Resolve(ioc.Symbol('Per'), 'n')),
+    );
   });
 
   await t.step('Register(symbol, factory, scoped) returns a disposer', async () => {
@@ -390,7 +403,12 @@ Deno.test('Register - by symbol', async (t) => {
   await t.step('Register(symbol) without a factory throws', () => {
     const ioc = new IoCContainer();
 
-    // deno-lint-ignore no-explicit-any
-    assertThrows(() => (ioc as any).Register(ioc.Symbol('X'), { Name: 'x' }), Error, 'factory is required');
+    const untyped = ioc as unknown as { Register(...args: unknown[]): unknown };
+
+    assertThrows(
+      () => untyped.Register(ioc.Symbol('X'), { Name: 'x' }),
+      Error,
+      'factory is required',
+    );
   });
 });
