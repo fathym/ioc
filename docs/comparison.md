@@ -30,36 +30,39 @@ fairly as we can, including **when you should pick something else**.
 
 ✓ = built in · ~ = partial or with caveats · ✗ = not available
 
-| Feature                                     | @fathym/ioc | InversifyJS | tsyringe | awilix | typed-inject | needle-di | NestJS | .NET MS.DI |
-| ------------------------------------------- | ----------- | ----------- | -------- | ------ | ------------ | --------- | ------ | ---------- |
-| Works without legacy decorators             | ✓           | ✗           | ✗        | ✓      | ✓            | ✓         | ✗      | ✓ (n/a)    |
-| No `reflect-metadata`                       | ✓           | ✗           | ✗        | ✓      | ✓            | ✓         | ✗      | ✓ (n/a)    |
-| Typed keys for interfaces                   | ✓           | ~           | ~        | ~      | ✓            | ✓         | ~      | ✓          |
-| Constructor deps checked at compile time    | ✓ (`Deps`)  | ✗           | ✗        | ✗      | ✓            | ~         | ✗      | ✗          |
-| Registration order checked at compile time  | ✓ (`Typed`) | ✗           | ✗        | ✗      | ✓            | ✗         | ✗      | ✗          |
-| Async factories / async resolve             | ✓           | ✓           | ✗        | ✗      | ✗            | ✓         | ✓      | ✗          |
-| Shared in-flight creation, retry on failure | ✓           | ~           | ✗        | ✗      | ✗            | ~         | ~      | ✗          |
-| Explicit child scopes                       | ✓           | ✓           | ✓        | ✓      | ✓            | ✓         | ~      | ✓          |
-| Disposal (`using` / dispose)                | ✓           | ~           | ~        | ✓      | ✓            | ~         | ✓      | ✓          |
-| Cycle detection with path                   | ✓           | ~           | ~        | ✓      | ✓ (types)    | ~         | ~      | ✓          |
-| Startup validation                          | ✓           | ✗           | ✗        | ~      | ✓ (types)    | ✗         | ✓      | ✓          |
-| Error catalog in docs                       | ✓           | ✗           | ✗        | ~      | ✗            | ✗         | ✓      | ✗          |
-| Standalone library                          | ✓           | ✓           | ✓        | ✓      | ✓            | ✓         | ✗      | ✓          |
-| Synchronous resolve                         | ✗           | ✓           | ✓        | ✓      | ✓            | ✓         | ✓      | ✓          |
-| Mature, widely used                         | ✗ (0.x)     | ✓           | ✓        | ✓      | ✓            | ~         | ✓      | ✓          |
+| Feature                                     | @fathym/ioc   | InversifyJS | tsyringe | awilix | typed-inject | needle-di | NestJS | .NET MS.DI   |
+| ------------------------------------------- | ------------- | ----------- | -------- | ------ | ------------ | --------- | ------ | ------------ |
+| Works without legacy decorators             | ✓             | ✗           | ✗        | ✓      | ✓            | ✓         | ✗      | ✓ (n/a)      |
+| No `reflect-metadata`                       | ✓             | ✗           | ✗        | ✓      | ✓            | ✓         | ✗      | ✓ (n/a)      |
+| Typed keys for interfaces                   | ✓             | ~           | ~        | ~      | ✓            | ✓         | ~      | ✓            |
+| Constructor deps checked at compile time    | ✓ (`Deps`)    | ✗           | ✗        | ✗      | ✓            | ~         | ✗      | ✗            |
+| Registration order checked at compile time  | ✓ (`Typed`)   | ✗           | ✗        | ✗      | ✓            | ✗         | ✗      | ✗            |
+| Async factories / async resolve             | ✓             | ✓           | ✗        | ✗      | ✗            | ✓         | ✓      | ✗            |
+| Shared in-flight creation, retry on failure | ✓             | ~           | ✗        | ✗      | ✗            | ~         | ~      | ✗            |
+| Explicit child scopes                       | ✓             | ✓           | ✓        | ✓      | ✓            | ✓         | ~      | ✓            |
+| Disposal (`using` / dispose)                | ✓             | ~           | ~        | ✓      | ✓            | ~         | ✓      | ✓            |
+| Cycle detection with path                   | ✓             | ~           | ~        | ✓      | ✓ (types)    | ~         | ~      | ✓            |
+| Startup validation                          | ✓             | ✗           | ✗        | ~      | ✓ (types)    | ✗         | ✓      | ✓            |
+| Modules with start/stop lifecycle           | ✓             | ~           | ✗        | ✗      | ✗            | ✗         | ✓      | ~            |
+| Nested scope levels (tenant → request)      | ✓             | ✗           | ✗        | ✗      | ✗            | ✗         | ✗      | ✗            |
+| Overridable framework defaults              | ✓ (`Default`) | ~           | ✗        | ~      | ✗            | ✗         | ~      | ✓ (`TryAdd`) |
+| Error catalog in docs                       | ✓             | ✗           | ✗        | ~      | ✗            | ✗         | ✓      | ✗            |
+| Standalone library                          | ✓             | ✓           | ✓        | ✓      | ✓            | ✓         | ✗      | ✓            |
+| Synchronous resolve                         | ✗             | ✓           | ✓        | ✓      | ✓            | ✓         | ✓      | ✓            |
+| Mature, widely used                         | ✗ (0.x)       | ✓           | ✓        | ✓      | ✓            | ~         | ✓      | ✓            |
 
 ## Where each one shines
 
-| Container        | Choose it when…                                                                                                                       |
-| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| **@fathym/ioc**  | You want async startup, scopes, disposal and startup checks in a small, explicit API, on Deno or with modern toolchains               |
-| **InversifyJS**  | You want the broadest feature set (tagged and named bindings, activation hooks, modules) and accept decorators and `reflect-metadata` |
-| **tsyringe**     | You have an existing tsyringe codebase that works for you. Its maintenance has been limited, so weigh that for new work               |
-| **awilix**       | You're on Node.js with Express or Koa and like registration by convention (auto-loading modules, `awilix-express`)                    |
-| **typed-inject** | You want the compiler to prove the whole graph is complete, and can live with ordered registration and dense type errors              |
-| **needle-di**    | You want Angular-style `inject()` with standard decorators, published on JSR                                                          |
-| **NestJS**       | You want a full application framework with modules, controllers and DI included                                                       |
-| **.NET MS.DI**   | You're on .NET. It's the model this container's vocabulary comes from                                                                 |
+| Container        | Choose it when…                                                                                                                                                                                           |
+| ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **@fathym/ioc**  | You want async startup, scopes, disposal and startup checks in a small, explicit API, on Deno or with modern toolchains; or you're building a plugin host, multi-tenant runtime or framework on top of it |
+| **InversifyJS**  | You want the broadest feature set (tagged and named bindings, activation hooks, modules) and accept decorators and `reflect-metadata`                                                                     |
+| **tsyringe**     | You have an existing tsyringe codebase that works for you. Its maintenance has been limited, so weigh that for new work                                                                                   |
+| **awilix**       | You're on Node.js with Express or Koa and like registration by convention (auto-loading modules, `awilix-express`)                                                                                        |
+| **typed-inject** | You want the compiler to prove the whole graph is complete, and can live with ordered registration and dense type errors                                                                                  |
+| **needle-di**    | You want Angular-style `inject()` with standard decorators, published on JSR                                                                                                                              |
+| **NestJS**       | You want a full application framework with modules, controllers and DI included                                                                                                                           |
+| **.NET MS.DI**   | You're on .NET. It's the model this container's vocabulary comes from                                                                                                                                     |
 
 ## When _not_ to choose @fathym/ioc
 
@@ -92,6 +95,12 @@ there is a single async `Resolve`.
 and has had repeated regressions. Inversify's "request" scope means one container _request_, not
 an HTTP request. Here, a scope is a child container you create, and lifetimes never change
 implicitly.
+
+**Modules and lifecycle.** NestJS couples modules and lifecycle hooks to its application
+framework; Inversify's container modules group bindings but leave startup and shutdown to you;
+.NET puts lifecycle in the Generic Host rather than in the container. Here, a module is a plain
+object with `Register`, `OnStart` and `OnStop`, and the container's `Start()` and `Dispose()`
+run them in dependency order. See [modules and lifecycle](./guides/modules-and-lifecycle.md).
 
 **Errors.** NestJS and Angular document their errors well, and most libraries don't. This
 container ships an [error catalog](./reference/errors.md) keyed by message text, and CI enforces

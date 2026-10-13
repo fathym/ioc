@@ -29,6 +29,7 @@ the container will do rather than look up how to do something; for that, see the
 | [disposal.md](./disposal.md) _[Explanation]_                             | What gets disposed, in which order, and what never is                                      |
 | [cycles-and-errors.md](./cycles-and-errors.md) _[Explanation]_           | How cycles are detected and how to read a resolution path                                  |
 | [design-principles.md](./design-principles.md) _[Explanation]_           | The trade-offs behind the API                                                              |
+| [scale.md](./scale.md) _[Explanation]_                                   | Which features to use at which size, and how the checks hold up in large apps              |
 
 ## What's Coming
 

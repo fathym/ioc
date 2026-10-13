@@ -53,9 +53,22 @@ see [per-request scopes](./guides/per-request-scopes.md).
 
 ## How do I mock a dependency in tests?
 
-Register the fake on a scope (or a fresh container) and resolve the service under test from it.
-Deno doesn't support module mocking, and you don't need it. See the
-[testing guide](./guides/testing.md).
+Register the fake on a scope (or a fresh container) and resolve the service under test from it,
+or swap it in place with `ioc.Override(key, fake)`, which returns an undo function. Deno doesn't
+support module mocking, and you don't need it. See the [testing guide](./guides/testing.md) and
+the [testing pattern](./patterns/testing.md).
+
+## Does it have modules and startup/shutdown hooks?
+
+Yes. An `IoCModule` is a plain object with `Name`, `Requires`, `Register`, `OnStart` and
+`OnStop`. `ioc.Use(...modules)` adds them, `Start()` runs `OnStart` in dependency order, and
+`Dispose()` (or `await using`) runs `OnStop` in reverse. See
+[modules and lifecycle](./guides/modules-and-lifecycle.md).
+
+## Can I see what's registered, and why?
+
+`ioc.Describe()` returns every registration as data: key, name, lifetime, scope level, the module
+that registered it, its declared and observed dependencies, and whether it is built.
 
 ## How fast is it?
 

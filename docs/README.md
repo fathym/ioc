@@ -58,6 +58,7 @@ Pick the path that fits you:
 | [async-resolution.md](./concepts/async-resolution.md) _[Explanation]_             | Shared creation, retries, eager failures and thenables               |
 | [disposal.md](./concepts/disposal.md) _[Explanation]_                             | Who owns what, and the order things are cleaned up                   |
 | [cycles-and-errors.md](./concepts/cycles-and-errors.md) _[Explanation]_           | Cycle detection, resolution paths and their limits                   |
+| [scale.md](./concepts/scale.md) _[Explanation]_                                   | Which features to use for a script, a service, and a platform        |
 | [design-principles.md](./concepts/design-principles.md) _[Explanation]_           | Why it is decorator-free, async-first and stable                     |
 
 ## Guides
@@ -74,7 +75,22 @@ Pick the path that fits you:
 | [decorating-services.md](./guides/decorating-services.md) _[How-to]_               | Add logging, caching or retries around a service                 |
 | [organizing-registrations.md](./guides/organizing-registrations.md) _[How-to]_     | Structure the composition root of a real app                     |
 | [copying-containers.md](./guides/copying-containers.md) _[How-to]_                 | `CopyTo`, mixed versions, and moving to scopes                   |
+| [modules-and-lifecycle.md](./guides/modules-and-lifecycle.md) _[How-to]_           | Modules, framework defaults, `Start()` and ordered shutdown      |
+| [building-frameworks.md](./guides/building-frameworks.md) _[How-to]_               | Rules for libraries and frameworks that contribute services      |
 | [guidelines.md](./guides/guidelines.md) _[How-to]_                                 | Named anti-patterns, each with the fix                           |
+
+## Patterns
+
+| Document                                                                 | Description                                                   |
+| ------------------------------------------------------------------------ | ------------------------------------------------------------- |
+| [patterns/](./patterns/README.md) _[How-to]_                             | Whole-application architectures, each with a complete example |
+| [plugin-host.md](./patterns/plugin-host.md) _[How-to]_                   | Frameworks and runtimes extended by plugins                   |
+| [cli-app.md](./patterns/cli-app.md) _[How-to]_                           | Command-line tools with a scope per command                   |
+| [multi-tenant-runtime.md](./patterns/multi-tenant-runtime.md) _[How-to]_ | Tenant and request levels in one server                       |
+| [agent-orchestrator.md](./patterns/agent-orchestrator.md) _[How-to]_     | Parallel agents with private state and shared tools           |
+| [resolver-chains.md](./patterns/resolver-chains.md) _[How-to]_           | Ordered, extensible handler chains                            |
+| [keyed-resources.md](./patterns/keyed-resources.md) _[How-to]_           | Named connections, opened lazily and always closed            |
+| [testing.md](./patterns/testing.md) _[How-to]_                           | Tests on the real wiring with a few things swapped            |
 
 ## Reference
 
@@ -84,6 +100,7 @@ Pick the path that fits you:
 | [api.md](./reference/api.md) _[Reference]_            | Every method, option and type                        |
 | [errors.md](./reference/errors.md) _[Reference]_      | Every error message, what it means and how to fix it |
 | [glossary.md](./reference/glossary.md) _[Reference]_  | The terms these docs use                             |
+| [protocol.md](./reference/protocol.md) _[Reference]_  | The cross-version contract between library copies    |
 | [troubleshooting.md](./troubleshooting.md) _[How-to]_ | Symptoms that aren't errors, and their causes        |
 
 ## Migration
@@ -126,6 +143,14 @@ Runnable programs, each showing one idea, run in CI: [examples/](../examples/REA
 | Wrap a service               | `ioc.Decorate($Db, (inner) => withLogging(inner))`                                         |
 | Check wiring / build early   | `ioc.Validate()` / `await ioc.Activate()`                                                  |
 | Clean up                     | `await ioc.Dispose()`                                                                      |
+| Modules and lifecycle        | `ioc.Use(Db, Server)` / `await ioc.Start()`                                                |
+| Overridable default          | `ioc.RegisterValue($Logger, consoleLogger, { Default: true })`                             |
+| Per-tenant instance          | `RegisterClass(TenantDb, { Lifetime: 'scoped', ScopeLevel: 'tenant' })`                    |
+| A scope's own copy           | `ioc.CreateScope({ Level: 'agent' }).Isolate(Memory)`                                      |
+| Services by name / as a bag  | `await ioc.ResolveNamed($Profile)` / `await ioc.ResolveRecord({ db: $Db })`                |
+| Inject lazily / all of a key | `Deps: [IoCLazy($Mailer), IoCAll($Plugin)]`                                                |
+| Swap in a test               | `const restore = ioc.Override($Clock, fakeClock)`                                          |
+| Inspect the wiring           | `ioc.Describe()`                                                                           |
 
 ### Lifetimes
 
@@ -143,6 +168,9 @@ Runnable programs, each showing one idea, run in CI: [examples/](../examples/REA
 | `IoCCircularDependencyError` | Two services need each other                      |
 | `IoCValidationError`         | `Validate()` found wiring problems (all listed)   |
 | `IoCContainerDisposedError`  | The container or scope was used after `Dispose()` |
+| `IoCStartError`              | A module's `OnStart` failed (others rolled back)  |
+
+Every error has a stable `code`; see the [error catalog](./reference/errors.md).
 
 ## For AI Consumption
 

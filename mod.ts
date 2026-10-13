@@ -10,8 +10,10 @@
  *   {@link IoCContainer.Typed typed container}, against what is already registered.
  * - **Scopes and disposal:** {@link IoCContainer.CreateScope} with `await using`, disposed in
  *   reverse creation order.
- * - **Fails early:** errors name the resolution path, cycles throw, and
- *   {@link IoCContainer.Validate} / {@link IoCContainer.Activate} check wiring at startup.
+ * - **Fails early:** errors name the resolution path and carry stable codes, cycles throw, and
+ *   {@link IoCContainer.Validate} / {@link IoCContainer.Start} check wiring at startup.
+ * - **For frameworks and plugin hosts:** {@link IoCModule modules} with lifecycle, `Default`
+ *   registrations, scope levels, {@link IoCContainer.Isolate}, and {@link IoCContainer.Describe}.
  *
  * Full documentation (tutorial, guides, error catalog):
  * https://github.com/fathym/ioc/blob/main/docs/README.md

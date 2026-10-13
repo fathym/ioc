@@ -50,7 +50,13 @@ step.
 - **Scopes and cleanup.** One scope per request with `await using`. Instances are disposed last
   created, first disposed.
 - **Fails loudly, early.** Missing services name the resolution path, cycles throw instead of
-  hanging on a single resolution, and `Validate()` / `Activate()` catch wiring mistakes at startup.
+  hanging (even across concurrent resolves), every error has a stable code, and `Validate()` /
+  `Start()` catch wiring mistakes at startup. Opt-in strict mode turns accidental overwrites into
+  errors.
+- **Built for frameworks and plugin hosts.** Modules with requirements and `OnStart`/`OnStop`,
+  defaults that applications override in any order, scope levels (tenant → request), `Isolate()`
+  for sub-units, and `Describe()` to see the whole graph. See the
+  [patterns](https://github.com/fathym/ioc/blob/main/docs/patterns/README.md).
 
 ## Install
 

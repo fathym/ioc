@@ -29,6 +29,7 @@ Each guide answers one "how do I…?" question with complete code you can copy.
 | [decorating-services.md](./decorating-services.md) _[How-to]_               | …add logging, caching or retries around an existing service?                               |
 | [organizing-registrations.md](./organizing-registrations.md) _[How-to]_     | …structure registrations in a real app?                                                    |
 | [modules-and-lifecycle.md](./modules-and-lifecycle.md) _[How-to]_           | …split wiring into modules, let apps override framework defaults, and start/stop in order? |
+| [building-frameworks.md](./building-frameworks.md) _[How-to]_               | …write a library or framework that contributes services to an app's container?             |
 | [copying-containers.md](./copying-containers.md) _[How-to]_                 | …copy registrations between containers, or move to scopes?                                 |
 | [guidelines.md](./guidelines.md) _[How-to]_                                 | …avoid the common mistakes (with named anti-patterns)?                                     |
 
