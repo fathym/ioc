@@ -24,6 +24,7 @@ tasks, see [guides](../guides/README.md).
 | [api.md](./api.md) _[Reference]_           | Every public method, option and type, with an example each                                          |
 | [errors.md](./errors.md) _[Reference]_     | Every error message the container can produce: what each part means, the likely causes, and the fix |
 | [glossary.md](./glossary.md) _[Reference]_ | The terms used throughout these docs                                                                |
+| [protocol.md](./protocol.md) _[Reference]_ | The cross-version contract that lets several copies of the library share registrations              |
 
 The generated API documentation on [JSR](https://jsr.io/@fathym/ioc/doc) is built from the same
 JSDoc as the source and is always exactly in sync with a release.

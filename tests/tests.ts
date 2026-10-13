@@ -9,6 +9,7 @@ import './ioc/scoped.tests.ts';
 import './ioc/collisions.tests.ts';
 import './ioc/copyto.tests.ts';
 import './ioc/interop.tests.ts';
+import './ioc/interop-0.1.tests.ts';
 import './ioc/consumer-patterns.tests.ts';
 import './ioc/matrix.tests.ts';
 import './ioc/model.tests.ts';

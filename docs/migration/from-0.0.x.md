@@ -43,6 +43,11 @@ Read the table, then the sections for any row that touches your code.
 | 11 | [Circular dependencies throw](#11-circular-dependencies-throw)                                                               | Graphs that used to hang                              | Break the cycle                                |
 | 12 | [New: `Register(symbol, factory)` and typed factory parameters](#12-new-registersymbol-factory-and-typed-factory-parameters) | Everyone                                              | Optional                                       |
 | 13 | [`Register` is deprecated](#moving-off-register)                                                                             | Everyone                                              | Optional now; required before 1.0              |
+| 14 | [String keys throw](#14-string-keys-throw)                                                                                   | Code passing a string where a key belongs             | Use a token or `ioc.Symbol(id)`                |
+| 15 | [Each instance is disposed once, by its creator](#15-each-instance-is-disposed-once-by-its-creator)                          | Decorators, aliases and `CopyTo` with disposables     | None                                           |
+| 16 | [A scope of a disposed container is disposed](#16-a-scope-of-a-disposed-container-is-disposed)                               | Code keeping scopes past their root                   | Dispose scopes first                           |
+| 17 | [`Validate` returns the issues it found](#17-validate-returns-the-issues-it-found)                                           | Code calling `Validate()`                             | None                                           |
+| 18 | [Opt-in: `Default`, `Replace` and strict mode](#18-opt-in-default-replace-and-strict-mode)                                   | Frameworks registering defaults                       | Optional                                       |
 
 Everything else (typed tokens, `CreateScope`, `Dispose`, `Decorate`, `Deps`, `Validate`,
 `Activate`, …) is new API you can adopt when you like. See the [changelog](../../CHANGELOG.md).
@@ -226,6 +231,53 @@ wait forever. Now it throws `IoCCircularDependencyError` with the path, for exam
 `Register(ioc.Symbol('Hooks'), () => new Hooks())` now works; it threw "The Type was missing"
 before. The `ioc` parameter of factories is now typed in every `Register` form; it used to be an
 implicit `any` in `Register((ioc) => …, { Type })`.
+
+## 14. String keys throw
+
+**Before:** `ioc.Resolve('Db')` failed with a confusing `TypeError`, or registered something no
+other call could find.
+
+**Now:** a string key throws an error with code `IOC_INVALID_KEY`, and the message points to
+`IoCToken('Name')` and `ioc.Symbol('Name')`. Strings were never valid keys; TypeScript already
+rejected them, so only untyped code is affected.
+
+## 15. Each instance is disposed once, by its creator
+
+**Before:** an instance returned by a decorator (`Decorate(key, (inner) => inner)`), by an alias
+factory, or shared through `CopyTo` could be disposed twice, or disposed by a scope while its
+parent still used it. An instance that finished building after `Dispose()` leaked.
+
+**Now:** the first container to create an instance owns it and disposes it exactly once.
+`RegisterValue` values are never disposed. An instance that finishes building after its owner
+was disposed is disposed on arrival. See [disposal](../concepts/disposal.md).
+
+## 16. A scope of a disposed container is disposed
+
+**Before:** a scope whose parent had been disposed failed with misleading errors (the parent's
+registrations were gone, so services looked unregistered).
+
+**Now:** resolving from it, or creating a scope from it, throws `IoCContainerDisposedError`
+(`IOC_CONTAINER_DISPOSED`). Dispose scopes before their root; `await using` does that for you.
+
+## 17. `Validate` returns the issues it found
+
+`Validate()` still throws `IoCValidationError` when it finds problems. It now also returns the
+list of issues, and `Validate({ Throw: false })` returns them without throwing, for tools that
+report rather than fail. Keys declared with `Expect()` are accepted at runtime, so a key that
+every scope registers no longer fails validation of the root.
+
+## 18. Opt-in: `Default`, `Replace` and strict mode
+
+Nothing changes unless you ask for it:
+
+- **`Default: true`** registers a framework default that yields to any other registration of the
+  key, made before or after it, and is never built unless it is used.
+- **`Replace: true`** states that a registration is meant to replace an earlier one.
+  Re-registering without it still replaces (last wins), and is reported to the `Diagnostics`
+  callback if you pass one.
+- **`new IoCContainer({ Strict: true })`**, or `IoCContainer.Create()`, turns accidental
+  overwrites, scoped services resolved outside a scope, and keys shared by a class and a token
+  into errors. See [keys and registrations](../concepts/keys-and-registrations.md).
 
 ## Moving off `Register`
 

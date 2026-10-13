@@ -52,6 +52,7 @@ Every code example in these docs is type-checked in CI. Import from `jsr:@fathym
 - [API Reference](https://raw.githubusercontent.com/fathym/ioc/main/docs/reference/api.md): Every public method, option and type of @fathym/ioc - signature, behavior, return value, errors and a runnable example for each.
 - [Error Catalog](https://raw.githubusercontent.com/fathym/ioc/main/docs/reference/errors.md): Every error message @fathym/ioc can produce, keyed by its exact text - what each part means, the likely causes, and the fix - plus the TypeScript errors you will meet.
 - [Glossary](https://raw.githubusercontent.com/fathym/ioc/main/docs/reference/glossary.md): The terms used throughout the @fathym/ioc docs, each defined in a sentence or two with a link to where it is explained.
+- [Cross-Version Protocol](https://raw.githubusercontent.com/fathym/ioc/main/docs/reference/protocol.md): The contract that lets several published versions of @fathym/ioc share registrations in one process - the markers, the frozen members, the registration record, ownership and error codes.
 - [Troubleshooting](https://raw.githubusercontent.com/fathym/ioc/main/docs/troubleshooting.md): Symptoms that don't throw an error - a factory running twice, an ignored override, a lazy service built early, disposal that didn't run - with their causes and fixes.
 
 ## Migration

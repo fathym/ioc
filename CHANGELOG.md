@@ -46,8 +46,25 @@ Recommended release: **0.1.0**. See [migrating from 0.0.x](./docs/migration/from
 - **`Decorate(key, (inner, ioc) => …)`** wraps a registration in place.
 - **Startup checks:** `Validate()` checks the declared dependency graph, and `Activate()` builds
   every singleton at startup.
-- **Error classes:** `IoCServiceNotFoundError`, `IoCCircularDependencyError`,
-  `IoCValidationError` and `IoCContainerDisposedError`.
+- **Error classes with stable codes:** `IoCServiceNotFoundError`, `IoCCircularDependencyError`,
+  `IoCValidationError`, `IoCContainerDisposedError`, `IoCRegistrationError`,
+  `IoCActivationError` and `IoCDisposeError` (both `AggregateError`s), and the strict-mode
+  `IoCScopeRequiredError`, `IoCDuplicateRegistrationError` and `IoCKeyCollisionError`. Every error
+  has a `code` (`IOC_…`); `isIoCError(err, code?)` checks it, across library copies too.
+- **Container options:** `new IoCContainer({ Strict, LazyByDefault, Diagnostics })`, and
+  `IoCContainer.Create()` for new code (`Strict` + `LazyByDefault`). Scopes inherit them.
+  Without options the container behaves as before.
+- **`Default: true`** registers a framework default that yields to any other registration of the
+  key, made before or after it (including registrations copied in with `CopyTo`), and is never
+  built unless used. **`Replace: true`** marks an intended override.
+- **Strict mode:** duplicate registrations, `scoped` services resolved outside a scope, and one
+  key used by both a class and a token throw. An unregistered class never resolves a different
+  class with the same name.
+- **A `Dispose` option** on `RegisterClass`, `RegisterFactory` and `RegisterValue` cleans up
+  resources that don't implement `Symbol.dispose` (`Dispose: (kv) => kv.close()`).
+- **`Names(key)`** lists the names a key is registered under, nearest scope first, without
+  building anything. **`Validate({ Throw: false })`** returns the issues instead of throwing.
+- **The cross-version protocol** is documented in `docs/reference/protocol.md`.
 - **`Register(symbol, factory)`.**
 - **Node.js and Bun support, checked in CI:** `deno task build:npm` builds an npm package (ESM +
   `.d.ts`), and `deno task test:runtimes` runs a smoke test on Node.js 20/22/24 and Bun and
@@ -71,6 +88,11 @@ Recommended release: **0.1.0**. See [migrating from 0.0.x](./docs/migration/from
   path. It is not `===` the container.
 - **Copied transient factories receive the `CopyTo` target.**
 - **The factory parameter is typed** in every `Register` form.
+- **Eager factories also receive a view,** so cycles they enter after an `await` are reported.
+- **`Expect()` is recorded at runtime,** so `Validate()` accepts keys each scope provides.
+- **String keys throw** `IOC_INVALID_KEY` with a hint, instead of a `TypeError`.
+- **Re-registering a key reports `IOC_REGISTRATION_REPLACED`** to the `Diagnostics` callback (it
+  still replaces).
 
 ### Fixed
 
@@ -84,7 +106,14 @@ Recommended release: **0.1.0**. See [migrating from 0.0.x](./docs/migration/from
 - A scoped registration's removal function no longer deletes a later re-registration.
 - Unknown or foreign symbols reject with `IoCServiceNotFoundError` instead of a `TypeError`.
   Resolving no longer adds empty entries to `services`.
-- Circular dependencies throw `IoCCircularDependencyError` instead of hanging.
+- Circular dependencies throw `IoCCircularDependencyError` instead of hanging, including cycles
+  entered from both ends at once (`Promise.all`, `Activate()`).
+- Each disposable instance is disposed exactly once, by the container that created it: decorators
+  returning the inner instance, alias factories and `CopyTo` no longer dispose twice, and a scope
+  never disposes its parent's singleton. Instances that finish building after `Dispose()` are
+  disposed instead of leaked.
+- Scopes of a disposed container throw `IoCContainerDisposedError`.
+- `Validate()` checks the constructors subclasses inherit.
 
 ## [0.0.36] and earlier
 

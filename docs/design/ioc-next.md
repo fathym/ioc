@@ -113,6 +113,12 @@ Frames reach nested resolves in two ways:
 Frames are marked settled once their factory finishes. A view a service keeps and uses later
 therefore never reports a false cycle.
 
+Two resolutions can enter one cycle from opposite ends at the same time (`Promise.all`,
+`Activate()`), so that each waits on the other's pending build. A pending holder records the frame
+building it (`building`) and the holders that build is waiting on (`waits`). Before a resolution
+waits on a pending holder that is not on its own path, it follows `waits` from that holder; if it
+reaches a holder this resolution is building, it throws instead of waiting.
+
 ### Same-named classes
 
 An overlay keyed by the exact constructor sits beside the name-based entries. When the name entry
@@ -144,6 +150,11 @@ Each container records the instances it created that implement `Symbol.asyncDisp
 `Dispose()` / `await using` disposes them in reverse order and collects errors into an
 `AggregateError`. Transients and `RegisterValue` values are never disposed. Disposing a container
 does not dispose its scopes, because the parent does not track them.
+
+Each instance has exactly one owner: the first container to create it, recorded in a `WeakMap`
+on `globalThis` that every copy of the library shares. An instance returned again by a decorator,
+an alias factory or a copied registration is never recorded twice, and an instance that finishes
+building after its owner was disposed is disposed on arrival.
 
 ### Typing
 
@@ -183,6 +194,13 @@ does not dispose its scopes, because the parent does not track them.
 | Check at compile time that `Deps` are registered?                 | **Yes, opt-in:** `Typed()` plus chained registrations; statements stay untyped.                              | TypeScript can't change a variable's type after a statement, so only a chain carries the registry. Opt-in keeps every existing call shape compiling.           |
 | Explicit registrations return a remover or the container?         | **The container** (typed), so they chain. Removal is `Unregister`. `Register` keeps its old return values.   | Chaining is what carries the registry type. The explicit methods are unreleased, so nothing depends on their old return value.                                 |
 | Put the token id in its type?                                     | **Optional:** `IoCToken<T, 'Id'>('Id')`.                                                                     | TypeScript can't infer one type argument while another is given, so `IoCToken<T>('Id')` keeps `string`; tokens of plain types need the id to stay distinct.    |
+| Detect cycles split across concurrent resolutions?                | **Yes:** a wait-for graph over pending holders, checked before waiting on another resolution's build.        | `Promise.all` and `Activate()` over a cycle hung forever. The check costs nothing unless a resolution waits on a build already in flight.                      |
+| Who disposes an instance two containers both saw?                 | **The first container that created it,** recorded in a registry on `globalThis`.                             | Decorators, aliases and `CopyTo` disposed shared instances twice, or a scope disposed its parent's singleton. A global registry works across library copies.   |
+| Make duplicate registrations an error?                            | **Only in strict mode.** Last-wins stays the default, reported to the optional `Diagnostics` callback.       | Dependents rely on "register the default, then override it". `Default: true` gives that pattern a name and makes it order-independent.                         |
+| How do framework defaults and user registrations meet?            | **`Default: true`** yields to any non-default registration, in any order, including across `CopyTo`.         | The surveyed frameworks registered defaults first and let `OnInit` overwrite them: order-dependent, and a plugin's `CopyTo` could clobber the host.            |
+| Accept string keys?                                               | **No:** they throw `IOC_INVALID_KEY` with a hint.                                                            | Strings collide across packages and were never valid; TypeScript already rejected them. Tokens and `Symbol(id)` cover every use.                               |
+| Stable error identity?                                            | **Codes** (`IOC_…`) on every error, checked with `isIoCError`.                                               | `instanceof` fails across library copies, and messages gain detail over time.                                                                                  |
+| Opinionated defaults for new code?                                | **`IoCContainer.Create()`** = `Strict` + `LazyByDefault`; `new IoCContainer()` is unchanged.                 | New projects get the safer behavior without breaking the 28 dependents.                                                                                        |
 
 ## Behavior changes (migration)
 
@@ -193,7 +211,13 @@ The changes most likely to be noticed:
 - **Function values are returned, not invoked.**
 - **Factories run during resolution receive a view of the container.** The view is an
   `IoCContainer`, but not `===` the container.
-- **New error classes.** They are `Error` subclasses and keep the same message prefix.
+- **New error classes.** They are `Error` subclasses and keep the same message prefix, and each
+  carries a stable `code`.
+- **Each instance is disposed once, by the container that created it.**
+- **String keys throw `IOC_INVALID_KEY`.**
+
+The cross-version contract these changes keep is written down in the
+[protocol reference](../reference/protocol.md).
 
 Recommended release: **0.1.0**. These are behavior fixes in a pre-1.0 package that 28 packages
 depend on.
@@ -225,7 +249,7 @@ depend on.
 - **A lockfile.** `lock: false` comes from the shared house template. Decide on a lockfile at the
   template level.
 - **Lazy by default.** Reconsider after the dependents adopt `Activate()` for fail-fast startup.
-- **`UPSTREAM.md`.** Add it when the release is pinned, per AGENTS.md.
+- **`UPSTREAM.md`.** Added; update its pins when the release is published.
 
 ## What's Next
 

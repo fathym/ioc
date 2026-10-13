@@ -1,0 +1,317 @@
+/**
+ * The stable code carried by every error the container throws. Match on the code rather than the
+ * message: messages are written for people and may gain detail, codes never change meaning.
+ */
+export type IoCErrorCode =
+  | 'IOC_SERVICE_NOT_FOUND'
+  | 'IOC_CONTAINER_DISPOSED'
+  | 'IOC_CIRCULAR_DEPENDENCY'
+  | 'IOC_VALIDATION_FAILED'
+  | 'IOC_ACTIVATION_FAILED'
+  | 'IOC_DISPOSE_FAILED'
+  | 'IOC_INVALID_REGISTRATION'
+  | 'IOC_INVALID_KEY'
+  | 'IOC_SCOPE_REQUIRED'
+  | 'IOC_DUPLICATE_REGISTRATION'
+  | 'IOC_KEY_COLLISION'
+  | 'IOC_START_FAILED'
+  | 'IOC_MODULE_CYCLE'
+  | 'IOC_RESOLVE_TIMEOUT'
+  | 'IOC_NOT_ISOLATABLE';
+
+/**
+ * True when `error` was thrown by the container (any version that uses codes), optionally with a
+ * specific code. It checks the `code` property rather than using `instanceof`, so errors from
+ * another copy of the library in the same process are recognized too.
+ *
+ * @example
+ * ```ts
+ * import { IoCContainer, IoCToken, isIoCError } from '@fathym/ioc';
+ *
+ * const ioc = new IoCContainer();
+ *
+ * try {
+ *   await ioc.Resolve(IoCToken<string>('Missing'));
+ * } catch (err) {
+ *   console.log(isIoCError(err, 'IOC_SERVICE_NOT_FOUND')); // true
+ * }
+ * ```
+ */
+export function isIoCError(
+  error: unknown,
+  code?: IoCErrorCode,
+): error is Error & { code: IoCErrorCode } {
+  const c = (error as { code?: unknown } | null)?.code;
+
+  if (typeof c !== 'string' || !c.startsWith('IOC_')) return false;
+
+  return code === undefined || c === code;
+}
+
+/** Base class of the container's errors. Every subclass has a stable {@link IoCErrorCode}. */
+export abstract class IoCError extends Error {
+  /** The stable error code. */
+  public abstract readonly code: IoCErrorCode;
+}
+
+/**
+ * Thrown when a service is resolved that has no registration for its symbol and name.
+ *
+ * The message keeps the historical prefix (`No Service for symbol '…' with name '…' has been
+ * registered.`) so existing `assertRejects(..., 'No Service for symbol')` checks keep working,
+ * and appends the registered names and the resolution path when they are known.
+ */
+export class IoCServiceNotFoundError extends IoCError {
+  /** The error name, for logs and `instanceof`-free checks. */
+  public override name = 'IoCServiceNotFoundError';
+
+  /** The stable error code. */
+  public readonly code = 'IOC_SERVICE_NOT_FOUND' as const;
+
+  /**
+   * Creates the error and its message from the requested symbol and name.
+   *
+   * @param Symbol The symbol that was requested.
+   * @param ServiceName The registration name that was requested (`$default` when unnamed).
+   * @param RegisteredNames The names registered for the symbol, if any.
+   * @param Path The resolution path that led to this request, outermost first.
+   * @param Hint An extra sentence appended to the message, when the container knows more.
+   */
+  constructor(
+    public readonly Symbol: symbol,
+    public readonly ServiceName: string,
+    public readonly RegisteredNames: string[] = [],
+    public readonly Path: string[] = [],
+    Hint?: string,
+  ) {
+    let message =
+      `No Service for symbol '${Symbol.description}' with name '${ServiceName}' has been registered.`;
+
+    if (RegisteredNames.length) {
+      message += ` Registered names: [${RegisteredNames.join(', ')}].`;
+    }
+
+    if (Path.length) {
+      message += ` Resolution path: ${Path.join(' -> ')}.`;
+    }
+
+    if (Hint) message += ` ${Hint}`;
+
+    super(message);
+  }
+}
+
+/** Thrown when a container (or scope) is used after it, or one of its parents, was disposed. */
+export class IoCContainerDisposedError extends IoCError {
+  /** The error name, for logs and `instanceof`-free checks. */
+  public override name = 'IoCContainerDisposedError';
+
+  /** The stable error code. */
+  public readonly code = 'IOC_CONTAINER_DISPOSED' as const;
+
+  /** Creates the error. */
+  constructor() {
+    super('The IoC container has been disposed.');
+  }
+}
+
+/** One problem found by `Validate()`. */
+export interface IoCValidationIssue {
+  /** What kind of problem it is. */
+  Kind: 'missing' | 'cycle' | 'captive' | 'arguments';
+
+  /** The service the problem belongs to. */
+  Service: string;
+
+  /** A readable description of the problem. */
+  Message: string;
+}
+
+/** Thrown by `Validate()`, listing every problem found in the registrations. */
+export class IoCValidationError extends IoCError {
+  /** The error name, for logs and `instanceof`-free checks. */
+  public override name = 'IoCValidationError';
+
+  /** The stable error code. */
+  public readonly code = 'IOC_VALIDATION_FAILED' as const;
+
+  /** One readable line per problem (the same text as each issue's `Message`). */
+  public readonly Problems: string[];
+
+  /** The problems found, with their kind and service. */
+  public readonly Issues: IoCValidationIssue[];
+
+  /**
+   * Creates the error with one message line per problem.
+   *
+   * @param issues The problems found, or just their readable lines.
+   */
+  constructor(issues: (IoCValidationIssue | string)[]) {
+    const normalized = issues.map((i): IoCValidationIssue =>
+      typeof i === 'string' ? { Kind: 'missing', Service: '', Message: i } : i
+    );
+
+    const lines = normalized.map((i) => i.Message);
+
+    super(`IoC validation failed:\n${lines.map((p) => `  - ${p}`).join('\n')}`);
+
+    this.Problems = lines;
+    this.Issues = normalized;
+  }
+}
+
+/**
+ * Thrown when resolving a service would require the service itself, directly or through other
+ * services (`A -> B -> A`), including when two resolutions running at the same time wait on each
+ * other. Without this check such a graph would wait on itself forever.
+ */
+export class IoCCircularDependencyError extends IoCError {
+  /** The error name, for logs and `instanceof`-free checks. */
+  public override name = 'IoCCircularDependencyError';
+
+  /** The stable error code. */
+  public readonly code = 'IOC_CIRCULAR_DEPENDENCY' as const;
+
+  /**
+   * Creates the error from the cycle's path.
+   *
+   * @param Path The cycle, outermost first, ending with the repeated service.
+   */
+  constructor(public readonly Path: string[]) {
+    super(`Circular dependency detected: ${Path.join(' -> ')}.`);
+  }
+}
+
+/**
+ * Thrown when a registration call is invalid: a missing key, a factory that isn't a function, a
+ * value passed where a class is expected, or a key that isn't a token, symbol or class.
+ */
+export class IoCRegistrationError extends IoCError {
+  /** The error name, for logs and `instanceof`-free checks. */
+  public override name = 'IoCRegistrationError';
+
+  /**
+   * Creates the error.
+   *
+   * @param message The readable message.
+   * @param code `IOC_INVALID_REGISTRATION`, or `IOC_INVALID_KEY` for a key of the wrong kind.
+   */
+  constructor(
+    message: string,
+    public readonly code: 'IOC_INVALID_REGISTRATION' | 'IOC_INVALID_KEY' =
+      'IOC_INVALID_REGISTRATION',
+  ) {
+    super(message);
+  }
+}
+
+/**
+ * Thrown in strict mode when a `scoped` service is resolved outside a scope (from the root
+ * container), or outside a scope of the level it requires.
+ */
+export class IoCScopeRequiredError extends IoCError {
+  /** The error name, for logs and `instanceof`-free checks. */
+  public override name = 'IoCScopeRequiredError';
+
+  /** The stable error code. */
+  public readonly code = 'IOC_SCOPE_REQUIRED' as const;
+
+  /**
+   * Creates the error.
+   *
+   * @param Service The scoped service that was resolved.
+   * @param Level The scope level it requires, if any.
+   */
+  constructor(public readonly Service: string, public readonly Level?: string) {
+    super(
+      `Scoped service ${Service} was resolved outside a scope${
+        Level ? ` of level '${Level}'` : ''
+      }; resolve it from a scope created with CreateScope().`,
+    );
+  }
+}
+
+/**
+ * Thrown in strict mode when a key and name that already have a registration are registered
+ * again without `Replace: true` (or `Default: true`).
+ */
+export class IoCDuplicateRegistrationError extends IoCError {
+  /** The error name, for logs and `instanceof`-free checks. */
+  public override name = 'IoCDuplicateRegistrationError';
+
+  /** The stable error code. */
+  public readonly code = 'IOC_DUPLICATE_REGISTRATION' as const;
+
+  /**
+   * Creates the error.
+   *
+   * @param Service The registration that already exists.
+   */
+  constructor(public readonly Service: string) {
+    super(
+      `${Service} is already registered; pass Replace: true to override it, or Default: true ` +
+        `to register a default that yields to other registrations.`,
+    );
+  }
+}
+
+/**
+ * Thrown in strict mode when a token (or symbol) and a class end up on the same key, so one would
+ * silently resolve as the other.
+ */
+export class IoCKeyCollisionError extends IoCError {
+  /** The error name, for logs and `instanceof`-free checks. */
+  public override name = 'IoCKeyCollisionError';
+
+  /** The stable error code. */
+  public readonly code = 'IOC_KEY_COLLISION' as const;
+
+  /**
+   * Creates the error.
+   *
+   * @param Key The shared key.
+   */
+  constructor(public readonly Key: string) {
+    super(
+      `The key '${Key}' is used by both a class and a token; give the token a distinct, ` +
+        `namespaced id.`,
+    );
+  }
+}
+
+/** Thrown by `Activate()`, wrapping every failure. It is an `AggregateError` too. */
+export class IoCActivationError extends AggregateError {
+  /** The error name, for logs and `instanceof`-free checks. */
+  public override name = 'IoCActivationError';
+
+  /** The stable error code. */
+  public readonly code = 'IOC_ACTIVATION_FAILED' as const;
+
+  /**
+   * Creates the error.
+   *
+   * @param errors The failures, in the order of `Services`.
+   * @param Services The labels of the services that failed.
+   */
+  constructor(errors: unknown[], public readonly Services: string[]) {
+    super(errors, `IoC activation failed for: ${Services.join(', ')}.`);
+  }
+}
+
+/** Thrown by `Dispose()`, wrapping every error raised while disposing. It is an `AggregateError` too. */
+export class IoCDisposeError extends AggregateError {
+  /** The error name, for logs and `instanceof`-free checks. */
+  public override name = 'IoCDisposeError';
+
+  /** The stable error code. */
+  public readonly code = 'IOC_DISPOSE_FAILED' as const;
+
+  /**
+   * Creates the error.
+   *
+   * @param errors The errors raised while disposing.
+   */
+  constructor(errors: unknown[]) {
+    super(errors, 'Errors occurred while disposing the IoC container.');
+  }
+}
