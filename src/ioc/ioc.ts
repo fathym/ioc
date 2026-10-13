@@ -1,8 +1,10 @@
 import { IoCCircularDependencyError, IoCServiceNotFoundError } from './errors.ts';
 import {
+  type AnyFunction,
   createLegacyThunk,
   createThunk,
   createView,
+  currentFrame,
   framePath,
   IOC_CONTEXT,
   IOC_PROTOCOL,
@@ -17,6 +19,7 @@ import {
   labelFor,
   registrationOf,
   settleInto,
+  withFrame,
 } from './internals.ts';
 
 /** Any constructed service value. */
@@ -89,7 +92,7 @@ export class IoCContainer {
    * resolve each other's instances. The name-based bank in `services` stays authoritative for
    * symbol lookups and for classes the container has not seen.
    */
-  protected readonly byCtor: Map<Function, Map<string, unknown>>;
+  protected readonly byCtor: Map<AnyFunction, Map<string, unknown>>;
 
   constructor() {
     this.services = new Map<symbol, Map<string, IoCServiceResolutions>>();
@@ -160,7 +163,7 @@ export class IoCContainer {
     ctorSymbol: IoCServiceConstructor<T> | symbol,
     name?: string,
   ): Promise<T> {
-    const frame = (this as Indexable)[IOC_CONTEXT] as IoCResolveFrame | undefined;
+    const frame = this.frame();
 
     const entry = this.lookup(ctorSymbol, name ?? DEFAULT_NAME, frame);
 
@@ -175,27 +178,30 @@ export class IoCContainer {
     ctorSymbol: IoCServiceConstructor<T> | symbol,
     name?: string,
   ): IoCServiceResolutions {
-    const frame = (this as Indexable)[IOC_CONTEXT] as IoCResolveFrame | undefined;
+    const frame = this.frame();
 
     return this.lookup(ctorSymbol, name ?? DEFAULT_NAME, frame) as IoCServiceResolutions;
   }
 
-  /**
-   * Registers `clazz` as a scoped service; returns a function that removes the registration.
-   */
-  public Register<T>(
-    clazz: IoCServiceConstructor<T>,
-    options: IoCServiceOptions & { Lifetime: 'scoped' },
-  ): () => void;
+  // Overload order matters for typing the factory parameter (`(ioc) => …`): the class + factory
+  // forms come first, and the class-only and factory-only forms share one union signature,
+  // because TypeScript does not contextually type a callback across separate overloads.
 
   /**
-   * Registers a scoped factory (`options.Type` is required); returns a function that removes the
-   * registration.
+   * Registers a scoped factory under `type`; returns a function that removes the registration.
    */
   public Register<T>(
+    type: symbol,
     instance: IoCServiceResolver<T>,
-    options: IoCServiceOptions & { Lifetime: 'scoped' },
+    options: Omit<IoCServiceOptions, 'Type'> & { Lifetime: 'scoped' },
   ): () => void;
+
+  /** Registers a factory under `type` (same as passing `{ Type: type }`). */
+  public Register<T>(
+    type: symbol,
+    instance: IoCServiceResolver<T>,
+    options?: Omit<IoCServiceOptions, 'Type'>,
+  ): void | (() => void);
 
   /**
    * Registers `clazz` as a scoped service created by `instance`; returns a function that removes
@@ -207,18 +213,6 @@ export class IoCContainer {
     options: IoCServiceOptions & { Lifetime: 'scoped' },
   ): () => void;
 
-  /** Registers a class, keyed by the class (or `options.Type`). */
-  public Register<T>(
-    clazz: IoCServiceConstructor<T>,
-    options?: IoCServiceOptions,
-  ): void | (() => void);
-
-  /** Registers a factory; `options.Type` is required. */
-  public Register<T>(
-    instance: IoCServiceResolver<T>,
-    options?: IoCServiceOptions,
-  ): void | (() => void);
-
   /** Registers a factory keyed by `clazz` (or `options.Type`). */
   public Register<T>(
     clazz: IoCServiceConstructor<T>,
@@ -226,16 +220,41 @@ export class IoCContainer {
     options?: IoCServiceOptions,
   ): void | (() => void);
 
+  /**
+   * Registers a scoped class, or a scoped factory (`options.Type` is required for factories);
+   * returns a function that removes the registration.
+   */
   public Register<T>(
     clazzInstance: IoCServiceConstructor<T> | IoCServiceResolver<T>,
+    options: IoCServiceOptions & { Lifetime: 'scoped' },
+  ): () => void;
+
+  /**
+   * Registers a class (keyed by the class, or `options.Type`), or a factory (`options.Type` is
+   * required).
+   */
+  public Register<T>(
+    clazzInstance: IoCServiceConstructor<T> | IoCServiceResolver<T>,
+    options?: IoCServiceOptions,
+  ): void | (() => void);
+
+  public Register<T>(
+    clazzInstance: IoCServiceConstructor<T> | IoCServiceResolver<T> | symbol,
     instanceOptions?: IoCServiceResolver<T> | IoCServiceOptions,
     options?: IoCServiceOptions,
   ): void | (() => void) {
-    let clazz: Function | undefined;
+    let clazz: AnyFunction | undefined;
     let factory: (ioc: IoCContainer) => unknown;
     let opts: IoCServiceOptions;
 
-    if (isClassLike(clazzInstance)) {
+    if (typeof clazzInstance === 'symbol') {
+      if (typeof instanceOptions !== 'function') {
+        throw new Error(`A factory is required when registering by symbol.`);
+      }
+
+      factory = instanceOptions as IoCServiceResolver<T>;
+      opts = { ...options, Type: clazzInstance };
+    } else if (isClassLike(clazzInstance)) {
       clazz = clazzInstance;
 
       if (typeof instanceOptions === 'function') {
@@ -309,6 +328,11 @@ export class IoCContainer {
 
   //#region Internals
 
+  /** The resolution frame a call continues: the view's frame, else the running factory's. */
+  protected frame(): IoCResolveFrame | undefined {
+    return (this as Indexable)[IOC_CONTEXT] ?? currentFrame();
+  }
+
   /** The real container behind a context view (or this container). */
   protected self(): IoCContainer {
     return (this as Indexable)[IOC_SELF] ?? this;
@@ -326,7 +350,7 @@ export class IoCContainer {
     return bank;
   }
 
-  protected trackCtor(ctor: Function, name: string, entry: unknown): void {
+  protected trackCtor(ctor: AnyFunction, name: string, entry: unknown): void {
     let entries = this.byCtor.get(ctor);
 
     if (!entries) {
@@ -337,7 +361,7 @@ export class IoCContainer {
     entries.set(name, entry);
   }
 
-  protected untrackCtor(ctor: Function, name: string, entry: unknown): void {
+  protected untrackCtor(ctor: AnyFunction, name: string, entry: unknown): void {
     const entries = this.byCtor.get(ctor);
 
     if (entries && entries.get(name) === entry) {
@@ -349,7 +373,7 @@ export class IoCContainer {
 
   /** Finds the stored entry for a key, never mutating the container. */
   protected lookup(
-    key: Function | symbol,
+    key: AnyFunction | symbol,
     name: string,
     frame: IoCResolveFrame | undefined,
   ): unknown {
@@ -405,7 +429,7 @@ export class IoCContainer {
     name: string;
     lifetime: IoCLifetime;
     kind: 'class' | 'factory' | 'value';
-    ctor?: Function;
+    ctor?: AnyFunction;
     factory: (ioc: IoCContainer) => unknown;
     lazy: boolean;
   }): void | (() => void) {
@@ -417,13 +441,25 @@ export class IoCContainer {
 
     const label = labelFor(symbol, name);
 
-    const run = (container: object, parent: IoCResolveFrame | undefined, key: object) => {
+    /**
+     * Invokes the factory as one frame of a resolution chain. Factories normally receive a view
+     * of `container` that carries the chain; the registration-time eager run passes the real
+     * container (as before) and relies on the synchronous current frame only.
+     */
+    const run = (
+      container: object,
+      parent: IoCResolveFrame | undefined,
+      key: object,
+      view = true,
+    ) => {
       const frame: IoCResolveFrame = { key, label, parent, settled: false };
 
       let result: unknown;
 
       try {
-        result = factory(createView(container, frame) as IoCContainer);
+        const arg = (view ? createView(container, frame) : container) as IoCContainer;
+
+        result = withFrame(frame, () => factory(arg));
       } catch (err) {
         frame.settled = true;
         throw err;
@@ -467,12 +503,6 @@ export class IoCContainer {
             throw new IoCCircularDependencyError([...framePath(frame), label]);
           }
 
-          // A caller should not inherit the failure of the attempt made at registration time
-          // (typically a dependency registered later); retry once on its behalf.
-          if (holder.eager) {
-            return holder.promise.catch(() => reg.resolveIn(container, frame));
-          }
-
           return holder.promise;
         }
 
@@ -496,22 +526,21 @@ export class IoCContainer {
 
     if (holder && !spec.lazy) {
       // Eager: build now against the real container (as before). A synchronous throw propagates
-      // and leaves any previous registration in place; an async rejection resets the holder so
-      // the next Resolve retries (for example once a dependency has been registered).
+      // and leaves any previous registration in place. An async rejection never becomes an
+      // unhandled rejection; it resets the holder so a Resolve made after it settled retries
+      // (for example once a missing dependency has been registered).
       holder.state = 'pending';
 
       let result: unknown;
 
       try {
-        result = factory(self);
+        result = run(self, undefined, holder, false);
       } catch (err) {
         holder.state = 'empty';
         throw err;
       }
 
       settleInto(holder, result);
-
-      holder.eager = holder.state === 'pending';
     }
 
     self.RegisterDirect(symbol, name, thunk as unknown as IoCServiceConstructed);

@@ -1,2 +1,14 @@
 import './ioc/bench.ts';
 import './ioc/characterization.tests.ts';
+import './ioc/register.tests.ts';
+import './ioc/resolve.tests.ts';
+import './ioc/lazy.tests.ts';
+import './ioc/eager-retry.tests.ts';
+import './ioc/cycles.tests.ts';
+import './ioc/scoped.tests.ts';
+import './ioc/collisions.tests.ts';
+import './ioc/copyto.tests.ts';
+import './ioc/interop.tests.ts';
+import './ioc/consumer-patterns.tests.ts';
+import './ioc/matrix.tests.ts';
+import './ioc/model.tests.ts';

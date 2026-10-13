@@ -19,6 +19,10 @@ export const IOC_SELF = Symbol.for('@fathym/ioc/self');
 
 export const IOC_PROTOCOL_VERSION = 1;
 
+/** Any function or class; used for constructor identity, where nothing else is assumed. */
+// deno-lint-ignore ban-types
+export type AnyFunction = Function;
+
 export type IoCLifetime = 'singleton' | 'transient' | 'scoped';
 
 /** Shared, memoized state of a singleton (or of one scope's scoped instance). */
@@ -26,8 +30,6 @@ export interface IoCHolder {
   state: 'empty' | 'pending' | 'ready';
   value?: unknown;
   promise?: Promise<unknown>;
-  /** The pending attempt was started at registration time, not by a caller. */
-  eager?: boolean;
 }
 
 /** One step of a resolution chain; frames link back to the request that caused them. */
@@ -51,7 +53,7 @@ export interface IoCRegistration {
   readonly lifetime: IoCLifetime;
   readonly kind: 'class' | 'factory' | 'value';
   /** The exact constructor, when the registration is keyed by its own class. */
-  readonly ctor?: Function;
+  readonly ctor?: AnyFunction;
   /** The container that created the registration; singleton factories always run against it. */
   readonly owner: object;
   readonly holder?: IoCHolder;
@@ -63,6 +65,30 @@ export interface IoCRegistration {
 type Indexable = any;
 
 export function noop(): void {}
+
+let activeFrame: IoCResolveFrame | undefined;
+
+/**
+ * The frame of the factory whose synchronous body is running right now. Lets `Resolve` calls
+ * made through a closure-captured container (instead of the factory parameter) join the
+ * resolution chain, as long as they happen before the factory's first `await`.
+ */
+export function currentFrame(): IoCResolveFrame | undefined {
+  return activeFrame;
+}
+
+/** Runs `fn` with `frame` as the current frame for its synchronous portion. */
+export function withFrame<T>(frame: IoCResolveFrame, fn: () => T): T {
+  const previous = activeFrame;
+
+  activeFrame = frame;
+
+  try {
+    return fn();
+  } finally {
+    activeFrame = previous;
+  }
+}
 
 /** The registration behind a stored entry, if the entry is a protocol thunk. */
 export function registrationOf(entry: unknown): IoCRegistration | undefined {
@@ -98,7 +124,7 @@ export function createLegacyThunk(reg: IoCRegistration, target: object): () => u
 }
 
 /** True when `fn` should be constructed with `new` rather than called as a factory. */
-export function isClassLike(fn: unknown): fn is Function {
+export function isClassLike(fn: unknown): fn is AnyFunction {
   if (typeof fn !== 'function') return false;
 
   // Arrow functions, async functions, methods and bound functions have no own prototype.
@@ -175,7 +201,6 @@ export function settleInto(holder: IoCHolder, result: unknown): unknown {
       (err) => {
         holder.state = 'empty';
         holder.promise = undefined;
-        holder.eager = false;
 
         throw err;
       },
