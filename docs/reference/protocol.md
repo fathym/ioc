@@ -81,22 +81,23 @@ A stored entry is one of:
 
 ## The registration record (v1)
 
-| Field        | Type                                     | Meaning                                                                   |
-| ------------ | ---------------------------------------- | ------------------------------------------------------------------------- |
-| `v`          | `1`                                      | The record version                                                        |
-| `symbol`     | `symbol`                                 | The key's symbol                                                          |
-| `name`       | `string`                                 | The registration name (`'$default'` when unnamed)                         |
-| `lifetime`   | `'singleton' \| 'transient' \| 'scoped'` | The lifetime                                                              |
-| `kind`       | `'class' \| 'factory' \| 'value'`        | How it was registered                                                     |
-| `ctor`       | `Function?`                              | The exact class, when the registration is keyed by its own class          |
-| `owner`      | `object`                                 | The container that created it; singletons always build against it         |
-| `holder`     | `IoCHolder?`                             | The memoized state of a singleton                                         |
-| `label`      | `string`                                 | The name used in error messages                                           |
-| `deps`       | `{ key, name }[]?`                       | Declared dependencies, read by `Validate()`                               |
-| `default`    | `boolean?`                               | A framework default: it yields to any registration that isn't a default   |
-| `scopeLevel` | `string?`                                | For `scoped`: the level of the scope the instance lives in (`ScopeLevel`) |
-| `fork`       | `(owner) => thunk`?                      | Creates an unstored copy owned by `owner`, for `Isolate()`                |
-| `resolveIn`  | `(container, frame?) => unknown`         | Produces the value, running the creating version's own logic              |
+| Field        | Type                                     | Meaning                                                                                     |
+| ------------ | ---------------------------------------- | ------------------------------------------------------------------------------------------- |
+| `v`          | `1`                                      | The record version                                                                          |
+| `symbol`     | `symbol`                                 | The key's symbol                                                                            |
+| `name`       | `string`                                 | The registration name (`'$default'` when unnamed)                                           |
+| `lifetime`   | `'singleton' \| 'transient' \| 'scoped'` | The lifetime                                                                                |
+| `kind`       | `'class' \| 'factory' \| 'value'`        | How it was registered                                                                       |
+| `ctor`       | `Function?`                              | The exact class, when the registration is keyed by its own class                            |
+| `owner`      | `object`                                 | The container that created it; singletons always build against it                           |
+| `holder`     | `IoCHolder?`                             | The memoized state of a singleton                                                           |
+| `label`      | `string`                                 | The name used in error messages                                                             |
+| `deps`       | `{ key, name }[]?`                       | Declared dependencies, read by `Validate()`; a dependency may carry `mode: 'lazy' \| 'all'` |
+| `default`    | `boolean?`                               | A framework default: it yields to any registration that isn't a default                     |
+| `scopeLevel` | `string?`                                | For `scoped`: the level of the scope the instance lives in (`ScopeLevel`)                   |
+| `fork`       | `(owner) => thunk`?                      | Creates an unstored copy owned by `owner`, for `Isolate()`                                  |
+| `observed`   | `Map<label, { key, name }>`?             | What the factory resolved while building (filled by the creating version)                   |
+| `resolveIn`  | `(container, frame?) => unknown`         | Produces the value, running the creating version's own logic                                |
 
 Fields marked `?` were added within v1 and are optional: a reader must treat a missing field as
 "not set".

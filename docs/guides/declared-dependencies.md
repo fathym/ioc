@@ -284,8 +284,72 @@ Dependencies are resolved **from the container or scope resolving the class**:
 Call it once after registering everything, and in a test, so mistakes fail CI. See
 [organizing registrations](./organizing-registrations.md).
 
-> **Note:** Factories are opaque, so dependencies resolved inside them are not checked by
-> `Validate()`. `Activate()` covers them by actually building every singleton.
+> **Note:** Dependencies a factory resolves _inside_ its body are not checked by `Validate()`;
+> `Activate()` covers them by actually building every singleton. Give factories `Deps` to have
+> them checked too (below).
+
+## Factories with `Deps`
+
+`RegisterFactory` takes `Deps` as well. The services are resolved and passed after the
+container, each parameter typed from its key, and `Validate()` sees them:
+
+```ts
+import { IoCContainer, IoCToken } from '@fathym/ioc';
+
+interface Pool {
+  url: string;
+}
+
+const $Url = IoCToken<string, 'Url'>('Url');
+const $Pool = IoCToken<Pool, 'Pool'>('Pool');
+
+const ioc = new IoCContainer()
+  .Typed()
+  .RegisterValue($Url, 'postgres://localhost')
+  .RegisterFactory($Pool, (_ioc, url) => ({ url }), { Deps: [$Url] }); // url: string
+
+ioc.Validate();
+
+console.log((await ioc.Resolve($Pool)).url);
+```
+
+## Lazy and all-of dependencies
+
+Two helpers inject something other than the service itself:
+
+- **`IoCLazy(key)`** injects `() => Promise<T>`, which resolves the service when called. Use it
+  for services needed only sometimes, and to break a cycle between two services that need each
+  other only after construction.
+- **`IoCAll(key)`** injects `T[]`: every registration of the key, by name. Use it for plugin lists
+  and resolver chains.
+
+```ts
+import { IoCAll, IoCContainer, IoCLazy, IoCToken } from '@fathym/ioc';
+
+interface Handler {
+  handles(path: string): boolean;
+}
+
+const $Handler = IoCToken<Handler, 'Handler'>('Handler');
+
+class Router {
+  constructor(public handlers: Handler[]) {}
+}
+
+class Audit {
+  constructor(public router: () => Promise<Router>) {}
+}
+
+const ioc = new IoCContainer()
+  .RegisterValue($Handler, { handles: (p) => p.startsWith('/api') }, { Name: 'api' })
+  .RegisterValue($Handler, { handles: () => true }, { Name: 'fallback' })
+  .RegisterClass(Router, { Deps: [IoCAll($Handler)] })
+  .RegisterClass(Audit, { Deps: [IoCLazy(Router)] });
+
+const audit = await ioc.Resolve(Audit);
+
+console.log((await audit.router()).handlers.length); // 2
+```
 
 ## Limits
 

@@ -88,6 +88,56 @@ for (const plugin of await ioc.ResolveAll($Plugin)) {
 }
 ```
 
+### By name: `ResolveNamed`
+
+When plugins are looked up by name (a profile registry, an exporter per format), resolve them
+into a `Map`:
+
+```ts
+import { IoCContainer, IoCToken } from '@fathym/ioc';
+
+const $Exporter = IoCToken<(data: string) => string, 'Exporter'>('Exporter');
+
+const ioc = new IoCContainer()
+  .RegisterValue($Exporter, (d) => `csv:${d}`, { Name: 'csv' })
+  .RegisterValue($Exporter, (d) => `json:${d}`, { Name: 'json' });
+
+const exporters = await ioc.ResolveNamed($Exporter);
+
+console.log(exporters.get('json')?.('x')); // json:x
+```
+
+`Names($Exporter)` lists the names without building anything.
+
+### Injected: `IoCAll`
+
+To give a service every plugin, inject them with `IoCAll` instead of resolving inside it:
+
+```ts
+import { IoCAll, IoCContainer, IoCToken } from '@fathym/ioc';
+
+interface Plugin {
+  start(): string;
+}
+
+const $Plugin = IoCToken<Plugin, 'StartPlugin'>('StartPlugin');
+
+class Host {
+  constructor(public plugins: Plugin[]) {}
+
+  start() {
+    return this.plugins.map((p) => p.start());
+  }
+}
+
+const ioc = new IoCContainer()
+  .RegisterValue($Plugin, { start: () => 'metrics' }, { Name: 'metrics' })
+  .RegisterValue($Plugin, { start: () => 'audit' }, { Name: 'audit' })
+  .RegisterClass(Host, { Deps: [IoCAll($Plugin)], Lifetime: 'transient' });
+
+console.log((await ioc.Resolve(Host)).start()); // [ "metrics", "audit" ]
+```
+
 ## In scopes
 
 `ResolveAll` on a scope merges the scope's registrations with its parents'. When a name exists at

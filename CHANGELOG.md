@@ -75,6 +75,14 @@ Recommended release: **0.1.0**. See [migrating from 0.0.x](./docs/migration/from
   instance lives in the nearest scope of that level (one per tenant, shared by its requests).
 - **`scope.Isolate(...keys)`** gives a scope its own instances of a parent's registrations (same
   recipe, decorators included), for sub-units that must not share state.
+- **`ResolveNamed(key)`** (a `Map` of name to service) and **`ResolveRecord({ … })`** (a typed
+  bag of services, resolved concurrently).
+- **`IoCLazy(key)`** and **`IoCAll(key)`** inject a resolver function or every registration, in
+  `Deps` and `ResolveRecord`; lazy dependencies don't count as cycles in `Validate()`.
+- **Factory `Deps`:** `RegisterFactory(key, (ioc, a, b) => …, { Deps: [$A, $B] })` passes typed
+  dependencies and lets `Validate()` see them.
+- **Observed dependencies:** what each factory resolves while building is recorded, for
+  introspection.
 - **`Register(symbol, factory)`.**
 - **Node.js and Bun support, checked in CI:** `deno task build:npm` builds an npm package (ESM +
   `.d.ts`), and `deno task test:runtimes` runs a smoke test on Node.js 20/22/24 and Bun and

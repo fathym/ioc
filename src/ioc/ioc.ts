@@ -44,6 +44,7 @@ import {
   waitPath,
   withFrame,
 } from './internals.ts';
+import type { IoCDependencyValue, IoCDependencyValues, IoCDerivedDependency } from './IoCDeps.ts';
 import type { IoCModule } from './IoCModule.ts';
 import type { IoCToken } from './IoCToken.ts';
 
@@ -182,8 +183,21 @@ export type IoCAllowedKeys<TKeys> = 0 extends (1 & TKeys) ? unknown : TKeys;
  */
 // deno-lint-ignore no-explicit-any
 export type IoCDependenciesFor<P extends readonly unknown[], TKeys = any> = {
-  readonly [K in keyof P]: IoCDependency<P[K]> & IoCAllowedKeys<TKeys>;
+  readonly [K in keyof P]:
+    | (IoCDependency<P[K]> & IoCAllowedKeys<TKeys>)
+    | IoCDerivedDependency<P[K]>;
 };
+
+/**
+ * A dependency a factory may declare in `Deps`: on a typed container, a key registered so far;
+ * or a derived dependency (`IoCLazy`, `IoCAll`).
+ */
+// deno-lint-ignore no-explicit-any
+export type IoCFactoryDependency<TKeys = any> =
+  // deno-lint-ignore no-explicit-any
+  | (IoCDependency<any> & IoCAllowedKeys<TKeys>)
+  // deno-lint-ignore no-explicit-any
+  | IoCDerivedDependency<any>;
 
 /**
  * What a registration adds to a typed container's registry: the key itself for the default name,
@@ -297,11 +311,39 @@ function keySymbol(key: AnyFunction | symbol): symbol {
 }
 
 function normalizeDependency(dep: unknown): IoCDependencyRecord {
+  const mode = (dep as Indexable)?.['@fathym/ioc/derived'] as IoCDependencyRecord['mode'];
+
+  if (mode) return { ...normalizeDependency((dep as Indexable).Dependency), mode };
+
   if (Array.isArray(dep)) {
     return { key: dep[0] as AnyFunction | symbol, name: (dep[1] as string) || DEFAULT_NAME };
   }
 
   return { key: dep as AnyFunction | symbol, name: DEFAULT_NAME };
+}
+
+/** Records that the factory running in `frame` resolved `key` + `name` (see `observed`). */
+function observe(
+  frame: IoCResolveFrame | undefined,
+  key: AnyFunction | symbol,
+  name: string,
+): void {
+  const observed = frame && !frame.settled ? frame.reg?.observed : undefined;
+
+  if (!observed) return;
+
+  const label = labelFor(keySymbol(key), name);
+
+  if (!observed.has(label)) observed.set(label, { key, name });
+}
+
+/** Produces what a dependency injects: the service, a resolver function, or every registration. */
+function resolveDependency(ioc: IoCContainer, dep: IoCDependencyRecord): unknown {
+  if (dep.mode === 'lazy') return () => ioc.Resolve(dep.key as symbol, dep.name);
+
+  if (dep.mode === 'all') return ioc.ResolveAll(dep.key as symbol);
+
+  return ioc.Resolve(dep.key as symbol, dep.name);
 }
 
 function dependencyLabel(dep: IoCDependencyRecord): string {
@@ -578,6 +620,8 @@ export class IoCContainer<TKeys = any> {
 
     const entry = this.lookup(ctorSymbol, name ?? DEFAULT_NAME, frame);
 
+    observe(frame, ctorSymbol, name ?? DEFAULT_NAME);
+
     return (await this.realize(entry, frame)) as T;
   }
 
@@ -591,6 +635,8 @@ export class IoCContainer<TKeys = any> {
     this.assertNotDisposed();
 
     const found = this.find(key, name ?? DEFAULT_NAME);
+
+    if (found) observe(frame, key, name ?? DEFAULT_NAME);
 
     return found ? (await this.realize(found.entry, frame)) as T : undefined;
   }
@@ -612,6 +658,77 @@ export class IoCContainer<TKeys = any> {
 
     // Resolve through `this` so a factory parameter view keeps its resolution chain.
     return await Promise.all(names.map((name) => this.Resolve(key as symbol, name) as Promise<T>));
+  }
+
+  /**
+   * Resolves every registration of a key into a `Map` from name to service (`$default`
+   * included), nearest scope first. The container-backed replacement for hand-built
+   * string-keyed registries.
+   *
+   * @example
+   * ```ts
+   * import { IoCContainer, IoCToken } from '@fathym/ioc';
+   *
+   * interface Profile {
+   *   model: string;
+   * }
+   *
+   * const $Profile = IoCToken<Profile, 'Profile'>('Profile');
+   *
+   * const ioc = new IoCContainer()
+   *   .RegisterValue($Profile, { model: 'small' }, { Name: 'fast' })
+   *   .RegisterValue($Profile, { model: 'large' }, { Name: 'smart' });
+   *
+   * const profiles = await ioc.ResolveNamed($Profile);
+   *
+   * console.log(profiles.get('smart')?.model); // large
+   * ```
+   */
+  public async ResolveNamed<T>(key: IoCServiceKey<T> | symbol): Promise<Map<string, T>> {
+    const names = this.Names(key);
+
+    // Resolve through `this` so a factory parameter view keeps its resolution chain.
+    const values = await Promise.all(
+      names.map((name) => this.Resolve(key as symbol, name) as Promise<T>),
+    );
+
+    return new Map(names.map((name, i) => [name, values[i]]));
+  }
+
+  /**
+   * Resolves several services at once into an object with the same keys, each typed from its
+   * key: `const { db, cache } = await ioc.ResolveRecord({ db: $Db, cache: [Kv, 'cache'] })`.
+   * Values may also be `IoCLazy(…)` or `IoCAll(…)`. Everything resolves concurrently.
+   *
+   * @example
+   * ```ts
+   * import { IoCContainer, IoCToken } from '@fathym/ioc';
+   *
+   * const $Url = IoCToken<string, 'RecordUrl'>('RecordUrl');
+   * const $Port = IoCToken<number, 'RecordPort'>('RecordPort');
+   *
+   * const ioc = new IoCContainer()
+   *   .RegisterValue($Url, 'localhost')
+   *   .RegisterValue($Port, 8080, { Name: 'http' });
+   *
+   * const { url, port } = await ioc.ResolveRecord({ url: $Url, port: [$Port, 'http'] });
+   *
+   * console.log(`${url}:${port}`); // localhost:8080
+   * ```
+   */
+  public async ResolveRecord<
+    // deno-lint-ignore no-explicit-any
+    const R extends Record<string, IoCDependency<any> | IoCDerivedDependency<any>>,
+  >(record: R): Promise<{ -readonly [K in keyof R]: IoCDependencyValue<R[K]> }> {
+    const entries = Object.entries(record);
+
+    const values = await Promise.all(
+      entries.map(([, dep]) => resolveDependency(this, normalizeDependency(dep))),
+    );
+
+    return Object.fromEntries(entries.map(([k], i) => [k, values[i]])) as {
+      -readonly [K in keyof R]: IoCDependencyValue<R[K]>;
+    };
   }
 
   /**
@@ -787,6 +904,9 @@ export class IoCContainer<TKeys = any> {
       }
 
       for (const dep of reg.deps ?? []) {
+        // Every registration of a key, possibly none: nothing to be missing or captured.
+        if (dep.mode === 'all') continue;
+
         if (!this.find(dep.key, dep.name)) {
           if (this.isExpected(keySymbol(dep.key), dep.name)) continue;
 
@@ -835,6 +955,9 @@ export class IoCContainer<TKeys = any> {
       state.set(reg, 'visiting');
 
       for (const dep of reg.deps ?? []) {
+        // Lazy dependencies are resolved after construction, so they can't deadlock it.
+        if (dep.mode) continue;
+
         const depReg = resolveDep(dep);
 
         if (depReg) visit(depReg, [...path, reg]);
@@ -1154,10 +1277,7 @@ export class IoCContainer<TKeys = any> {
       kind: 'class',
       ctor: type === Symbol.for(clazz.name) ? clazz : undefined,
       factory: deps
-        ? async (ioc) =>
-          new clazz(
-            ...await Promise.all(deps.map((d) => ioc.Resolve(d.key as symbol, d.name))),
-          )
+        ? async (ioc) => new clazz(...await Promise.all(deps.map((d) => resolveDependency(ioc, d))))
         : () => new clazz(),
       lazy: this.lazyFor(opts.Lazy),
       deps,
@@ -1180,10 +1300,21 @@ export class IoCContainer<TKeys = any> {
   public RegisterFactory<
     K extends IoCServiceKeyConstructor<unknown> | symbol,
     const TName extends string = '$default',
+    const TDeps extends readonly IoCFactoryDependency<TKeys>[] = [],
   >(
     key: K,
-    factory: IoCServiceResolver<IoCServiceOf<K>>,
-    options?: IoCRegisterOptions<TName, IoCServiceOf<K>>,
+    factory: (
+      ioc: IoCContainer,
+      ...deps: IoCDependencyValues<TDeps>
+    ) => IoCServiceOf<K> | Promise<IoCServiceOf<K>>,
+    options?: IoCRegisterOptions<TName, IoCServiceOf<K>> & {
+      /**
+       * Services to resolve and pass to the factory after the container, in order:
+       * `RegisterFactory($Repo, (ioc, db, url) => …, { Deps: [$Db, $Url] })`. Each parameter
+       * is typed from its key, and `Validate()` checks them like a class's `Deps`.
+       */
+      Deps?: TDeps;
+    },
   ): IoCContainer<TKeys | IoCRegistered<K, TName>> {
     if (typeof factory !== 'function') {
       throw new IoCRegistrationError(`RegisterFactory expects a factory function.`);
@@ -1193,14 +1324,21 @@ export class IoCContainer<TKeys = any> {
 
     const symbol = keySymbol(key);
 
+    const deps = opts.Deps?.map(normalizeDependency);
+
+    const call = factory as (ioc: IoCContainer, ...deps: unknown[]) => unknown;
+
     this.addRegistration({
       symbol,
       name: opts.Name || DEFAULT_NAME,
       lifetime: opts.Lifetime ?? 'singleton',
       kind: 'factory',
       ctor: typeof key === 'function' ? key : undefined,
-      factory: factory as (ioc: IoCContainer) => unknown,
+      factory: deps
+        ? async (ioc) => call(ioc, ...await Promise.all(deps.map((d) => resolveDependency(ioc, d))))
+        : call,
       lazy: this.lazyFor(opts.Lazy),
+      deps,
       dispose: opts.Dispose as ((instance: unknown) => unknown) | undefined,
       default: opts.Default,
       replace: opts.Replace,
@@ -2270,7 +2408,7 @@ export class IoCContainer<TKeys = any> {
      * `await`) take part in cycle detection.
      */
     const run = (container: object, parent: IoCResolveFrame | undefined, key: object) => {
-      const frame: IoCResolveFrame = { key, label, parent, settled: false };
+      const frame: IoCResolveFrame = { key, label, parent, settled: false, reg };
 
       if (isHolder(key)) key.building = frame;
 
@@ -2370,6 +2508,7 @@ export class IoCContainer<TKeys = any> {
       deps: spec.deps,
       default: spec.default || undefined,
       scopeLevel: spec.scopeLevel,
+      observed: new Map(),
       fork(owner: object): unknown {
         const target = owner as IoCContainer;
 

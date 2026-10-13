@@ -29,7 +29,7 @@ runnable example, checked in CI.
 
 - **Registration:** [Register](#registerkey-factory-options), [RegisterClass](#registerclassclass-options), [RegisterFactory](#registerfactorykey-factory-options), [RegisterValue](#registervaluekey-value-options), [Decorate](#decoratekey-decorator-options), [Unregister](#unregisterkey-name)
 - **Typed containers:** [Typed](#typed), [Expect](#expectkeys)
-- **Resolution:** [Resolve](#resolvekey-name), [TryResolve](#tryresolvekey-name), [ResolveAll](#resolveallkey), [Has](#haskey-name)
+- **Resolution:** [Resolve](#resolvekey-name), [TryResolve](#tryresolvekey-name), [ResolveAll](#resolveallkey), [ResolveNamed](#resolvenamedkey), [ResolveRecord](#resolverecordrecord), [Has](#haskey-name)
 - **Lifecycle:** [Validate](#validate), [Activate](#activate), [Use](#usemodules), [ModuleFromContainer](#modulefromcontainername-container-options), [Start](#startoptions), [CreateScope](#createscopeoptions), [Isolate](#isolatekeys), [Dispose](#dispose)
 - **Copying and low level:** [CopyTo](#copytotarget), [Symbol](#symbolid), [RegisterDirect / ResolveDirect](#registerdirect-and-resolvedirect), [services / symbols](#services-and-symbols)
 - **Types:** [IoCToken](#ioctokenid), [options](#options), [dependency types](#dependency-types), [registry types](#registry-types), [other types](#other-types), [errors](#error-classes)
@@ -132,12 +132,29 @@ console.log((await ioc.Resolve(Repo)).url); // kv://local
 ### RegisterFactory(key, factory, options?)
 
 ```ts ignore
-RegisterFactory<K, TName = '$default'>(key: K, factory: (ioc: IoCContainer) => IoCServiceOf<K> | Promise<IoCServiceOf<K>>, options?: IoCRegisterOptions<TName>): IoCContainer<TKeys | IoCRegistered<K, TName>>
+RegisterFactory<K, TName = '$default', TDeps = []>(key: K, factory: (ioc: IoCContainer, ...deps: values of TDeps) => IoCServiceOf<K> | Promise<IoCServiceOf<K>>, options?: IoCRegisterOptions<TName> & { Deps?: TDeps }): IoCContainer<TKeys | IoCRegistered<K, TName>>
 ```
 
 Registers a factory under a token, class or symbol key. Unlike `Register`, it never treats the
 function as a class, so named `function` declarations are safe. The factory's return type is
 checked against the key.
+
+With `Deps`, the listed services are resolved and passed to the factory after the container,
+each parameter typed from its key, and `Validate()` checks them like a class's `Deps` (on a typed
+container, they must already be registered):
+
+```ts
+import { IoCContainer, IoCToken } from '@fathym/ioc';
+
+const $Url = IoCToken<string, 'ApiFactoryUrl'>('ApiFactoryUrl');
+const $Endpoint = IoCToken<string, 'ApiEndpoint'>('ApiEndpoint');
+
+const ioc = new IoCContainer()
+  .RegisterValue($Url, 'localhost')
+  .RegisterFactory($Endpoint, (_ioc, url) => `${url}:8080`, { Deps: [$Url] });
+
+console.log(await ioc.Resolve($Endpoint)); // localhost:8080
+```
 
 **Returns:** the same container, typed with the new key. **Throws:**
 [`RegisterFactory expects a factory function.`](./errors.md#registerfactory-expects-a-factory-function)
@@ -397,6 +414,51 @@ ioc.RegisterValue($Plugin, 'metrics', { Name: 'metrics' });
 ioc.RegisterValue($Plugin, 'audit', { Name: 'audit' });
 
 console.log(await ioc.ResolveAll($Plugin)); // [ "metrics", "audit" ]
+```
+
+### ResolveNamed(key)
+
+```ts ignore
+ResolveNamed<T>(key: IoCToken<T> | Class<T> | symbol): Promise<Map<string, T>>
+```
+
+Resolves every registration of a key into a `Map` from name to service (`$default` included),
+nearest scope first. The container-backed replacement for a hand-built string-keyed registry.
+
+```ts
+import { IoCContainer, IoCToken } from '@fathym/ioc';
+
+const $Profile = IoCToken<{ model: string }, 'ApiProfile'>('ApiProfile');
+
+const ioc = new IoCContainer()
+  .RegisterValue($Profile, { model: 'small' }, { Name: 'fast' })
+  .RegisterValue($Profile, { model: 'large' }, { Name: 'smart' });
+
+console.log((await ioc.ResolveNamed($Profile)).get('smart')?.model); // large
+```
+
+### ResolveRecord(record)
+
+```ts ignore
+ResolveRecord<R extends Record<string, Dependency>>(record: R): Promise<{ [K in keyof R]: value of R[K] }>
+```
+
+Resolves several services at once, concurrently, into an object with the same keys, each typed
+from its dependency. Values may be a key, `[key, name]`, `IoCLazy(…)` or `IoCAll(…)`.
+
+```ts
+import { IoCContainer, IoCToken } from '@fathym/ioc';
+
+const $Url = IoCToken<string, 'ApiRecordUrl'>('ApiRecordUrl');
+const $Port = IoCToken<number, 'ApiRecordPort'>('ApiRecordPort');
+
+const ioc = new IoCContainer()
+  .RegisterValue($Url, 'localhost')
+  .RegisterValue($Port, 8080, { Name: 'http' });
+
+const { url, port } = await ioc.ResolveRecord({ url: $Url, port: [$Port, 'http'] });
+
+console.log(`${url}:${port}`); // localhost:8080
 ```
 
 ### Names(key)
@@ -818,6 +880,45 @@ console.log(typeof $Port, port); // symbol 8080
 | `Replace`    | —            | Replace an existing registration on purpose (required in strict mode)                                                                                                                      |
 | `ScopeLevel` | —            | For `Lifetime: 'scoped'`: live in the nearest scope created with `CreateScope({ Level })` of this level, shared by the scopes inside it; throws `IoCScopeRequiredError` with no such scope |
 | `Dispose`    | —            | `(instance) => …`: cleanup run when the owner is disposed, for resources without `Symbol.dispose` (`kv => kv.close()`). On `RegisterClass`, `RegisterFactory` and `RegisterValue`          |
+
+### Derived dependencies: IoCLazy and IoCAll
+
+```ts ignore
+IoCLazy(key | [key, name]): IoCDerivedDependency<() => Promise<T>>
+IoCAll(key): IoCDerivedDependency<T[]>
+```
+
+Use them in `Deps` (of `RegisterClass` and `RegisterFactory`) and in `ResolveRecord`:
+
+- **`IoCLazy`** injects a function that resolves the service when called: for optional or
+  expensive services, and to break a construction cycle. `Validate()` checks that it is
+  registered but doesn't count it in cycles.
+- **`IoCAll`** injects every registration of the key (all names, nearest scope first); an empty
+  array when there are none.
+
+The constructor or factory parameter must have the injected type (`() => Promise<T>` or `T[]`);
+the compiler checks it.
+
+```ts
+import { IoCAll, IoCContainer, IoCLazy, IoCToken } from '@fathym/ioc';
+
+const $Rule = IoCToken<(n: number) => boolean, 'ApiRule'>('ApiRule');
+const $Limit = IoCToken<number, 'ApiLimit'>('ApiLimit');
+
+class Checker {
+  constructor(public rules: ((n: number) => boolean)[], public limit: () => Promise<number>) {}
+}
+
+const ioc = new IoCContainer()
+  .RegisterValue($Rule, (n) => n > 0, { Name: 'positive' })
+  .RegisterValue($Rule, (n) => n % 2 === 0, { Name: 'even' })
+  .RegisterValue($Limit, 100)
+  .RegisterClass(Checker, { Deps: [IoCAll($Rule), IoCLazy($Limit)] });
+
+const checker = await ioc.Resolve(Checker);
+
+console.log(checker.rules.every((rule) => rule(4)), await checker.limit()); // true 100
+```
 
 ### Dependency types
 

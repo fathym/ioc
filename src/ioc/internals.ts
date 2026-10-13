@@ -48,6 +48,8 @@ export type IoCLifetime = 'singleton' | 'transient' | 'scoped';
 export interface IoCDependencyRecord {
   key: AnyFunction | symbol;
   name: string;
+  /** Injected as a resolver function (`IoCLazy`) or as every registration (`IoCAll`). */
+  mode?: 'lazy' | 'all';
 }
 
 /** Shared, memoized state of a singleton (or of one scope's scoped instance). */
@@ -73,6 +75,8 @@ export interface IoCResolveFrame {
   parent?: IoCResolveFrame;
   /** Set once the factory call finished, so stale frames captured by long-lived views are ignored. */
   settled: boolean;
+  /** The registration whose factory this frame runs (absent on frames from older versions). */
+  reg?: IoCRegistration;
 }
 
 /**
@@ -95,6 +99,11 @@ export interface IoCRegistration {
   readonly deps?: readonly IoCDependencyRecord[];
   /** A framework default (`Default: true`): it yields to any other registration of its key. */
   readonly default?: boolean;
+  /**
+   * What the factory actually resolved while building (key label to dependency), for factories
+   * that don't declare `Deps`. Read by `Describe()`.
+   */
+  readonly observed?: Map<string, IoCDependencyRecord>;
   /** For scoped registrations: the scope level the instance lives in (`ScopeLevel`). */
   readonly scopeLevel?: string;
   /**
