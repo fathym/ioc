@@ -45,7 +45,7 @@ export const REQUIRED_FRONTMATTER = [
 export function isCheckedMarkdown(path: string): boolean {
   if (!path.endsWith('.md')) return false;
 
-  if (path.startsWith('tests/') || path.startsWith('node_modules/')) return false;
+  if (/^(tests|node_modules|dist|cov)\//.test(path)) return false;
 
   return !path.split('/').some((part) => part.startsWith('.') && part !== '.github');
 }

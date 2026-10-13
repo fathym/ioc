@@ -11,6 +11,10 @@
   "exports": {
     ".": "./mod.ts"
   },
+  // What JSR publishes: the library and its landing docs (the full docs live on GitHub).
+  "publish": {
+    "include": ["mod.ts", "src/", "README.md", "LICENSE", "CHANGELOG.md"]
+  },
   "tasks": {
     "build": "deno task build:fmt && deno task build:lint && deno task build:check && deno task build:docs && deno task build:mod",
     "build:check": "deno check **/*.ts",
@@ -21,11 +25,15 @@
     "deploy": "deno task build && deno task test && fathym git",
     "test": "deno test -A tests/tests.ts --parallel --coverage=cov",
     "bench": "deno bench -A tests/ioc/resolve.bench.ts",
+    "build:npm": "deno run -A scripts/build-npm.ts",
+    "test:runtimes": "deno run -A scripts/test-runtimes.ts",
     "docs:check": "deno run -A scripts/docs-check.ts",
     "docs:llms": "deno run -A scripts/docs-check.ts --write",
     "version": "deno run -A jsr:@fathym/common@0.2.325/build/version"
   },
   "imports": {},
+  // Build output (the npm package) is generated, never checked, linted or formatted.
+  "exclude": ["dist/", "cov/"],
   "lint": {
     "include": ["src/", "tests/", "scripts/", "examples/"],
     "exclude": ["tests/fixtures/"],

@@ -31,9 +31,10 @@ compile. Statement-style registrations are checked by `Validate()` at startup in
 
 ## Does it work on Node.js and Bun?
 
-The core API is plain TypeScript and works anywhere JSR packages install (`npx jsr add
-@fathym/ioc`). Deno 2 is the primary target and where the test suite runs. `await using` needs a
-runtime with explicit resource management; otherwise call `await scope.Dispose()` yourself.
+Yes. Install it from JSR (`npx jsr add @fathym/ioc`, `bunx jsr add @fathym/ioc`). It is plain ESM
+with no runtime dependencies. CI runs the full suite on Deno, and builds the npm package and runs a
+smoke test on Node.js 20, 22 and 24 and on Bun. You need TypeScript 5.4 or later. See
+[requirements](./getting-started/installation.md#requirements).
 
 ## Why is `Resolve` always async?
 

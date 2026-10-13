@@ -49,6 +49,10 @@ Recommended release: **0.1.0**. See [migrating from 0.0.x](./docs/migration/from
 - **Error classes:** `IoCServiceNotFoundError`, `IoCCircularDependencyError`,
   `IoCValidationError` and `IoCContainerDisposedError`.
 - **`Register(symbol, factory)`.**
+- **Node.js and Bun support, checked in CI:** `deno task build:npm` builds an npm package (ESM +
+  `.d.ts`), and `deno task test:runtimes` runs a smoke test on Node.js 20/22/24 and Bun and
+  type-checks a consumer with TypeScript 5.4 (the minimum). JSR now publishes only the library
+  files.
 - **Documentation:** a full documentation set in `docs/` (tutorial, concepts, guides, reference,
   error catalog, migration guides) with every example executed in CI; runnable `examples/`;
   `llms.txt`; CONTRIBUTING, SECURITY, CODE_OF_CONDUCT and issue templates.

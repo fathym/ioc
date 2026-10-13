@@ -58,7 +58,8 @@ step.
 deno add jsr:@fathym/ioc
 ```
 
-Node.js and Bun: `npx jsr add @fathym/ioc` (or `bunx jsr add @fathym/ioc`).
+Node.js and Bun: `npx jsr add @fathym/ioc` (or `bunx jsr add @fathym/ioc`). Requires TypeScript 5.4+;
+see [requirements](https://github.com/fathym/ioc/blob/main/docs/getting-started/installation.md#requirements).
 
 ## Quick start
 

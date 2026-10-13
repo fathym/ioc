@@ -38,13 +38,15 @@ deno task test
 
 ## Tasks
 
-| Task                   | Does                                                                                                           |
-| ---------------------- | -------------------------------------------------------------------------------------------------------------- |
-| `deno task test`       | All tests: the container suites, the docs checker's tests, and every example                                   |
-| `deno task build`      | Format, lint, type-check, then the docs check and `deno doc --lint` (what CI runs)                             |
-| `deno task docs:check` | Frontmatter, links and anchors, orphans, footers, error catalog and `llms.txt`; runs every Markdown code block |
-| `deno task docs:llms`  | Regenerate `llms.txt` from the docs' frontmatter                                                               |
-| `deno task bench`      | Hot-path benchmarks against the frozen 0.0.36 implementation                                                   |
+| Task                      | Does                                                                                                           |
+| ------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `deno task test`          | All tests: the container suites, the docs checker's tests, and every example                                   |
+| `deno task build`         | Format, lint, type-check, then the docs check and `deno doc --lint` (what CI runs)                             |
+| `deno task docs:check`    | Frontmatter, links and anchors, orphans, footers, error catalog and `llms.txt`; runs every Markdown code block |
+| `deno task docs:llms`     | Regenerate `llms.txt` from the docs' frontmatter                                                               |
+| `deno task bench`         | Hot-path benchmarks against the frozen 0.0.36 implementation                                                   |
+| `deno task build:npm`     | Build the npm package into `dist/npm` (ESM + `.d.ts`, compiled by TypeScript)                                  |
+| `deno task test:runtimes` | Build the npm package, run the smoke test on Node.js and Bun, and type-check a consumer with TypeScript 5.4    |
 
 ## Test suites
 
@@ -57,6 +59,7 @@ deno task test
 | `tests/ioc/matrix.tests.ts`, `model.tests.ts` | Generated combinations, and seeded random operation sequences against a reference model                                        |
 | `tests/ioc/types.tests.ts`                    | Compile-time types (`@ts-expect-error` checks)                                                                                 |
 | `tests/docs/*`                                | The docs checker, and every program in `examples/`                                                                             |
+| `tests/runtimes/*`                            | A plain-JavaScript smoke test for Node.js and Bun, and a TypeScript consumer for the oldest supported compiler                 |
 
 Rules:
 
@@ -116,8 +119,11 @@ Releases are built and published by the shared `fathym/build-n-publish` workflow
 release:
 
 1. Move the `[Unreleased]` notes in the changelog under the new version.
-2. Run the test suites of the main dependents against the release candidate.
-3. Record provenance in `UPSTREAM.md`, as described in `AGENTS.md`.
+2. Run `deno task test:runtimes --require-all` (CI runs it on Node.js 20, 22 and 24 and Bun).
+3. Run the test suites of the main dependents against the release candidate.
+4. JSR is the primary registry. To publish to npm as well, run
+   `deno task build:npm --version=<version>`, then `npm publish dist/npm --access public`.
+5. Record provenance in `UPSTREAM.md`, as described in `AGENTS.md`.
 
 ## What's Next
 

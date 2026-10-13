@@ -36,15 +36,49 @@ This adds an entry to your `deno.json` import map:
 
 ## Node.js and Bun
 
+The package is published on [JSR](https://jsr.io/@fathym/ioc), which serves Node.js and Bun as
+well as Deno:
+
 ```sh
-npx jsr add @fathym/ioc     # npm
-pnpm dlx jsr add @fathym/ioc
-bunx jsr add @fathym/ioc
+npx jsr add @fathym/ioc         # npm
+bunx jsr add @fathym/ioc        # Bun
+pnpm add jsr:@fathym/ioc        # pnpm 10.9+
+yarn add jsr:@fathym/ioc        # Yarn 4.9+
 ```
 
-> **Note:** Deno 2 is the primary target and where the test suite runs. The core API is plain
-> TypeScript and works on Node.js and Bun. `await using` needs a runtime with explicit resource
-> management; on older runtimes, call `await scope.Dispose()` yourself.
+You import it as `@fathym/ioc` either way. It is plain ESM with no runtime dependencies and uses
+no Deno, Node.js or browser APIs.
+
+## Requirements
+
+| What                    | Supported                                         | Checked in CI                                   |
+| ----------------------- | ------------------------------------------------- | ----------------------------------------------- |
+| Deno                    | 2.x                                               | the full test suite                             |
+| Node.js                 | 20 and later                                      | a smoke test on 20, 22 and 24                   |
+| Bun                     | 1.x                                               | a smoke test                                    |
+| TypeScript              | 5.4 and later                                     | a consumer type-checked with 5.4 and the latest |
+| Browsers, workers, edge | any runtime with ES2022 and `Symbol.asyncDispose` | not yet                                         |
+
+**TypeScript settings.** The types use `Symbol.asyncDispose`, so your `lib` needs
+`esnext.disposable` (or `esnext`), or turn on `skipLibCheck` (most project templates do). Using
+`await using` in your own code needs that `lib` anyway:
+
+```jsonc
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "ESNext.Disposable"]
+  }
+}
+```
+
+> **Warning:** Class keys are class **names**. If you bundle and minify, keep class names
+> (`keepNames: true` in esbuild and Vite, `keep_classnames: true` in Terser). Otherwise two
+> classes can minify to the same name and share a key. See
+> [keys and registrations](../concepts/keys-and-registrations.md#same-named-classes).
+
+**Runtimes without explicit resource management.** `await using` needs runtime support (or a
+compiler that down-levels it). Without it, call `await scope.Dispose()` yourself.
 
 ## Check it works
 

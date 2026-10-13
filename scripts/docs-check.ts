@@ -39,7 +39,7 @@ const files: DocFiles = new Map();
 for await (
   const entry of walk(root, {
     includeDirs: false,
-    skip: [/[\\/]\.git[\\/]/, /[\\/]node_modules[\\/]/, /[\\/]cov[\\/]/],
+    skip: [/[\\/]\.git[\\/]/, /[\\/]node_modules[\\/]/, /[\\/]cov[\\/]/, /[\\/]dist[\\/]/],
   })
 ) {
   const path = toRepoPath(root, entry.path);
