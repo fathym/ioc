@@ -22,18 +22,36 @@ Search this page for the text of your error. Every message the container can pro
 here, and CI fails if a new one is added without an entry. For problems that don't throw, see
 [troubleshooting](../troubleshooting.md).
 
-| Error class                  | Messages                                                                                                                                             |
-| ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `IoCServiceNotFoundError`    | [No Service for symbol …](#no-service-for-symbol--with-name--has-been-registered)                                                                    |
-| `IoCCircularDependencyError` | [Circular dependency detected: …](#circular-dependency-detected-a---b---a)                                                                           |
-| `IoCValidationError`         | [IoC validation failed: …](#ioc-validation-failed), with [four kinds of problem](#validation-problems)                                               |
-| `IoCContainerDisposedError`  | [The IoC container has been disposed.](#the-ioc-container-has-been-disposed)                                                                         |
-| `AggregateError`             | [IoC activation failed for: …](#ioc-activation-failed-for-), [Errors occurred while disposing …](#errors-occurred-while-disposing-the-ioc-container) |
-| `Error`                      | [Registration mistakes](#registration-errors)                                                                                                        |
-| TypeScript                   | [Compile errors](#typescript-errors)                                                                                                                 |
+| Error class                     | Code                                          | Messages                                                                                                       |
+| ------------------------------- | --------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `IoCServiceNotFoundError`       | `IOC_SERVICE_NOT_FOUND`                       | [No Service for symbol …](#no-service-for-symbol--with-name--has-been-registered)                              |
+| `IoCCircularDependencyError`    | `IOC_CIRCULAR_DEPENDENCY`                     | [Circular dependency detected: …](#circular-dependency-detected-a---b---a)                                     |
+| `IoCValidationError`            | `IOC_VALIDATION_FAILED`                       | [IoC validation failed: …](#ioc-validation-failed), with [four kinds of problem](#validation-problems)         |
+| `IoCContainerDisposedError`     | `IOC_CONTAINER_DISPOSED`                      | [The IoC container has been disposed.](#the-ioc-container-has-been-disposed)                                   |
+| `IoCActivationError`            | `IOC_ACTIVATION_FAILED`                       | [IoC activation failed for: …](#ioc-activation-failed-for-)                                                    |
+| `IoCDisposeError`               | `IOC_DISPOSE_FAILED`                          | [Errors occurred while disposing …](#errors-occurred-while-disposing-the-ioc-container)                        |
+| `IoCRegistrationError`          | `IOC_INVALID_REGISTRATION`, `IOC_INVALID_KEY` | [Registration mistakes](#registration-errors)                                                                  |
+| `IoCScopeRequiredError`         | `IOC_SCOPE_REQUIRED`                          | [Scoped service … was resolved outside a scope](#scoped-service--was-resolved-outside-a-scope) (strict mode)   |
+| `IoCDuplicateRegistrationError` | `IOC_DUPLICATE_REGISTRATION`                  | [… is already registered](#-is-already-registered) (strict mode)                                               |
+| `IoCKeyCollisionError`          | `IOC_KEY_COLLISION`                           | [The key '…' is used by both a class and a token](#the-key--is-used-by-both-a-class-and-a-token) (strict mode) |
+| TypeScript                      | —                                             | [Compile errors](#typescript-errors)                                                                           |
 
-All error classes extend `Error` and are exported from `@fathym/ioc`, so you can check them with
-`instanceof`.
+All error classes are exported from `@fathym/ioc`. Each one has a stable `code`; match on the code
+rather than the message, which may gain detail. `isIoCError(err, 'IOC_SERVICE_NOT_FOUND')` checks the
+code without `instanceof`, so it also recognizes errors from another copy of the library loaded in
+the same process. `IoCActivationError` and `IoCDisposeError` are also `AggregateError`s.
+
+```ts
+import { IoCContainer, IoCToken, isIoCError } from '@fathym/ioc';
+
+const ioc = new IoCContainer();
+
+try {
+  await ioc.Resolve(IoCToken<string>('Missing'));
+} catch (err) {
+  if (isIoCError(err, 'IOC_SERVICE_NOT_FOUND')) console.log('not registered');
+}
+```
 
 ---
 
@@ -233,6 +251,43 @@ use `RegisterFactory` for factories.
 `RegisterValue` for a value.
 
 ---
+
+## Strict-mode errors
+
+These are thrown only by containers created with `Strict: true` (or `IoCContainer.Create()`). A
+plain `new IoCContainer()` never throws them.
+
+### Scoped service … was resolved outside a scope
+
+```text
+Scoped service RequestContext was resolved outside a scope; resolve it from a scope created with CreateScope().
+```
+
+`IoCScopeRequiredError` (`IOC_SCOPE_REQUIRED`). A `scoped` service was resolved from the root
+container, where it would silently behave as one shared instance. With a level, the message ends
+`outside a scope of level 'tenant'`. **Fix:** resolve it from `CreateScope()` (of the right
+level), or change its lifetime.
+
+### … is already registered
+
+```text
+Clock is already registered; pass Replace: true to override it, or Default: true to register a default that yields to other registrations.
+```
+
+`IoCDuplicateRegistrationError` (`IOC_DUPLICATE_REGISTRATION`). The same key and name were
+registered twice, so the first registration would be silently replaced. **Fix:** pass
+`Replace: true` when the override is intended; framework code registering overridable defaults
+passes `Default: true`.
+
+### The key '…' is used by both a class and a token
+
+```text
+The key 'Config' is used by both a class and a token; give the token a distinct, namespaced id.
+```
+
+`IoCKeyCollisionError` (`IOC_KEY_COLLISION`). Class keys are class names, so a token with the same
+id (`IoCToken('Config')`) and a class `Config` share one key and would resolve each other.
+**Fix:** namespace the token id (`IoCToken<Config, '@my/app/Config'>('@my/app/Config')`).
 
 ## TypeScript errors
 

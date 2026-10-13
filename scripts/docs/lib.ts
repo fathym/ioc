@@ -223,7 +223,7 @@ export function extractErrorMessages(source: string): string[] {
   const messages = new Set<string>();
 
   const starts =
-    /throw new Error\(|super\(|problems\.push\(|new AggregateError\(\s*[^,]+,|(?:let|const)\s+message\s*=|message\s*\+=/g;
+    /throw new (?:IoC\w*)?Error\(|super\(|problems\.push\(|issue\(|new AggregateError\(\s*[^,]+,|(?:let|const)\s+message\s*=|message\s*\+=/g;
 
   for (const match of source.matchAll(starts)) {
     const at = match.index! + match[0].length;

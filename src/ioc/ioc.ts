@@ -1,6 +1,9 @@
 import {
+  IoCActivationError,
   IoCCircularDependencyError,
   IoCContainerDisposedError,
+  IoCDisposeError,
+  IoCRegistrationError,
   IoCServiceNotFoundError,
   IoCValidationError,
 } from './errors.ts';
@@ -29,6 +32,48 @@ import {
   withFrame,
 } from './internals.ts';
 import type { IoCToken } from './IoCToken.ts';
+
+/** A notice the container reports through the `Diagnostics` option; never thrown. */
+export type IoCDiagnosticCode =
+  | 'IOC_REGISTRATION_REPLACED'
+  | 'IOC_CLASS_NAME_FALLBACK'
+  | 'IOC_KEY_COLLISION'
+  | 'IOC_LATE_DISPOSE_FAILED'
+  | 'IOC_MODULE_DUPLICATE';
+
+/** One diagnostic notice. */
+export interface IoCDiagnostic {
+  /** What happened. */
+  Code: IoCDiagnosticCode;
+
+  /** A readable description. */
+  Message: string;
+
+  /** The service involved, when there is one. */
+  Service?: string;
+}
+
+/**
+ * Options for a container. They are inherited by its scopes. A container created with no options
+ * behaves exactly like earlier versions.
+ */
+export interface IoCContainerOptions {
+  /**
+   * Turns likely mistakes into errors:
+   *
+   * - registering a key and name again without `Replace: true` (or `Default: true`);
+   * - resolving a `scoped` service outside a scope;
+   * - a class key resolving a *different*, unregistered class that happens to share its name;
+   * - a token and a class sharing one key.
+   */
+  Strict?: boolean;
+
+  /** Build singletons and scoped services on first resolve unless a registration says `Lazy: false`. */
+  LazyByDefault?: boolean;
+
+  /** Receives notices about things that are allowed but often unintended (replaced registrations…). */
+  Diagnostics?: (diagnostic: IoCDiagnostic) => void;
+}
 
 /** Any constructed service value. */
 // deno-lint-ignore ban-types
@@ -323,7 +368,22 @@ export class IoCContainer<TKeys = any> {
   /** @ignore */
   protected disposed: boolean;
 
-  constructor() {
+  /**
+   * The options this container was created with (scopes inherit their parent's).
+   *
+   * @ignore
+   */
+  protected readonly options: IoCContainerOptions;
+
+  /**
+   * Creates a container. With no options it behaves exactly like earlier versions; see
+   * {@link IoCContainer.Create} for the recommended settings for new code.
+   *
+   * @param options Strictness, lazy-by-default, and a diagnostics callback.
+   */
+  constructor(options?: IoCContainerOptions) {
+    this.options = { ...options };
+
     this.services = new Map<symbol, Map<string, IoCServiceResolutions>>();
 
     this.symbols = new Map<string, symbol>();
@@ -337,6 +397,26 @@ export class IoCContainer<TKeys = any> {
     this.disposed = false;
 
     Object.defineProperty(this, IOC_PROTOCOL, { value: IOC_PROTOCOL_VERSION });
+  }
+
+  /**
+   * Creates a container with the settings recommended for new code: `Strict` (likely mistakes
+   * become errors) and `LazyByDefault` (nothing is built until it is first needed; call
+   * `Activate()` at startup to fail fast).
+   *
+   * @example
+   * ```ts
+   * import { IoCContainer } from '@fathym/ioc';
+   *
+   * class Clock {}
+   *
+   * const ioc = IoCContainer.Create().RegisterClass(Clock);
+   *
+   * await ioc.Activate(); // builds Clock now
+   * ```
+   */
+  public static Create(options?: IoCContainerOptions): IoCContainer {
+    return new IoCContainer({ Strict: true, LazyByDefault: true, ...options });
   }
 
   //#region Resolution
@@ -458,9 +538,9 @@ export class IoCContainer<TKeys = any> {
     await Promise.all(work);
 
     if (failures.length) {
-      throw new AggregateError(
+      throw new IoCActivationError(
         failures.map((f) => f.error),
-        `IoC activation failed for: ${failures.map((f) => f.label).join(', ')}.`,
+        failures.map((f) => f.label),
       );
     }
   }
@@ -717,7 +797,7 @@ export class IoCContainer<TKeys = any> {
 
     if (typeof clazzInstance === 'symbol') {
       if (typeof instanceOptions !== 'function') {
-        throw new Error(`A factory is required when registering by symbol.`);
+        throw new IoCRegistrationError(`A factory is required when registering by symbol.`);
       }
 
       factory = instanceOptions as IoCServiceResolver<T>;
@@ -744,7 +824,7 @@ export class IoCContainer<TKeys = any> {
     }
 
     if (!opts.Type) {
-      throw new Error(`The Type was missing for the registration.`);
+      throw new IoCRegistrationError(`The Type was missing for the registration.`);
     }
 
     const lifetime = opts.Lifetime ?? 'singleton';
@@ -756,7 +836,7 @@ export class IoCContainer<TKeys = any> {
       kind,
       ctor: clazz && opts.Type === Symbol.for(clazz.name) ? clazz : undefined,
       factory,
-      lazy: !!opts.Lazy,
+      lazy: this.lazyFor(opts.Lazy),
     });
 
     // Historically only scoped registrations return their disposer.
@@ -862,7 +942,7 @@ export class IoCContainer<TKeys = any> {
     TKeys | ([TType] extends [never] ? IoCRegistered<C, TName> : IoCRegistered<TType, TName>)
   > {
     if (!isClassLike(clazz)) {
-      throw new Error(`RegisterClass expects a class.`);
+      throw new IoCRegistrationError(`RegisterClass expects a class.`);
     }
 
     const opts = { ...options };
@@ -870,7 +950,7 @@ export class IoCContainer<TKeys = any> {
     const type = (opts.Type as symbol | undefined) ??
       (clazz.name ? Symbol.for(clazz.name) : undefined);
 
-    if (!type) throw new Error(`The Type was missing for the registration.`);
+    if (!type) throw new IoCRegistrationError(`The Type was missing for the registration.`);
 
     const deps = opts.Deps?.map(normalizeDependency);
 
@@ -886,7 +966,7 @@ export class IoCContainer<TKeys = any> {
             ...await Promise.all(deps.map((d) => ioc.Resolve(d.key as symbol, d.name))),
           )
         : () => new clazz(),
-      lazy: !!opts.Lazy,
+      lazy: this.lazyFor(opts.Lazy),
       deps,
     });
 
@@ -909,7 +989,7 @@ export class IoCContainer<TKeys = any> {
     options?: IoCRegisterOptions<TName>,
   ): IoCContainer<TKeys | IoCRegistered<K, TName>> {
     if (typeof factory !== 'function') {
-      throw new Error(`RegisterFactory expects a factory function.`);
+      throw new IoCRegistrationError(`RegisterFactory expects a factory function.`);
     }
 
     const opts = { ...options };
@@ -923,7 +1003,7 @@ export class IoCContainer<TKeys = any> {
       kind: 'factory',
       ctor: typeof key === 'function' ? key : undefined,
       factory: factory as (ioc: IoCContainer) => unknown,
-      lazy: !!opts.Lazy,
+      lazy: this.lazyFor(opts.Lazy),
     });
 
     return this as unknown as IoCContainer<TKeys | IoCRegistered<K, TName>>;
@@ -1142,7 +1222,7 @@ export class IoCContainer<TKeys = any> {
 
     self.assertNotDisposed();
 
-    const scope = new IoCContainer<TKeys>();
+    const scope = new IoCContainer<TKeys>(self.options);
 
     scope.parent = self;
 
@@ -1230,7 +1310,7 @@ export class IoCContainer<TKeys = any> {
     self.byCtor.clear();
 
     if (errors.length) {
-      throw new AggregateError(errors, 'Errors occurred while disposing the IoC container.');
+      throw new IoCDisposeError(errors);
     }
   }
 
@@ -1270,6 +1350,24 @@ export class IoCContainer<TKeys = any> {
     for (let c: IoCContainer | undefined = this.self(); c; c = c.parent) {
       yield c;
     }
+  }
+
+  /**
+   * Whether a registration is lazy: its own `Lazy` option, else the container's `LazyByDefault`.
+   *
+   * @ignore
+   */
+  protected lazyFor(lazy: boolean | undefined): boolean {
+    return lazy ?? !!this.self().options?.LazyByDefault;
+  }
+
+  /**
+   * Reports a diagnostic to the `Diagnostics` option, if one was given.
+   *
+   * @ignore
+   */
+  protected diagnose(code: IoCDiagnosticCode, message: string, service?: string): void {
+    this.self().options?.Diagnostics?.({ Code: code, Message: message, Service: service });
   }
 
   /** @ignore */
