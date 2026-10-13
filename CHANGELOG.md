@@ -65,6 +65,12 @@ Recommended release: **0.1.0**. See [migrating from 0.0.x](./docs/migration/from
 - **`Names(key)`** lists the names a key is registered under, nearest scope first, without
   building anything. **`Validate({ Throw: false })`** returns the issues instead of throwing.
 - **The cross-version protocol** is documented in `docs/reference/protocol.md`.
+- **Modules:** `IoCModule` (`Name`, `Requires`, `Register`, `OnStart`, `OnStop`) and
+  `ioc.Use(...modules)`, which adds requirements first and each module once.
+  `ModuleFromContainer(name, container, { Defaults })` wraps a plugin's container (any version).
+- **Lifecycle:** `Start()` validates, builds every singleton and runs `OnStart` in module order,
+  rolling back on failure (`IoCStartError`). `Dispose()` runs `OnStop` in reverse before
+  disposing instances, so `await using` covers shutdown.
 - **`Register(symbol, factory)`.**
 - **Node.js and Bun support, checked in CI:** `deno task build:npm` builds an npm package (ESM +
   `.d.ts`), and `deno task test:runtimes` runs a smoke test on Node.js 20/22/24 and Bun and

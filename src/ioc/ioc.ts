@@ -5,9 +5,11 @@ import {
   IoCDisposeError,
   IoCDuplicateRegistrationError,
   IoCKeyCollisionError,
+  IoCModuleCycleError,
   IoCRegistrationError,
   IoCScopeRequiredError,
   IoCServiceNotFoundError,
+  IoCStartError,
   IoCValidationError,
   type IoCValidationIssue,
 } from './errors.ts';
@@ -41,6 +43,7 @@ import {
   waitPath,
   withFrame,
 } from './internals.ts';
+import type { IoCModule } from './IoCModule.ts';
 import type { IoCToken } from './IoCToken.ts';
 
 /** A notice the container reports through the `Diagnostics` option; never thrown. */
@@ -444,6 +447,48 @@ export class IoCContainer<TKeys = any> {
   protected readonly options: IoCContainerOptions;
 
   /**
+   * The modules added with `Use()`, in the order they were registered.
+   *
+   * @ignore
+   */
+  protected readonly modules: IoCModule[];
+
+  /**
+   * The modules whose `OnStart` ran (or that have none), in start order; stopped in reverse.
+   *
+   * @ignore
+   */
+  protected readonly started: IoCModule[];
+
+  /**
+   * The module whose `Register` is running, so its registrations are recorded as its own.
+   *
+   * @ignore
+   */
+  protected applying?: string;
+
+  /**
+   * Which module made each registration (by symbol, then name).
+   *
+   * @ignore
+   */
+  protected readonly origins: Map<symbol, Map<string, string>>;
+
+  /**
+   * The running or finished `Start()`.
+   *
+   * @ignore
+   */
+  protected starting?: Promise<void>;
+
+  /**
+   * The running `Dispose()`.
+   *
+   * @ignore
+   */
+  protected disposing?: Promise<void>;
+
+  /**
    * Creates a container. With no options it behaves exactly like earlier versions; see
    * {@link IoCContainer.Create} for the recommended settings for new code.
    *
@@ -463,6 +508,12 @@ export class IoCContainer<TKeys = any> {
     this.owned = [];
 
     this.expected = new Map();
+
+    this.modules = [];
+
+    this.started = [];
+
+    this.origins = new Map();
 
     this.disposed = false;
 
@@ -1327,6 +1378,17 @@ export class IoCContainer<TKeys = any> {
 
     self.bank(symbol).set(name, instance);
 
+    // Record which module (if any) made the registration now in place.
+    if (self.applying !== undefined) {
+      let names = self.origins.get(symbol);
+
+      if (!names) self.origins.set(symbol, names = new Map());
+
+      names.set(name, self.applying);
+    } else {
+      self.origins.get(symbol)?.delete(name);
+    }
+
     if (reg?.ctor && reg.symbol === symbol && reg.name === name) {
       self.trackCtor(reg.ctor, name, instance);
     }
@@ -1445,11 +1507,221 @@ export class IoCContainer<TKeys = any> {
 
     if (self.disposed) return;
 
+    // A second call waits for the first to finish; the first caller gets any errors.
+    if (self.disposing) return await self.disposing.catch(noop);
+
+    await (self.disposing = self.disposeNow());
+  }
+
+  /** Same as {@link IoCContainer.Dispose}; enables `await using`. */
+  public async [Symbol.asyncDispose](): Promise<void> {
+    await this.Dispose();
+  }
+
+  //#endregion
+
+  //#region Modules and lifecycle
+
+  /**
+   * Adds modules: each module's `Requires` are added first (depth-first), then its `Register`
+   * runs against this container. A module already added here or in a parent is skipped, so
+   * shared requirements are registered once. Registrations a module makes are recorded as its
+   * own (see `Describe()`). Modules must be added before {@link IoCContainer.Start}.
+   *
+   * @example
+   * ```ts
+   * import { IoCContainer, type IoCModule, IoCToken } from '@fathym/ioc';
+   *
+   * const $Url = IoCToken<string, 'Url'>('Url');
+   * const $Client = IoCToken<{ url: string }, 'Client'>('Client');
+   *
+   * const Config: IoCModule = {
+   *   Name: 'Config',
+   *   Register: (ioc) => ioc.RegisterValue($Url, 'kv://local', { Default: true }),
+   * };
+   *
+   * const Client: IoCModule = {
+   *   Name: 'Client',
+   *   Requires: [Config],
+   *   Register: (ioc) => ioc.RegisterFactory($Client, async (c) => ({ url: await c.Resolve($Url) })),
+   * };
+   *
+   * const ioc = new IoCContainer().Use(Client); // registers Config, then Client
+   *
+   * console.log((await ioc.Resolve($Client)).url); // kv://local
+   * ```
+   */
+  public Use(...modules: IoCModule[]): this {
+    const self = this.self();
+
+    self.assertNotDisposed();
+
+    const visit = (module: IoCModule, path: IoCModule[]) => {
+      if (
+        !module || typeof module.Name !== 'string' || typeof module.Register !== 'function'
+      ) {
+        throw new IoCRegistrationError('A module needs a Name and a Register(ioc) function.');
+      }
+
+      if (self.hasModule(module)) return;
+
+      if (path.includes(module)) {
+        throw new IoCModuleCycleError(
+          [...path.slice(path.indexOf(module)), module].map((m) => m.Name),
+        );
+      }
+
+      for (const required of module.Requires ?? []) visit(required, [...path, module]);
+
+      if (self.starting) {
+        throw new IoCRegistrationError(
+          `Module '${module.Name}' was added after Start(); add modules before starting the ` +
+            `container.`,
+        );
+      }
+
+      if (self.modules.some((m) => m.Name === module.Name)) {
+        self.diagnose(
+          'IOC_MODULE_DUPLICATE',
+          `Two different modules are named '${module.Name}'; both were added.`,
+          module.Name,
+        );
+      }
+
+      const previous = self.applying;
+
+      self.applying = module.Name;
+
+      try {
+        module.Register(self);
+      } finally {
+        self.applying = previous;
+      }
+
+      self.modules.push(module);
+    };
+
+    for (const module of modules) visit(module, []);
+
+    return this;
+  }
+
+  /**
+   * Starts the container: checks the wiring with `Validate()` (skip it with
+   * `{ Validate: false }`), builds every singleton with `Activate()`, then runs each module's
+   * `OnStart` in the order the modules were added. If an `OnStart` fails, the modules already
+   * started are stopped (their `OnStop`, in reverse) and an {@link IoCStartError} is thrown;
+   * `Start()` can then be called again. Calling it again after it succeeded does nothing.
+   * `Dispose()` (or `await using`) runs the started modules' `OnStop` before disposing anything.
+   *
+   * @example
+   * ```ts
+   * import { IoCContainer, type IoCModule } from '@fathym/ioc';
+   *
+   * const events: string[] = [];
+   *
+   * const Server: IoCModule = {
+   *   Name: 'Server',
+   *   Register: () => {},
+   *   OnStart: () => events.push('listening'),
+   *   OnStop: () => events.push('closed'),
+   * };
+   *
+   * {
+   *   await using ioc = new IoCContainer().Use(Server);
+   *
+   *   await ioc.Start();
+   * }
+   *
+   * console.log(events); // ['listening', 'closed']
+   * ```
+   */
+  public Start(options?: { Validate?: boolean }): Promise<void> {
+    const self = this.self();
+
+    self.assertNotDisposed();
+
+    return self.starting ??= self.startNow(options);
+  }
+
+  //#endregion
+
+  //#region Internals
+
+  /**
+   * Runs `Start()` once.
+   *
+   * @ignore
+   */
+  protected async startNow(options?: { Validate?: boolean }): Promise<void> {
+    try {
+      if (options?.Validate !== false) this.Validate();
+
+      await this.Activate();
+
+      for (const module of this.modules) {
+        if (this.disposed || this.disposing) return;
+
+        try {
+          await module.OnStart?.(this);
+        } catch (err) {
+          throw new IoCStartError(module.Name, err, await this.stopModules());
+        }
+
+        this.started.push(module);
+      }
+    } catch (err) {
+      this.starting = undefined;
+      throw err;
+    }
+  }
+
+  /**
+   * Runs `OnStop` for the started modules, in reverse, collecting errors.
+   *
+   * @ignore
+   */
+  protected async stopModules(): Promise<unknown[]> {
+    const errors: unknown[] = [];
+
+    for (const module of this.started.splice(0).reverse()) {
+      try {
+        await module.OnStop?.(this);
+      } catch (err) {
+        errors.push(err);
+      }
+    }
+
+    return errors;
+  }
+
+  /**
+   * True when `module` was added to this container or a parent.
+   *
+   * @ignore
+   */
+  protected hasModule(module: IoCModule): boolean {
+    for (const c of this.chain()) {
+      if (c.modules?.includes(module)) return true;
+    }
+
+    return false;
+  }
+
+  /**
+   * Stops the modules, then disposes the owned instances.
+   *
+   * @ignore
+   */
+  protected async disposeNow(): Promise<void> {
+    const self = this.self();
+
+    // Modules stop while their services are still alive.
+    const errors: unknown[] = await self.stopModules();
+
     self.disposed = true;
 
     const owned = self.owned.splice(0).reverse();
-
-    const errors: unknown[] = [];
 
     for (const value of owned) {
       try {
@@ -1462,20 +1734,12 @@ export class IoCContainer<TKeys = any> {
     self.scopedHolders.clear();
     self.services.clear();
     self.byCtor.clear();
+    self.origins.clear();
 
     if (errors.length) {
       throw new IoCDisposeError(errors);
     }
   }
-
-  /** Same as {@link IoCContainer.Dispose}; enables `await using`. */
-  public async [Symbol.asyncDispose](): Promise<void> {
-    await this.Dispose();
-  }
-
-  //#endregion
-
-  //#region Internals
 
   /**
    * The resolution frame a call continues: the view's frame, else the running factory's.

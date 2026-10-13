@@ -34,6 +34,8 @@ here, and CI fails if a new one is added without an entry. For problems that don
 | `IoCScopeRequiredError`         | `IOC_SCOPE_REQUIRED`                          | [Scoped service … was resolved outside a scope](#scoped-service--was-resolved-outside-a-scope) (strict mode)   |
 | `IoCDuplicateRegistrationError` | `IOC_DUPLICATE_REGISTRATION`                  | [… is already registered](#-is-already-registered) (strict mode)                                               |
 | `IoCKeyCollisionError`          | `IOC_KEY_COLLISION`                           | [The key '…' is used by both a class and a token](#the-key--is-used-by-both-a-class-and-a-token) (strict mode) |
+| `IoCModuleCycleError`           | `IOC_MODULE_CYCLE`                            | [Module dependency cycle: …](#module-dependency-cycle-a---b---a)                                               |
+| `IoCStartError`                 | `IOC_START_FAILED`                            | [Module '…' failed to start: …](#module--failed-to-start-)                                                     |
 | TypeScript                      | —                                             | [Compile errors](#typescript-errors)                                                                           |
 
 All error classes are exported from `@fathym/ioc`. Each one has a stable `code`; match on the code
@@ -214,6 +216,31 @@ An `AggregateError` from `Dispose()` (or `await using`) when one or more dispose
 instance is still disposed, and `errors` holds each disposer's error, in disposal order (last
 created first). See [disposal](../concepts/disposal.md#order-and-errors).
 
+When modules were started, their `OnStop` errors come first in `errors`: `OnStop` runs before any
+instance is disposed, and a failing `OnStop` doesn't stop the rest of the shutdown.
+
+---
+
+## Module dependency cycle: A -> B -> A.
+
+`IoCModuleCycleError` from `Use()`. Modules list each other in `Requires` in a loop, so none of
+them can be registered first. `Path` holds the module names around the loop. **Fix:** move what
+both modules need into a third module that both require.
+
+---
+
+## Module '…' failed to start: ….
+
+```text
+Module 'Server' failed to start: port in use
+```
+
+`IoCStartError` from `Start()`. The module's `OnStart` threw; its error is the `cause`, and the
+end of the message is its message. The modules started before it have already been stopped, in
+reverse order; any errors their `OnStop` threw are in `RollbackErrors`. **Fix:** fix the cause and
+call `Start()` again: nothing is left half-started. See
+[modules and lifecycle](../guides/modules-and-lifecycle.md).
+
 ---
 
 ## Registration errors
@@ -260,6 +287,17 @@ Keys must be typed tokens, symbols or classes, but a string was given. Use IoCTo
 `IoCRegistrationError` with code `IOC_INVALID_KEY`. A string (or another non-key value) was passed
 where a key is expected, for example `ioc.Resolve('Db')`. **Fix:** declare a token once and import
 it (`const $Db = IoCToken<Db>('Db')`), or use `ioc.Symbol('Db')` in older code.
+
+### A module needs a Name and a Register(ioc) function.
+
+`Use()` was given something that isn't an `IoCModule`, often `undefined` from a misspelled import
+or a circular import. **Fix:** check the import, and give the object a `Name` and a `Register`.
+
+### Module '…' was added after Start(); add modules before starting the container.
+
+`Use()` was called after `Start()`, so the module's `OnStart` would never run. **Fix:** add every
+module before `Start()`. To load plugins later, create a scope for them
+(`ioc.CreateScope().Use(plugin)`) and start the scope.
 
 ---
 

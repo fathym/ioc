@@ -30,7 +30,7 @@ runnable example, checked in CI.
 - **Registration:** [Register](#registerkey-factory-options), [RegisterClass](#registerclassclass-options), [RegisterFactory](#registerfactorykey-factory-options), [RegisterValue](#registervaluekey-value-options), [Decorate](#decoratekey-decorator-options), [Unregister](#unregisterkey-name)
 - **Typed containers:** [Typed](#typed), [Expect](#expectkeys)
 - **Resolution:** [Resolve](#resolvekey-name), [TryResolve](#tryresolvekey-name), [ResolveAll](#resolveallkey), [Has](#haskey-name)
-- **Lifecycle:** [Validate](#validate), [Activate](#activate), [CreateScope](#createscope), [Dispose](#dispose)
+- **Lifecycle:** [Validate](#validate), [Activate](#activate), [Use](#usemodules), [ModuleFromContainer](#modulefromcontainername-container-options), [Start](#startoptions), [CreateScope](#createscope), [Dispose](#dispose)
 - **Copying and low level:** [CopyTo](#copytotarget), [Symbol](#symbolid), [RegisterDirect / ResolveDirect](#registerdirect-and-resolvedirect), [services / symbols](#services-and-symbols)
 - **Types:** [IoCToken](#ioctokenid), [options](#options), [dependency types](#dependency-types), [registry types](#registry-types), [other types](#other-types), [errors](#error-classes)
 
@@ -507,6 +507,92 @@ await ioc.Activate();
 console.log(built); // true
 ```
 
+### Use(...modules)
+
+```ts ignore
+Use(...modules: IoCModule[]): this
+```
+
+Adds [modules](../guides/modules-and-lifecycle.md). Each module's `Requires` are added first,
+depth-first, then its `Register(ioc)` runs. A module already added here or in a parent is skipped.
+Registrations a module makes are recorded as its own.
+
+**Throws:** [`IoCModuleCycleError`](./errors.md#module-dependency-cycle-a---b---a) for a
+requirement loop; `IoCRegistrationError` for an object that isn't a module, or for a module added
+after `Start()`. Two different modules with one `Name` are reported to `Diagnostics`
+(`IOC_MODULE_DUPLICATE`).
+
+```ts
+import { IoCContainer, type IoCModule, IoCToken } from '@fathym/ioc';
+
+const $Port = IoCToken<number, 'Port'>('Port');
+
+const Http: IoCModule = { Name: 'Http', Register: (ioc) => ioc.RegisterValue($Port, 8080) };
+
+const ioc = new IoCContainer().Use(Http);
+
+console.log(await ioc.Resolve($Port)); // 8080
+```
+
+| `IoCModule` member | Meaning                                                                        |
+| ------------------ | ------------------------------------------------------------------------------ |
+| `Name`             | A readable name, used in errors and introspection                              |
+| `Requires?`        | Modules to add (and start) before this one                                     |
+| `Register(ioc)`    | Adds the module's registrations; synchronous                                   |
+| `OnStart?(ioc)`    | Runs from `Start()`, after every singleton was built, in module order          |
+| `OnStop?(ioc)`     | Runs from `Dispose()`, in reverse, before any instance is disposed, if started |
+
+### ModuleFromContainer(name, container, options?)
+
+```ts ignore
+ModuleFromContainer(name: string, container: { CopyTo(ioc): void }, options?: {
+  Defaults?: boolean; Requires?: IoCModule[]; OnStart?(ioc): unknown; OnStop?(ioc): unknown;
+}): IoCModule
+```
+
+Wraps a container someone else built (of any version) as a module: `Register` copies its
+registrations in with `CopyTo`. With `Defaults: true`, only registrations the host doesn't
+already have are copied, so the host always wins.
+
+```ts
+import { IoCContainer, IoCToken, ModuleFromContainer } from '@fathym/ioc';
+
+const $Theme = IoCToken<string, 'ApiTheme'>('ApiTheme');
+
+const plugin = new IoCContainer().RegisterValue($Theme, 'plugin');
+
+const host = new IoCContainer()
+  .RegisterValue($Theme, 'host')
+  .Use(ModuleFromContainer('Plugin', plugin, { Defaults: true }));
+
+console.log(await host.Resolve($Theme)); // host
+```
+
+### Start(options?)
+
+```ts ignore
+Start(options?: { Validate?: boolean }): Promise<void>
+```
+
+Runs `Validate()` (unless `Validate: false`), then `Activate()`, then each module's `OnStart` in
+the order the modules were added. Repeat and concurrent calls share one start.
+
+**Throws:** whatever `Validate()` or `Activate()` throws, or
+[`IoCStartError`](./errors.md#module--failed-to-start-) when an `OnStart` fails. The modules
+already started are stopped first, and `Start()` can be called again.
+
+```ts
+import { IoCContainer } from '@fathym/ioc';
+
+const ioc = new IoCContainer().Use({
+  Name: 'Banner',
+  Register: () => {},
+  OnStart: () => console.log('started'),
+});
+
+await ioc.Start(); // started
+```
+
 ### CreateScope()
 
 ```ts ignore
@@ -552,9 +638,11 @@ Dispose(): Promise<void>
 Disposes the instances this container created that implement `Symbol.asyncDispose` or
 `Symbol.dispose`. It runs in reverse creation order, then clears the registrations.
 
-- **Never disposed:** transients and values.
+- **Modules first:** if `Start()` ran, each started module's `OnStop` runs, in reverse, before any
+  instance is disposed.
+- **Never disposed:** transients and values (unless registered with a `Dispose` option).
 - **Scopes:** disposing a container doesn't dispose its scopes.
-- **Repeat calls** do nothing.
+- **Repeat calls** do nothing; a call made while one is running waits for it.
 - **Afterwards,** using the container throws `IoCContainerDisposedError`.
 - **Errors:** if disposers throw, the method rejects with
   [`AggregateError: Errors occurred while disposing …`](./errors.md#errors-occurred-while-disposing-the-ioc-container).
@@ -740,12 +828,22 @@ module can require keys with a type parameter for the rest:
 
 ### Error classes
 
-| Class                        | Properties                                         | Catalog entry                                                                                |
-| ---------------------------- | -------------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| `IoCServiceNotFoundError`    | `Symbol`, `ServiceName`, `RegisteredNames`, `Path` | [No Service for symbol …](./errors.md#no-service-for-symbol--with-name--has-been-registered) |
-| `IoCCircularDependencyError` | `Path`                                             | [Circular dependency detected …](./errors.md#circular-dependency-detected-a---b---a)         |
-| `IoCValidationError`         | `Problems`                                         | [IoC validation failed](./errors.md#ioc-validation-failed)                                   |
-| `IoCContainerDisposedError`  | none                                               | [The IoC container has been disposed.](./errors.md#the-ioc-container-has-been-disposed)      |
+Every class has a stable `code`; check it with `isIoCError(err, code?)`.
+
+| Class                           | Properties                                         | Catalog entry                                                                                      |
+| ------------------------------- | -------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| `IoCServiceNotFoundError`       | `Symbol`, `ServiceName`, `RegisteredNames`, `Path` | [No Service for symbol …](./errors.md#no-service-for-symbol--with-name--has-been-registered)       |
+| `IoCCircularDependencyError`    | `Path`                                             | [Circular dependency detected …](./errors.md#circular-dependency-detected-a---b---a)               |
+| `IoCValidationError`            | `Problems`, `Issues`                               | [IoC validation failed](./errors.md#ioc-validation-failed)                                         |
+| `IoCContainerDisposedError`     | none                                               | [The IoC container has been disposed.](./errors.md#the-ioc-container-has-been-disposed)            |
+| `IoCActivationError`            | `errors`, `Services`                               | [IoC activation failed for …](./errors.md#ioc-activation-failed-for-)                              |
+| `IoCDisposeError`               | `errors`                                           | [Errors occurred while disposing …](./errors.md#errors-occurred-while-disposing-the-ioc-container) |
+| `IoCRegistrationError`          | none                                               | [Registration errors](./errors.md#registration-errors)                                             |
+| `IoCScopeRequiredError`         | `Service`, `Level`                                 | [Scoped service … outside a scope](./errors.md#scoped-service--was-resolved-outside-a-scope)       |
+| `IoCDuplicateRegistrationError` | `Service`                                          | [… is already registered](./errors.md#-is-already-registered)                                      |
+| `IoCKeyCollisionError`          | `Key`                                              | [The key '…' is used by both …](./errors.md#the-key--is-used-by-both-a-class-and-a-token)          |
+| `IoCModuleCycleError`           | `Path`                                             | [Module dependency cycle …](./errors.md#module-dependency-cycle-a---b---a)                         |
+| `IoCStartError`                 | `Module`, `cause`, `RollbackErrors`                | [Module '…' failed to start …](./errors.md#module--failed-to-start-)                               |
 
 ## What's Next
 

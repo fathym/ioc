@@ -315,3 +315,52 @@ export class IoCDisposeError extends AggregateError {
     super(errors, 'Errors occurred while disposing the IoC container.');
   }
 }
+
+/** Thrown by `Use()` when modules require each other in a loop. */
+export class IoCModuleCycleError extends IoCError {
+  /** The error name, for logs and `instanceof`-free checks. */
+  public override name = 'IoCModuleCycleError';
+
+  /** The stable error code. */
+  public readonly code = 'IOC_MODULE_CYCLE' as const;
+
+  /**
+   * Creates the error.
+   *
+   * @param Path The module names around the loop, starting and ending with the same module.
+   */
+  constructor(public readonly Path: string[]) {
+    super(`Module dependency cycle: ${Path.join(' -> ')}.`);
+  }
+}
+
+/**
+ * Thrown by `Start()` when a module's `OnStart` fails. The modules started before it have
+ * already been stopped (their `OnStop` ran, in reverse order); errors from those stops are in
+ * `RollbackErrors`. The original failure is the `cause`.
+ */
+export class IoCStartError extends IoCError {
+  /** The error name, for logs and `instanceof`-free checks. */
+  public override name = 'IoCStartError';
+
+  /** The stable error code. */
+  public readonly code = 'IOC_START_FAILED' as const;
+
+  /**
+   * Creates the error.
+   *
+   * @param Module The name of the module whose `OnStart` failed.
+   * @param cause The error it threw.
+   * @param RollbackErrors Errors thrown by `OnStop` while rolling back.
+   */
+  constructor(
+    public readonly Module: string,
+    cause: unknown,
+    public readonly RollbackErrors: unknown[] = [],
+  ) {
+    super(
+      `Module '${Module}' failed to start: ${cause instanceof Error ? cause.message : cause}`,
+      { cause },
+    );
+  }
+}
