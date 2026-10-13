@@ -64,12 +64,13 @@ registered for the key and name.
 No Service for symbol 'Db' with name 'replica' has been registered. Registered names: [$default]. Resolution path: NotesService -> Repo.
 ```
 
-| Part                                    | Means                                                                                                                      |
-| --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| `symbol 'Db'`                           | The key: a class name, or a token's / symbol's description                                                                 |
-| `name 'replica'`                        | The registration name requested (`$default` when you passed none)                                                          |
-| `Registered names: [$default]`          | Only present when the key has registrations under _other_ names                                                            |
-| `Resolution path: NotesService -> Repo` | Only present when the lookup happened while building other services: `NotesService` was building `Repo`, which needed `Db` |
+| Part                                                                                    | Means                                                                                                                                       |
+| --------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `symbol 'Db'`                                                                           | The key: a class name, or a token's / symbol's description                                                                                  |
+| `name 'replica'`                                                                        | The registration name requested (`$default` when you passed none)                                                                           |
+| `Registered names: [$default]`                                                          | Only present when the key has registrations under _other_ names                                                                             |
+| `Resolution path: NotesService -> Repo`                                                 | Only present when the lookup happened while building other services: `NotesService` was building `Repo`, which needed `Db`                  |
+| `It is declared with Expect(); register it on the container or scope that provides it.` | Only present when the key was declared with `Expect()`: it is expected to be registered elsewhere (often on each request scope), but wasn't |
 
 The error object exposes the same information as properties: `Symbol`, `ServiceName`,
 `RegisteredNames` and `Path`.
@@ -249,6 +250,16 @@ use `RegisterFactory` for factories.
 
 `RegisterFactory` received something that isn't a function. **Fix:** pass a function, or use
 `RegisterValue` for a value.
+
+### Keys must be typed tokens, symbols or classes, but a … was given.
+
+```text
+Keys must be typed tokens, symbols or classes, but a string was given. Use IoCToken('Name') or ioc.Symbol('Name') instead of a string.
+```
+
+`IoCRegistrationError` with code `IOC_INVALID_KEY`. A string (or another non-key value) was passed
+where a key is expected, for example `ioc.Resolve('Db')`. **Fix:** declare a token once and import
+it (`const $Db = IoCToken<Db>('Db')`), or use `ioc.Symbol('Db')` in older code.
 
 ---
 

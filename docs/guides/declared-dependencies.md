@@ -171,7 +171,7 @@ Read it as "a `Clock` is needed, but only `Config` is registered so far". Move t
 | `RegisterClass(PgDb, { Type: $Db })`            | the token (not `PgDb`) | `$Db`                |
 | `RegisterFactory($Db, …)` / `RegisterValue(…)`  | the key                | `$Db`                |
 | `…({ Name: 'replica' })`                        | the key with that name | `[$Db, 'replica']`   |
-| `Expect($Request)`                              | the key (type-only)    | `$Request`           |
+| `Expect($Request)`                              | the key (declared)     | `$Request`           |
 | anything keyed by a plain symbol, or `Register` | nothing                | –                    |
 
 - **Order is the point.** A class must come after everything it depends on. Moving a
@@ -213,8 +213,10 @@ scope.RegisterValue($Request, new Request('http://localhost/notes'));
 console.log((await scope.Resolve(Handler)).req.url); // http://localhost/notes
 ```
 
-`Expect` is type-only. It registers nothing, and `Validate()` on the root still reports
-`$Request` as not registered, because it's only registered on scopes.
+`Expect` registers nothing. It tells the typed container's `Deps` and `Validate()` that the key
+will be provided, so validating the root passes even though `$Request` is only registered on
+scopes. If something resolves `Handler` where no scope registered `$Request`, the error says the
+key was declared with `Expect()` and where to register it.
 
 ### Modules
 

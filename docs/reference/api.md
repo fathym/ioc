@@ -286,10 +286,12 @@ Expect<const TDeps extends readonly (IoCDependencyKey<any> | [IoCDependencyKey<a
 ```
 
 Declares keys registered somewhere else (by another module, a parent, or each scope), so a typed
-container's `Deps` may name them. Pass `[key, name]` for a named registration.
+container's `Deps` may name them and `Validate()` counts them as provided. Pass `[key, name]` for
+a named registration.
 
-**Type-only:** nothing is registered, and `Validate()` still reports a dependency that nothing
-registers. **Returns:** the same container.
+**Nothing is registered:** resolving an expected key where nobody registered it still throws
+`IoCServiceNotFoundError`, with the hint "It is declared with Expect(); register it on the container
+or scope that provides it." **Returns:** the same container.
 
 ```ts
 import { IoCContainer, IoCToken } from '@fathym/ioc';
@@ -397,6 +399,27 @@ ioc.RegisterValue($Plugin, 'audit', { Name: 'audit' });
 console.log(await ioc.ResolveAll($Plugin)); // [ "metrics", "audit" ]
 ```
 
+### Names(key)
+
+```ts ignore
+Names(key: IoCToken<unknown> | Class<unknown> | symbol): string[]
+```
+
+The names registered for a key (including `$default`), nearest scope first, **without building
+anything**. Use it for plugin registries keyed by name.
+
+```ts
+import { IoCContainer, IoCToken } from '@fathym/ioc';
+
+const $Exporter = IoCToken<(data: string) => string>('Exporter');
+
+const ioc = new IoCContainer()
+  .RegisterValue($Exporter, (d) => `csv:${d}`, { Name: 'csv' })
+  .RegisterValue($Exporter, (d) => `json:${d}`, { Name: 'json' });
+
+console.log(ioc.Names($Exporter)); // [ "csv", "json" ]
+```
+
 ### Has(key, name?)
 
 ```ts ignore
@@ -424,12 +447,14 @@ console.log(ioc.Has($Cache), ioc.Has($Cache, 'other')); // true false
 ### Validate()
 
 ```ts ignore
-Validate(): void
+Validate(options?: { Throw?: boolean }): IoCValidationIssue[]
 ```
 
 Checks the dependencies declared with `Deps`, in this container and its parents, without building
-anything. It throws one
-[`IoCValidationError`](./errors.md#ioc-validation-failed) listing every problem:
+anything. Keys declared with [`Expect`](#expectkeys) count as provided. It throws one
+[`IoCValidationError`](./errors.md#ioc-validation-failed) listing every problem; with
+`{ Throw: false }` it returns the problems instead (`{ Kind, Service, Message }`, where `Kind` is
+`'missing' | 'cycle' | 'captive' | 'arguments'`), and an empty array when there are none:
 
 - missing dependencies;
 - cycles;
@@ -664,12 +689,13 @@ console.log(typeof $Port, port); // symbol 8080
 | `IoCRegisterOptions<TName>`            | `IoCServiceOptions` without `Type`; `Name` typed as `TName`                                                               | `Register(token, …)`, `RegisterFactory`   |
 | `IoCRegisterClassOptions<C, TKeys, …>` | `Lifetime`, `Lazy`, `Name`, `Deps?: IoCDependenciesFor<ConstructorParameters<C>, TKeys>`, `Type?` (a token `C` satisfies) | `RegisterClass`                           |
 
-| Option     | Default      | Meaning                                                                         |
-| ---------- | ------------ | ------------------------------------------------------------------------------- |
-| `Lifetime` | singleton    | `'transient'`: new per resolve; `'scoped'`: one per scope                       |
-| `Lazy`     | `false`      | Build a singleton or scoped service on first resolve instead of at registration |
-| `Name`     | `'$default'` | Register several services under one key                                         |
-| `Type`     | the class    | The key, as a symbol or token                                                   |
+| Option     | Default      | Meaning                                                                                                                                                                           |
+| ---------- | ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Lifetime` | singleton    | `'transient'`: new per resolve; `'scoped'`: one per scope                                                                                                                         |
+| `Lazy`     | `false`      | Build a singleton or scoped service on first resolve instead of at registration                                                                                                   |
+| `Name`     | `'$default'` | Register several services under one key                                                                                                                                           |
+| `Type`     | the class    | The key, as a symbol or token                                                                                                                                                     |
+| `Dispose`  | —            | `(instance) => …`: cleanup run when the owner is disposed, for resources without `Symbol.dispose` (`kv => kv.close()`). On `RegisterClass`, `RegisterFactory` and `RegisterValue` |
 
 ### Dependency types
 

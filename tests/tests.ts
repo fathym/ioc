@@ -23,6 +23,7 @@ import './ioc/typed.tests.ts';
 import './ioc/codes.tests.ts';
 import './ioc/concurrency.tests.ts';
 import './ioc/ownership.tests.ts';
+import './ioc/fixes.tests.ts';
 import './ioc/deps.tests.ts';
 import './ioc/validate.tests.ts';
 import './ioc/edges.tests.ts';

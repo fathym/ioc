@@ -171,6 +171,34 @@ export function isClassLike(fn: unknown): fn is AnyFunction {
   return !!fn.name;
 }
 
+/**
+ * How many arguments constructing `ctor` expects. `Function.length` is 0 for a subclass that
+ * inherits its constructor (`class Sub extends Base {}`), so this walks up to the first class
+ * that declares a constructor.
+ */
+export function constructorArity(ctor: AnyFunction): number {
+  for (
+    let c: unknown = ctor;
+    typeof c === 'function' && c !== Function.prototype;
+    c = Object.getPrototypeOf(c)
+  ) {
+    if (c.length > 0) return c.length;
+
+    let source = '';
+
+    try {
+      source = Function.prototype.toString.call(c);
+    } catch {
+      return 0;
+    }
+
+    // Not a class (or an explicit constructor with no parameters): its length is accurate.
+    if (!/^class\b/.test(source) || /(^|[\s{;}])constructor\s*\(/.test(source)) return 0;
+  }
+
+  return 0;
+}
+
 /** True while `key` is being built further up the same resolution chain. */
 export function isOnActivePath(frame: IoCResolveFrame | undefined, key: object): boolean {
   for (let f = frame; f; f = f.parent) {

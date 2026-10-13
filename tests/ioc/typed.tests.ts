@@ -278,21 +278,20 @@ Deno.test('Typed containers - runtime', async (t) => {
     ioc.Validate();
   });
 
-  await t.step('Expect registers nothing: Validate still reports the missing key', () => {
+  await t.step('Expect counts as provided for Validate, but registers nothing', async () => {
     const ioc = new IoCContainer().Typed().Expect($Url).RegisterClass(UrlUser, {
       Deps: [$Url],
       Lazy: true,
     });
 
-    let message = '';
+    assertEquals(ioc.Validate(), []);
 
-    try {
-      ioc.Validate();
-    } catch (err) {
-      message = (err as Error).message;
-    }
+    const err = await assertRejects(() => ioc.Resolve(UrlUser));
 
-    assert(message.includes('UrlUser depends on TypedUrl, which is not registered.'), message);
+    assert(
+      (err as Error).message.includes('It is declared with Expect()'),
+      (err as Error).message,
+    );
   });
 
   await t.step('a scope of a typed container supplies an expected key', async () => {
