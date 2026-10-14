@@ -72,5 +72,6 @@ Every code example in these docs is type-checked in CI. Import from `jsr:@fathym
 
 - [Changelog](https://raw.githubusercontent.com/fathym/ioc/main/CHANGELOG.md): Notable changes to @fathym/ioc, newest first, following Keep a Changelog.
 - [Contributing](https://raw.githubusercontent.com/fathym/ioc/main/CONTRIBUTING.md): How to set up, test, document and propose changes to @fathym/ioc.
+- [Dependent Follow-Ups](https://raw.githubusercontent.com/fathym/ioc/main/docs/design/dependent-follow-ups.md): The changes the packages that depend on @fathym/ioc (steward, cli, eac, power-ai and the runtimes) can make to adopt the new features, each tied to the workaround it replaces. Nothing here is required; old code keeps working.
 - [IoC Next](https://raw.githubusercontent.com/fathym/ioc/main/docs/design/ioc-next.md): Design, decisions and migration notes for the 2026-10 iteration of @fathym/ioc (correctness fixes, typed tokens, scopes, disposal, declared dependencies).
 - [DI Ecosystem Feedback](https://raw.githubusercontent.com/fathym/ioc/main/docs/research/di-ecosystem-feedback.md): What developers like and dislike about TypeScript/JavaScript and .NET dependency-injection containers, and what it means for @fathym/ioc.

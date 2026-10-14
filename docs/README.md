@@ -120,6 +120,7 @@ Runnable programs, each showing one idea, run in CI: [examples/](../examples/REA
 | Document                                                                                 | Description                                                |
 | ---------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
 | [design/ioc-next.md](./design/ioc-next.md) _[Explanation]_                               | The design and decisions behind the current container      |
+| [design/dependent-follow-ups.md](./design/dependent-follow-ups.md) _[How-to]_            | Adoption changes for the packages that depend on this one  |
 | [research/di-ecosystem-feedback.md](./research/di-ecosystem-feedback.md) _[Explanation]_ | What developers like and dislike about other DI containers |
 
 ---

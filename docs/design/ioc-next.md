@@ -247,7 +247,35 @@ depend on.
   - registration: about 1 µs;
   - `CopyTo`: about 2.8× faster.
 
+### Review probes, re-run
+
+The traps found by the two external reviews (defects D1–D8, risks R1–R4), re-run against the
+current code. "Before" is what the reviews reported; timings are Deno on one machine, best of
+several runs:
+
+| Probe                                                                  | Before                                    | Now                                                                                                           |
+| ---------------------------------------------------------------------- | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `Promise.all([A, B])` over a cycle (4 timing variants)                 | could hang (D1)                           | `IOC_CIRCULAR_DEPENDENCY`                                                                                     |
+| `Activate()` over a cycle (4 timing variants)                          | could hang (D1)                           | `IOC_ACTIVATION_FAILED` wrapping cycle errors                                                                 |
+| Eager factory resolving after `await` in a cycle                       | could hang (D2)                           | `IOC_CIRCULAR_DEPENDENCY`                                                                                     |
+| `Deps` class cycle under `Promise.all`                                 | could hang (D1)                           | `IOC_CIRCULAR_DEPENDENCY`                                                                                     |
+| Cycle through a captured container                                     | hang                                      | hang by default; `IOC_CIRCULAR_DEPENDENCY` with `AsyncContext`; `IOC_RESOLVE_TIMEOUT` with `PendingTimeoutMs` |
+| Decorator returning its inner instance                                 | disposed twice                            | disposed once                                                                                                 |
+| Decorating in a scope                                                  | scope disposed the parent's singleton     | parent's singleton untouched                                                                                  |
+| Singleton shared through `CopyTo`                                      | disposed by both                          | disposed once, by its creator                                                                                 |
+| Instance finishing after `Dispose()`                                   | leaked                                    | disposed on arrival                                                                                           |
+| One instance per tenant across its requests                            | not expressible (one per innermost scope) | `ScopeLevel: 'tenant'`                                                                                        |
+| Scoped service resolved from the root                                  | silently a singleton                      | `IOC_SCOPE_REQUIRED` (strict)                                                                                 |
+| Unregistered class with a registered namesake                          | resolved the namesake                     | `IOC_SERVICE_NOT_FOUND` (strict); `IOC_CLASS_NAME_FALLBACK` diagnostic otherwise                              |
+| Duplicate registration                                                 | silent last-wins                          | `IOC_DUPLICATE_REGISTRATION` (strict); diagnostic otherwise                                                   |
+| String key                                                             | `TypeError`                               | `IOC_INVALID_KEY`                                                                                             |
+| Factory dependencies in `Validate()`                                   | invisible                                 | checked with factory `Deps`                                                                                   |
+| 1,000 random graphs (random delays, `Activate` or concurrent resolves) | n/a                                       | 0 hangs, 0 false cycles, 502/502 detected cycles where a cycle was entered                                    |
+| `Activate()`, 1,000-service chain / layered graph                      | 17 / 14 ms (no cycle checks)              | 21–29 / 19–20 ms                                                                                              |
+
 ## Follow-ups
+
+The per-repository adoption list is in [dependent-follow-ups.md](./dependent-follow-ups.md).
 
 - **Dependents' own test suites.** Run them against this branch, through a local JSR override
   (`patch` / `links`), before publishing. Start with `@fathym/common`, `@fathym/cli` and
