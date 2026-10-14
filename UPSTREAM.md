@@ -34,10 +34,10 @@ References:
 
 ## Versions
 
-| Version | Status                     | Notes                                                                           |
-| ------- | -------------------------- | ------------------------------------------------------------------------------- |
-| 0.0.36  | Latest published           | The original container; 0.0.12–0.0.36 share one API                             |
-| 0.1.0   | Candidate (`[Unreleased]`) | Typed tokens, scopes, disposal, `Validate`, error codes, `Default`, strict mode |
+| Version | Status                 | Notes                                                                                                                            |
+| ------- | ---------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| 0.0.36  | Latest published       | The original container; 0.0.12–0.0.36 share one API                                                                              |
+| 0.1.0   | Releasing (minor bump) | Typed tokens, scopes, disposal, `Validate`, error codes, `Default`, strict mode, modules and lifecycle, scope levels, `Describe` |
 
 **Versions pinned by dependents** (from the dependent survey in
 [ioc-next.md](./docs/design/ioc-next.md)): 0.0.12 (`eac-runtime`), 0.0.35 (`eac-applications`)
@@ -64,6 +64,12 @@ commit here.
 2. Run the dependents' suites (`cli`, `eac-runtime`, `steward`) against the candidate through a
    local JSR override (`patch` / `links`).
 3. Update the version table above with the published version and its commit.
+
+**How the version is chosen.** The `fathym/build-n-publish` workflow computes it on every push
+with `paulhatch/semantic-version`: each commit bumps the patch, a commit whose message contains
+`(MINOR)` bumps the minor version, and `(MAJOR)` the major. `main` publishes the stable version;
+other branches publish a prerelease suffixed with the branch name. The workflow then writes the
+version into `deno.jsonc`, publishes to JSR and tags the commit.
 
 ## What's Next
 

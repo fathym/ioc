@@ -25,7 +25,13 @@ always with migration notes).
 
 ## [Unreleased]
 
-Recommended release: **0.1.0**. See [migrating from 0.0.x](./docs/migration/from-0.0.x.md).
+Nothing yet.
+
+## [0.1.0]
+
+The first minor release: a rewritten container core, typed APIs, scopes and disposal, modules and
+lifecycle, and the full documentation set. Existing code keeps working, and containers from
+0.0.x interoperate in the same process. See [migrating from 0.0.x](./docs/migration/from-0.0.x.md).
 
 ### Added
 
@@ -152,5 +158,6 @@ The original container: `Register`, `Resolve`, `CopyTo`, transient and scoped li
 named registrations. Versions 0.0.12–0.0.36 share the same API, and they interoperate with the
 current version in one process.
 
-[Unreleased]: https://github.com/fathym/ioc/compare/0.0.36...HEAD
+[Unreleased]: https://github.com/fathym/ioc/compare/v0.1.0...HEAD
+[0.1.0]: https://jsr.io/@fathym/ioc@0.1.0
 [0.0.36]: https://jsr.io/@fathym/ioc@0.0.36

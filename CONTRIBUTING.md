@@ -118,7 +118,9 @@ still checked.
 Releases are built and published by the shared `fathym/build-n-publish` workflow. Before a
 release:
 
-1. Move the `[Unreleased]` notes in the changelog under the new version.
+1. Move the `[Unreleased]` notes in the changelog under the new version, and put `(MINOR)` (or
+   `(MAJOR)`) in that commit's message: the workflow bumps the version from those markers;
+   every other commit bumps the patch version.
 2. Run `deno task test:runtimes --require-all` (CI runs it on Node.js 20, 22 and 24 and Bun).
 3. Run the test suites of the main dependents against the release candidate.
 4. JSR is the primary registry. To publish to npm as well, run
