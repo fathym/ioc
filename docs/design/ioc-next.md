@@ -114,10 +114,19 @@ Frames are marked settled once their factory finishes. A view a service keeps an
 therefore never reports a false cycle.
 
 Two resolutions can enter one cycle from opposite ends at the same time (`Promise.all`,
-`Activate()`), so that each waits on the other's pending build. A pending holder records the frame
-building it (`building`) and the holders that build is waiting on (`waits`). Before a resolution
-waits on a pending holder that is not on its own path, it follows `waits` from that holder; if it
-reaches a holder this resolution is building, it throws instead of waiting.
+`Activate()`), so that each waits on the other's pending build. The container keeps a wait-for
+graph with two kinds of edges, both removed when a build settles: `children` (a build started
+beneath another, in the same chain) and `waits` (the innermost pending build of a chain waiting
+on a build another resolution owns). Before a resolution waits on a pending holder that is not
+on its own path, it checks whether that holder reaches a holder this resolution is building; if
+so, it throws instead of waiting. A cycle can only enter a chain through a `waits` edge, so the
+search is skipped entirely when nothing waits on any holder of the chain. Both keep the graph
+linear in the number of pending builds; `Activate()` over 1,000 services stays within about 1.5×
+of the version without the check.
+
+When a build fails, resolves still running inside it (siblings in a `Promise.all`) start no new
+builds: they reject with the build's error. Without that, failures (which are retried) could keep
+restarting each other in the background after `Activate()` had already rejected.
 
 ### Same-named classes
 

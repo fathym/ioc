@@ -51,7 +51,10 @@ is what the [cross-version protocol](./docs/reference/protocol.md) exists for.
 | `tests/fixtures/legacy-ioc.ts` | 0.0.36              | Characterization and interop tests    |
 | `tests/fixtures/ioc-0.1/`      | The 0.1.0 candidate | Interop tests for every later version |
 
-A fixture is never edited after it is frozen (formatting and linting skip `tests/fixtures/`).
+A fixture is never edited after its version is published (formatting and linting skip
+`tests/fixtures/`). The 0.1.0 candidate fixture received two fixes found before release: a
+linear wait-for graph (concurrent cycle detection was quadratic in chain depth) and abandoned
+builds starting no new work.
 When 0.1.0 is published, check that the frozen copy matches the published `src/` and record the
 commit here.
 

@@ -40,6 +40,10 @@ import {
   settleInto,
   waitPath,
   withFrame,
+  attachBuild,
+  nearestHolder,
+  releaseBuild,
+  abandonedBy,
 } from './internals.ts';
 import type { IoCToken } from './IoCToken.ts';
 
@@ -1898,13 +1902,22 @@ export class IoCContainer<TKeys = any> {
         result = withFrame(frame, () => factory(arg));
       } catch (err) {
         frame.settled = true;
+        frame.failed = { error: err };
         throw err;
       }
 
       if (result instanceof Promise) {
-        return result.finally(() => {
-          frame.settled = true;
-        });
+        return result.then(
+          (value) => {
+            frame.settled = true;
+            return value;
+          },
+          (err) => {
+            frame.settled = true;
+            frame.failed = { error: err };
+            throw err;
+          },
+        );
       }
 
       frame.settled = true;
@@ -1932,21 +1945,38 @@ export class IoCContainer<TKeys = any> {
         const mine = activeHolders(frame);
 
         if (mine.length) {
-          const via = waitPath(h, new Set(mine));
+          // A cycle has to enter this chain through a wait on one of its holders; when nothing
+          // waits on any of them, there is nothing to search.
+          if (mine.some((p) => p.waitedBy)) {
+            const via = waitPath(h, new Set(mine));
 
-          if (via) throw new IoCCircularDependencyError([...framePath(frame), ...via]);
+            if (via) throw new IoCCircularDependencyError([...framePath(frame), ...via]);
+          }
 
-          for (const p of mine) (p.waits ??= new Set()).add(h);
+          // Only the innermost build records the wait; `children` links it to the builds above.
+          const waiter = mine[0];
+
+          (waiter.waits ??= new Set()).add(h);
+
+          h.waitedBy = (h.waitedBy ?? 0) + 1;
 
           h.promise.finally(() => {
-            for (const p of mine) p.waits?.delete(h);
+            waiter.waits?.delete(h);
+            h.waitedBy!--;
           }).catch(noop);
         }
 
         return h.promise;
       }
 
+      // A resolve left running inside a build that already failed starts nothing new.
+      const abandoned = abandonedBy(frame);
+
+      if (abandoned) throw abandoned.error;
+
       h.state = 'pending';
+
+      attachBuild(h, nearestHolder(frame));
 
       let result: unknown;
 
@@ -1954,7 +1984,7 @@ export class IoCContainer<TKeys = any> {
         result = run(buildOn, frame, h);
       } catch (err) {
         h.state = 'empty';
-        h.building = undefined;
+        releaseBuild(h);
         throw err;
       }
 
@@ -1990,6 +2020,10 @@ export class IoCContainer<TKeys = any> {
           if (isOnActivePath(frame, reg)) {
             throw new IoCCircularDependencyError([...framePath(frame), label]);
           }
+
+          const abandoned = abandonedBy(frame);
+
+          if (abandoned) throw abandoned.error;
 
           return run(container, frame, reg);
         }
@@ -2033,7 +2067,7 @@ export class IoCContainer<TKeys = any> {
         result = run(self, undefined, holder);
       } catch (err) {
         holder.state = 'empty';
-        holder.building = undefined;
+        releaseBuild(holder);
         throw err;
       }
 

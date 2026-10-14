@@ -214,3 +214,125 @@ Deno.test('Concurrency - no false cycles', async (t) => {
     assertEquals(a.id, b.id);
   });
 });
+
+Deno.test('Concurrency - a failed build starts nothing new', async (t) => {
+  await t.step('after Activate() fails on a cycle, no factory keeps rebuilding', async () => {
+    const ioc = new IoCContainer();
+
+    const keys = ['ConcLiveA', 'ConcLiveB', 'ConcLiveC', 'ConcLiveD'].map((id) =>
+      IoCToken<number>(id)
+    );
+
+    // A <-> B is a cycle; C and D fan out across it, so each failure leaves siblings running.
+    const deps = [[1, 2], [0, 3], [0, 1], [1]];
+
+    let calls = 0;
+
+    keys.forEach((key, i) => {
+      ioc.RegisterFactory(key, async (c) => {
+        calls++;
+        await tick();
+        const values = await Promise.all(deps[i].map((d) => c.Resolve(keys[d])));
+        return values.reduce((a, b) => a + b, 1);
+      }, { Lazy: true });
+    });
+
+    await assertRejects(() => within(ioc.Activate()), AggregateError);
+
+    const settled = calls;
+
+    await new Promise((r) => setTimeout(r, 30));
+
+    assertEquals(calls, settled);
+  });
+
+  await t.step('a later resolve (outside the failed build) still retries', async () => {
+    const $Flaky = IoCToken<number>('ConcLiveFlaky');
+    const $User = IoCToken<number>('ConcLiveUser');
+
+    let fail = true;
+
+    const ioc = new IoCContainer()
+      .RegisterFactory($Flaky, () => {
+        if (fail) throw new Error('down');
+        return 1;
+      }, { Lazy: true })
+      .RegisterFactory($User, async (c) => (await c.Resolve($Flaky)) + 1, { Lazy: true });
+
+    await assertRejects(() => ioc.Resolve($User), Error, 'down');
+
+    fail = false;
+
+    assertEquals(await ioc.Resolve($User), 2);
+  });
+});
+
+Deno.test('Concurrency - randomized graphs never hang', async (t) => {
+  // A small seeded PRNG (mulberry32), so failures reproduce.
+  const rng = (seed: number) => () => {
+    seed |= 0;
+    seed = (seed + 0x6d2b79f5) | 0;
+    let x = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    x = (x + Math.imul(x ^ (x >>> 7), 61 | x)) ^ x;
+    return ((x ^ (x >>> 14)) >>> 0) / 4294967296;
+  };
+
+  const hasCycle = (edges: number[][]) => {
+    const state = new Map<number, number>();
+    const visit = (n: number): boolean => {
+      if (state.get(n) === 1) return true;
+      if (state.get(n) === 2) return false;
+      state.set(n, 1);
+      const found = edges[n].some(visit);
+      state.set(n, 2);
+      return found;
+    };
+    return edges.some((_, n) => visit(n));
+  };
+
+  for (let seed = 1; seed <= 60; seed++) {
+    await t.step(`seed ${seed}`, async () => {
+      const random = rng(seed);
+      const n = 3 + Math.floor(random() * 8);
+      const edges = Array.from(
+        { length: n },
+        (_, i) =>
+          Array.from({ length: n }, (_, j) => j).filter((j) =>
+            // Mostly forward edges (a DAG); now and then a back edge that makes a cycle.
+            j !== i && (j > i ? random() < 0.35 : random() < 0.04)
+          ),
+      );
+      const cyclic = hasCycle(edges);
+
+      const ioc = new IoCContainer();
+      const keys = edges.map((_, i) => IoCToken<number>(`ConcRand${seed}_${i}`));
+
+      edges.forEach((deps, i) => {
+        const wait = Math.floor(random() * 3);
+        ioc.RegisterFactory(keys[i], async (c) => {
+          if (wait) await new Promise((r) => setTimeout(r, wait));
+          const values = await Promise.all(deps.map((d) => c.Resolve(keys[d])));
+          return values.reduce((a, b) => a + b, 1);
+        }, { Lazy: true });
+      });
+
+      const entries = keys.filter(() => random() < 0.6);
+      const run = random() < 0.5
+        ? ioc.Activate()
+        : Promise.all((entries.length ? entries : keys).map((k) => ioc.Resolve(k)));
+
+      const result = await within(run.then(() => 'ok', (e) => e), 2000);
+
+      if (!cyclic) {
+        assertEquals(result, 'ok', `seed ${seed}: an acyclic graph failed: ${result}`);
+      } else if (result !== 'ok') {
+        const err = result as Error & { errors?: Error[] };
+        const all = err.errors ?? [err];
+        assert(
+          all.some((e) => e instanceof IoCCircularDependencyError),
+          `seed ${seed}: expected a cycle error, got ${all.map(String)}`,
+        );
+      }
+    });
+  }
+});

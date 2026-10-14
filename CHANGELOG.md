@@ -137,6 +137,8 @@ Recommended release: **0.1.0**. See [migrating from 0.0.x](./docs/migration/from
   Resolving no longer adds empty entries to `services`.
 - Circular dependencies throw `IoCCircularDependencyError` instead of hanging, including cycles
   entered from both ends at once (`Promise.all`, `Activate()`).
+- A build that failed no longer leaves its sibling resolves rebuilding in the background: after
+  `Activate()` (or a `Promise.all` in a factory) rejects, nothing keeps retrying.
 - Each disposable instance is disposed exactly once, by the container that created it: decorators
   returning the inner instance, alias factories and `CopyTo` no longer dispose twice, and a scope
   never disposes its parent's singleton. Instances that finish building after `Dispose()` are

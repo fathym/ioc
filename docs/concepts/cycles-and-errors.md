@@ -120,6 +120,10 @@ already in progress, the container checks whether that build is itself waiting o
 it is, the resolution throws `IoCCircularDependencyError` with the path (for example
 `B -> A -> B`) instead of waiting, so neither side hangs.
 
+When one part of a build fails (a cycle, or any error), the rest of that build stops too:
+resolves still running inside it start nothing new and reject with the same error. A resolve made
+afterwards, from outside the failed build, retries normally.
+
 ## Declared dependencies
 
 For classes registered with `Deps`, `Validate()` finds cycles **before anything runs**. It reads

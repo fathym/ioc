@@ -58,11 +58,24 @@ export interface IoCHolder {
   /** While pending: the frame building it (for cycle paths across concurrent resolutions). */
   building?: IoCResolveFrame;
   /**
-   * While pending: other pending holders this build (or a build beneath it) is waiting on. Lets
-   * a resolution that is about to wait on a pending build check whether that build is, in turn,
-   * waiting on it — a cycle split across two concurrent resolutions.
+   * While pending: pending holders this build is waiting on that other resolutions are building.
+   * Recorded only on the innermost pending holder of the waiting chain; `children` connects it
+   * to the builds above it. Lets a resolution that is about to wait on a pending build check
+   * whether that build is, in turn, waiting on it — a cycle split across two concurrent
+   * resolutions.
    */
   waits?: Set<IoCHolder>;
+  /** While pending: holders being built beneath this build, in its own resolution chain. */
+  children?: Set<IoCHolder>;
+  /** While pending: the nearest pending holder whose build started this one. */
+  under?: IoCHolder;
+  /** Scratch stamp for the reachability search in `waitPath`. */
+  seen?: number;
+  /**
+   * How many pending builds of other resolutions are waiting on this one. A cycle can only close
+   * through a chain one of whose holders is waited on, so chains with none skip the search.
+   */
+  waitedBy?: number;
 }
 
 /** One step of a resolution chain; frames link back to the request that caused them. */
@@ -73,6 +86,8 @@ export interface IoCResolveFrame {
   parent?: IoCResolveFrame;
   /** Set once the factory call finished, so stale frames captured by long-lived views are ignored. */
   settled: boolean;
+  /** Set when the factory threw or rejected: the build this frame ran is abandoned. */
+  failed?: { error: unknown };
 }
 
 /**
@@ -210,9 +225,51 @@ export function isOnActivePath(frame: IoCResolveFrame | undefined, key: object):
   return false;
 }
 
+/**
+ * The failure of the nearest abandoned build along a chain, if any. Resolves still running inside
+ * a build that already failed (siblings in a `Promise.all`, for example) must not start new
+ * builds: nothing will use the result, and with failures retried, they could keep restarting
+ * each other forever.
+ */
+export function abandonedBy(frame: IoCResolveFrame | undefined): { error: unknown } | undefined {
+  for (let f = frame; f; f = f.parent) {
+    if (f.failed) return f.failed;
+  }
+
+  return undefined;
+}
+
 /** True for a holder (memoized state) rather than a registration used as a frame key. */
 export function isHolder(key: object): key is IoCHolder {
   return typeof (key as IoCHolder).state === 'string';
+}
+
+/** The innermost pending holder being built along the active part of a resolution chain. */
+export function nearestHolder(frame: IoCResolveFrame | undefined): IoCHolder | undefined {
+  for (let f = frame; f; f = f.parent) {
+    if (!f.settled && isHolder(f.key) && f.key.state === 'pending') return f.key;
+  }
+
+  return undefined;
+}
+
+/** Records that `holder`'s build started beneath the build of `parent` (same chain). */
+export function attachBuild(holder: IoCHolder, parent: IoCHolder | undefined): void {
+  if (!parent || parent === holder) return;
+
+  holder.under = parent;
+
+  (parent.children ??= new Set()).add(holder);
+}
+
+/** Clears a holder's wait-graph state once its build settled (or failed to start). */
+export function releaseBuild(holder: IoCHolder): void {
+  holder.building = undefined;
+  holder.waits = undefined;
+  holder.children = undefined;
+
+  holder.under?.children?.delete(holder);
+  holder.under = undefined;
 }
 
 /** The pending holders being built along the active part of a resolution chain. */
@@ -232,6 +289,10 @@ export function activeHolders(frame: IoCResolveFrame | undefined): IoCHolder[] {
  * target; otherwise undefined.
  */
 export function waitPath(start: IoCHolder, targets: Set<IoCHolder>): string[] | undefined {
+  // Fast path: an iterative reachability check that allocates nothing per holder. The labelled
+  // path below is only built when there is a cycle to report.
+  if (!reaches(start, targets)) return undefined;
+
   const seen = new Set<IoCHolder>();
 
   const visit = (h: IoCHolder): string[] | undefined => {
@@ -249,10 +310,42 @@ export function waitPath(start: IoCHolder, targets: Set<IoCHolder>): string[] | 
       if (rest) return [label, ...rest];
     }
 
+    // Builds beneath this one, in its own chain, wait on its behalf.
+    for (const child of h.children ?? []) {
+      const rest = visit(child);
+
+      if (rest) return rest;
+    }
+
     return undefined;
   };
 
   return visit(start);
+}
+
+let searchStamp = 0;
+
+/** True when one of `targets` is reachable from `start` through `waits` and `children`. */
+function reaches(start: IoCHolder, targets: Set<IoCHolder>): boolean {
+  const stamp = ++searchStamp;
+
+  const stack: IoCHolder[] = [start];
+
+  while (stack.length) {
+    const h = stack.pop()!;
+
+    if (targets.has(h)) return true;
+
+    if (h.seen === stamp) continue;
+
+    h.seen = stamp;
+
+    if (h.waits) for (const next of h.waits) stack.push(next);
+
+    if (h.children) for (const next of h.children) stack.push(next);
+  }
+
+  return false;
 }
 
 /** Labels of the active frames, outermost first. */
@@ -308,16 +401,14 @@ export function settleInto(holder: IoCHolder, result: unknown): unknown {
         holder.state = 'ready';
         holder.value = value;
         holder.promise = undefined;
-        holder.building = undefined;
-        holder.waits = undefined;
+        releaseBuild(holder);
 
         return value;
       },
       (err) => {
         holder.state = 'empty';
         holder.promise = undefined;
-        holder.building = undefined;
-        holder.waits = undefined;
+        releaseBuild(holder);
 
         throw err;
       },
@@ -336,8 +427,7 @@ export function settleInto(holder: IoCHolder, result: unknown): unknown {
   holder.state = 'ready';
   holder.value = result;
   holder.promise = undefined;
-  holder.building = undefined;
-  holder.waits = undefined;
+  releaseBuild(holder);
 
   return result;
 }
