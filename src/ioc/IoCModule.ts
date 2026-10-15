@@ -1,18 +1,22 @@
-import type { IoCContainer } from './ioc.ts';
+import type { IoCContainer, IoCDependencyKey, IoCExpected, IoCNoKeys } from './ioc.ts';
 
 /**
  * A named unit of registrations with an optional lifecycle: the way a framework, a plugin or a
- * feature contributes services to a host container.
+ * feature contributes services to a host container. Add modules with {@link IoCContainer.Use}.
  *
- * - `Register` adds the module's services. It runs once per container, when the module is
- *   passed to {@link IoCContainer.Use}, after the modules it `Requires`.
- * - `OnStart` runs from {@link IoCContainer.Start}, after every singleton was built, in the
- *   order the modules were added. Open connections, start listeners and warm caches here.
- * - `OnStop` runs from {@link IoCContainer.Dispose}, in reverse order, before any instance is
+ * - `Register` adds the module's services. It runs once per container, after the modules it
+ *   `Requires`. Registrations made here belong to the module: only the module itself can replace,
+ *   decorate or unregister them later (unless they are registered with `Default: true`).
+ * - `OnStart` runs from {@link IoCContainer.Start}, after every singleton was built. Modules that
+ *   don't require each other start at the same time; a module starts after everything it requires.
+ * - `OnStop` runs from {@link IoCContainer.Dispose}, in the reverse order, before any instance is
  *   disposed, for modules that started.
  *
- * Register framework services with `Default: true` so the application can replace them in any
- * order.
+ * Each of them receives a module view of the container: it registers as the module, and it
+ * can't add modules, start, dispose or override.
+ *
+ * Use {@link DefineModule} to get a typed module, whose `Register` is checked against what the
+ * module needs and whose provided keys flow into a typed container.
  *
  * @example
  * ```ts
@@ -37,92 +41,163 @@ import type { IoCContainer } from './ioc.ts';
  *
  * console.log((await ioc.Resolve($Clock)).now() > 0);
  * ```
+ *
+ * @typeParam TNeeds Type-only: the keys the module needs from elsewhere (see `DefineModule`).
+ * @typeParam TProvides Type-only: the keys the module (and the modules it requires) registers
+ * (see `DefineModule`). A module written by hand needs and provides nothing, as far as types go.
  */
-export interface IoCModule {
-  /** A unique, readable name, used in errors, diagnostics and `Describe()`. */
+export interface IoCModule<TNeeds = never, TProvides = never> {
+  /** A unique, readable name, used in errors, `Describe()` and events. */
   readonly Name: string;
 
   /** Modules that must be registered (and started) before this one. */
-  readonly Requires?: readonly IoCModule[];
+  // deno-lint-ignore no-explicit-any
+  readonly Requires?: readonly IoCModule<any, any>[];
+
+  /**
+   * Keys the module needs that someone else registers (the app, or a module it doesn't require).
+   * `Validate()` treats them as declared, so the module may depend on them.
+   */
+  // deno-lint-ignore no-explicit-any
+  readonly Needs?: readonly (IoCDependencyKey<any> | readonly [IoCDependencyKey<any>, string])[];
 
   /** Adds the module's registrations. Synchronous: async setup belongs in `OnStart` or factories. */
-  Register(ioc: IoCContainer): void;
+  // deno-lint-ignore no-explicit-any
+  Register(ioc: IoCContainer<any>): unknown;
 
   /** Runs when the container starts, after every singleton was built. */
-  OnStart?(ioc: IoCContainer): unknown;
+  // deno-lint-ignore no-explicit-any
+  OnStart?(ioc: IoCContainer<any>): unknown;
 
   /** Runs when the container is disposed, before its instances are, if the module started. */
-  OnStop?(ioc: IoCContainer): unknown;
-}
+  // deno-lint-ignore no-explicit-any
+  OnStop?(ioc: IoCContainer<any>): unknown;
 
-/** Options for {@link ModuleFromContainer}. */
-export interface IoCModuleFromContainerOptions {
   /**
-   * Copy only the registrations the host doesn't already have (by key and name, in the host or
-   * its parents), so the host's own registrations always win over the plugin's, in any order.
+   * Type-only marker carrying what the module needs and provides; never present at runtime.
+   *
+   * @ignore
    */
-  Defaults?: boolean;
-
-  /** Modules that must be registered before this one. */
-  Requires?: readonly IoCModule[];
-
-  /** Runs when the container starts. */
-  OnStart?(ioc: IoCContainer): unknown;
-
-  /** Runs when the container is disposed, if the module started. */
-  OnStop?(ioc: IoCContainer): unknown;
+  readonly '@fathym/ioc/module'?: IoCModuleTypes<TNeeds, TProvides>;
 }
 
 /**
- * Wraps a container someone else built (a plugin's container, possibly from an older version of
- * this library) as a module: `Use` copies its registrations into the host, and they are recorded
- * as coming from the module.
+ * The type-only marker of a module. Its parameter is compared both ways (a method signature), so
+ * a typed module still fits wherever a plain `IoCModule` is expected.
+ */
+export type IoCModuleTypes<TNeeds, TProvides> = {
+  marker(types: { needs: TNeeds; provides: TProvides }): void;
+}['marker'];
+
+/** The keys a module provides, including what the modules it requires provide (type-only). */
+export type IoCModuleProvides<M> = M extends {
+  readonly '@fathym/ioc/module'?: (types: { needs: infer _N; provides: infer P }) => void;
+} ? P
+  : never;
+
+/** The keys a module needs from elsewhere (type-only). */
+export type IoCModuleNeeds<M> = M extends {
+  readonly '@fathym/ioc/module'?: (types: { needs: infer N; provides: infer _P }) => void;
+} ? N
+  : never;
+
+/** The keys provided by a list of modules (each already including what it requires). */
+export type IoCModulesProvide<TModules> = TModules extends readonly (infer M)[]
+  ? IoCModuleProvides<M>
+  : never;
+
+/** The keys needed by a list of modules (type-only). */
+export type IoCModulesNeed<TModules> = TModules extends readonly (infer M)[] ? IoCModuleNeeds<M>
+  : never;
+
+/** The registry of a container, read from its type (type-only). */
+export type IoCKeysOf<TContainer> = TContainer extends
+  { readonly '@fathym/ioc/keys'?: (keys: infer K) => void } ? K : never;
+
+/** The registry a typed module's `Register`, `OnStart` and `OnStop` see. */
+export type IoCModuleKeys<TRequires, TNeeds extends readonly unknown[]> =
+  | IoCNoKeys
+  | IoCExpected<TNeeds>
+  | IoCModulesProvide<TRequires>;
+
+/** What {@link DefineModule} takes. */
+export interface IoCModuleDefinition<
+  // deno-lint-ignore no-explicit-any
+  TRequires extends readonly IoCModule<any, any>[],
+  TNeeds extends readonly unknown[],
+  TResult,
+> {
+  /** A unique, readable name, used in errors, `Describe()` and events. */
+  readonly Name: string;
+
+  /** Modules that must be registered (and started) before this one; their keys are typed in. */
+  readonly Requires?: TRequires;
+
+  /** Keys the module needs that someone else registers; they are typed in too. */
+  readonly Needs?: TNeeds;
+
+  /**
+   * Adds the module's registrations. Chain them and return the chain: what it returns is what the
+   * module provides to a typed container.
+   */
+  Register(ioc: IoCContainer<IoCModuleKeys<TRequires, TNeeds>>): TResult;
+
+  /** Runs when the container starts, after every singleton was built. */
+  OnStart?(ioc: IoCContainer<IoCModuleKeys<TRequires, TNeeds>>): unknown;
+
+  /** Runs when the container is disposed, before its instances are, if the module started. */
+  OnStop?(ioc: IoCContainer<IoCModuleKeys<TRequires, TNeeds>>): unknown;
+}
+
+/**
+ * Defines a typed module. Inside `Register`, the container is typed with the keys the module
+ * `Needs` and the keys its `Requires` provide, so `Deps` can only name those and the module's own
+ * earlier registrations. Return the registration chain: its keys become what the module provides.
+ * On a {@link IoCContainer.Typed typed container}, `Use(module)` adds those keys, and only
+ * compiles when the container already has what the module needs.
+ *
+ * Each module type-checks its own short chain, so large applications stay fast to compile.
  *
  * @example
  * ```ts
- * import { IoCContainer, IoCToken, ModuleFromContainer } from '@fathym/ioc';
+ * import { DefineModule, IoCContainer, IoCToken } from '@fathym/ioc';
  *
- * const $Greeting = IoCToken<string, 'Greeting'>('Greeting');
+ * const $Url = IoCToken<string, 'Url'>('Url');
  *
- * // What a plugin hands back today.
- * const pluginIoc = new IoCContainer().RegisterValue($Greeting, 'from the plugin');
+ * class Repo {
+ *   constructor(public url: string) {}
+ * }
  *
- * const host = new IoCContainer()
- *   .RegisterValue($Greeting, 'from the host')
- *   .Use(ModuleFromContainer('Greeter', pluginIoc, { Defaults: true }));
+ * const RepoModule = DefineModule({
+ *   Name: 'Repo',
+ *   Needs: [$Url],
+ *   Register: (ioc) => ioc.RegisterClass(Repo, { Deps: [$Url] }),
+ * });
  *
- * console.log(await host.Resolve($Greeting)); // from the host
+ * const ioc = new IoCContainer()
+ *   .Typed()
+ *   .RegisterValue($Url, 'kv://local')
+ *   .Use(RepoModule); // compiles: $Url is registered; Repo is now typed in
+ *
+ * console.log((await ioc.Resolve(Repo)).url); // kv://local
  * ```
  */
-export function ModuleFromContainer(
-  name: string,
-  // Structural, so containers of any version (and any copy of this library) are accepted.
+export function DefineModule<
   // deno-lint-ignore no-explicit-any
-  container: { CopyTo(ioc: any): void },
-  options?: IoCModuleFromContainerOptions,
-): IoCModule {
-  return {
-    Name: name,
-    Requires: options?.Requires,
-    OnStart: options?.OnStart,
-    OnStop: options?.OnStop,
-    Register(ioc) {
-      if (!options?.Defaults) {
-        container.CopyTo(ioc);
-        return;
-      }
-
-      // Stage the copy in a throwaway scope (which speaks the current protocol whatever the
-      // source's version), then keep only what the host doesn't provide.
-      const staging = ioc.CreateScope();
-
-      container.CopyTo(staging);
-
-      for (const [symbol, bank] of staging.services) {
-        for (const [entryName, entry] of bank) {
-          if (!ioc.Has(symbol, entryName)) ioc.RegisterDirect(symbol, entryName, entry);
-        }
-      }
-    },
-  };
+  const TRequires extends readonly IoCModule<any, any>[] = [],
+  const TNeeds extends readonly (
+    // deno-lint-ignore no-explicit-any
+    IoCDependencyKey<any> | readonly [IoCDependencyKey<any>, string]
+  )[] = [],
+  TResult = unknown,
+>(
+  definition: IoCModuleDefinition<TRequires, TNeeds, TResult>,
+): IoCModule<
+  IoCExpected<TNeeds>,
+  Exclude<IoCKeysOf<TResult>, IoCModuleKeys<TRequires, TNeeds>> | IoCModulesProvide<TRequires>
+> {
+  return definition as unknown as IoCModule<
+    IoCExpected<TNeeds>,
+    Exclude<IoCKeysOf<TResult>, IoCModuleKeys<TRequires, TNeeds>> | IoCModulesProvide<TRequires>
+  >;
 }

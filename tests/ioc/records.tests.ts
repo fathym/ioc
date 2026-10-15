@@ -3,8 +3,6 @@ import { IoCCircularDependencyError, IoCServiceNotFoundError } from '../../src/i
 import { IoCContainer } from '../../src/ioc/ioc.ts';
 import { IoCAll, IoCLazy } from '../../src/ioc/IoCDeps.ts';
 import { IoCToken } from '../../src/ioc/IoCToken.ts';
-import type { IoCRegistration } from '../../src/ioc/internals.ts';
-import { registrationOf } from '../../src/ioc/internals.ts';
 import { assert, assertEquals, assertRejects, assertStrictEquals } from '../test.deps.ts';
 
 interface Profile {
@@ -56,8 +54,8 @@ Deno.test('ResolveRecord', async (t) => {
     };
 
     const ioc = new IoCContainer()
-      .RegisterFactory($Url, slow('localhost'), { Lazy: true })
-      .RegisterFactory($Port, slow(8080), { Name: 'http', Lazy: true })
+      .RegisterFactory($Url, slow('localhost'))
+      .RegisterFactory($Port, slow(8080), { Name: 'http' })
       .RegisterValue($Resolver, { handles: () => true }, { Name: 'any' });
 
     const { url, port, resolvers, profile } = await ioc.ResolveRecord({
@@ -95,7 +93,7 @@ Deno.test('IoCLazy and IoCAll in Deps', async (t) => {
     }
 
     const ioc = new IoCContainer()
-      .RegisterFactory($Profile, () => (built++, { model: 'x' }), { Lazy: true })
+      .RegisterFactory($Profile, () => (built++, { model: 'x' }))
       .RegisterClass(Signup, { Deps: [IoCLazy($Profile)] });
 
     const signup = await ioc.Resolve(Signup);
@@ -115,8 +113,8 @@ Deno.test('IoCLazy and IoCAll in Deps', async (t) => {
     }
 
     const ioc = new IoCContainer()
-      .RegisterClass(A, { Deps: [IoCLazy(B)], Lazy: true })
-      .RegisterClass(B, { Deps: [A], Lazy: true });
+      .RegisterClass(A, { Deps: [IoCLazy(B)] })
+      .RegisterClass(B, { Deps: [A] });
 
     assertEquals(ioc.Validate(), []);
 
@@ -170,7 +168,7 @@ Deno.test('IoCLazy and IoCAll in Deps', async (t) => {
     }
 
     const issues = new IoCContainer()
-      .RegisterClass(Needs, { Deps: [IoCLazy($Profile)], Lazy: true })
+      .RegisterClass(Needs, { Deps: [IoCLazy($Profile)] })
       .Validate({ Throw: false });
 
     assertEquals(issues.map((i) => i.Kind), ['missing']);
@@ -188,13 +186,13 @@ Deno.test('IoCLazy and IoCAll in Deps', async (t) => {
     const ioc = new IoCContainer();
 
     // @ts-expect-error: IoCLazy injects a function, not the service
-    ioc.RegisterClass(WantsService, { Deps: [IoCLazy($Profile)], Lazy: true });
+    ioc.RegisterClass(WantsService, { Deps: [IoCLazy($Profile)] });
 
     // @ts-expect-error: a lazy URL is not a lazy profile
-    ioc.RegisterClass(WantsLazy, { Deps: [IoCLazy($Url)], Lazy: true, Replace: true });
+    ioc.RegisterClass(WantsLazy, { Deps: [IoCLazy($Url)], Replace: true });
 
     // @ts-expect-error: IoCAll injects an array
-    ioc.RegisterClass(WantsService, { Deps: [IoCAll($Profile)], Lazy: true, Replace: true });
+    ioc.RegisterClass(WantsService, { Deps: [IoCAll($Profile)], Replace: true });
   });
 });
 
@@ -220,16 +218,14 @@ Deno.test('Factory Deps', async (t) => {
     class Ctx {}
 
     const ioc = new IoCContainer()
-      .RegisterFactory($A, (_c, b) => b + 1, { Deps: [$B], Lazy: true })
-      .RegisterFactory($B, (_c, a) => a + 1, { Deps: [$A], Lazy: true })
+      .RegisterFactory($A, (_c, b) => b + 1, { Deps: [$B] })
+      .RegisterFactory($B, (_c, a) => a + 1, { Deps: [$A] })
       .RegisterFactory(IoCToken<string>('RecFNeeds'), (_c, m) => m, {
         Deps: [$Missing],
-        Lazy: true,
       })
-      .RegisterClass(Ctx, { Lifetime: 'scoped', Lazy: true })
+      .RegisterClass(Ctx, { Lifetime: 'scoped' })
       .RegisterFactory(IoCToken<Ctx>('RecFCaptive'), (_c, ctx) => ctx, {
         Deps: [Ctx],
-        Lazy: true,
       });
 
     const kinds = ioc.Validate({ Throw: false }).map((i) => i.Kind).sort();
@@ -242,8 +238,8 @@ Deno.test('Factory Deps', async (t) => {
     const $B = IoCToken<number, 'RecRB'>('RecRB');
 
     const ioc = new IoCContainer()
-      .RegisterFactory($A, (_c, b) => b + 1, { Deps: [$B], Lazy: true })
-      .RegisterFactory($B, (_c, a) => a + 1, { Deps: [$A], Lazy: true });
+      .RegisterFactory($A, (_c, b) => b + 1, { Deps: [$B] })
+      .RegisterFactory($B, (_c, a) => a + 1, { Deps: [$A] });
 
     await assertRejects(() => ioc.Resolve($A), IoCCircularDependencyError);
   });
@@ -289,13 +285,13 @@ Deno.test('Observed edges', async (t) => {
         const port = await c.TryResolve($Port, 'http');
         await c.TryResolve($Port, 'missing');
         return `${url}:${port}`;
-      }, { Lazy: true });
+      });
 
     await ioc.Activate();
 
-    const reg = registrationOf(ioc.services.get($Endpoint)?.get('$default')) as IoCRegistration;
+    const described = ioc.Describe().Services.find((s) => s.Label === 'ObsEndpoint');
 
-    assertEquals([...reg.observed!.keys()], ['RecUrl', 'RecPort[http]']);
+    assertEquals(described?.Observed, ['RecUrl', 'RecPort[http]']);
   });
 
   await t.step('resolves made later through a kept view are not recorded', async () => {
@@ -307,8 +303,8 @@ Deno.test('Observed edges', async (t) => {
 
     await (await ioc.Resolve($Holder)).ioc.Resolve($Url);
 
-    const reg = registrationOf(ioc.services.get($Holder)?.get('$default')) as IoCRegistration;
+    const described = ioc.Describe().Services.find((s) => s.Label === 'ObsHolder');
 
-    assertEquals(reg.observed!.size, 0);
+    assertEquals(described?.Observed, []);
   });
 });

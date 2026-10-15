@@ -31,7 +31,7 @@ Deno.test('Expect at runtime', async (t) => {
     const ioc = new IoCContainer()
       .Typed()
       .Expect($Request)
-      .RegisterClass(Handler, { Deps: [$Request], Lifetime: 'scoped', Lazy: true });
+      .RegisterClass(Handler, { Deps: [$Request], Lifetime: 'scoped' });
 
     ioc.Validate();
 
@@ -48,7 +48,6 @@ Deno.test('Expect at runtime', async (t) => {
     const ioc = new IoCContainer().RegisterClass(Handler, {
       Deps: [$Request],
       Lifetime: 'scoped',
-      Lazy: true,
     });
 
     const issues = ioc.Validate({ Throw: false });
@@ -66,7 +65,6 @@ Deno.test('Expect at runtime', async (t) => {
 
     const ioc = new IoCContainer().Expect([$Url, 'replica']).RegisterClass(Reader, {
       Deps: [[$Url, 'replica']],
-      Lazy: true,
     });
 
     assertEquals(ioc.Validate({ Throw: false }), []);
@@ -81,7 +79,7 @@ Deno.test('Inherited constructors in Validate', async (t) => {
   await t.step('a subclass without its own constructor is reported', () => {
     class Sub extends Base {}
 
-    const issues = new IoCContainer().RegisterClass(Sub, { Lazy: true }).Validate({
+    const issues = new IoCContainer().RegisterClass(Sub).Validate({
       Throw: false,
     });
 
@@ -103,7 +101,7 @@ Deno.test('Inherited constructors in Validate', async (t) => {
     class Middle extends Base {}
     class Leaf extends Middle {}
 
-    const issues = new IoCContainer().RegisterClass(Leaf, { Lazy: true }).Validate({
+    const issues = new IoCContainer().RegisterClass(Leaf).Validate({
       Throw: false,
     });
 
@@ -118,8 +116,8 @@ Deno.test('Names', async (t) => {
     const $Plugin = IoCToken<string>('FixPlugin');
 
     const root = new IoCContainer()
-      .RegisterFactory($Plugin, () => (built++, 'a'), { Name: 'a', Lazy: true })
-      .RegisterFactory($Plugin, () => (built++, 'b'), { Name: 'b', Lazy: true });
+      .RegisterFactory($Plugin, () => (built++, 'a'), { Name: 'a' })
+      .RegisterFactory($Plugin, () => (built++, 'b'), { Name: 'b' });
 
     await using scope = root.CreateScope();
 
@@ -145,7 +143,6 @@ Deno.test('The Dispose option', async (t) => {
   await t.step('cleans up a factory-built resource that has no Symbol.dispose', async () => {
     const ioc = new IoCContainer().RegisterFactory(Kv, () => new Kv(), {
       Name: 'cache',
-      Lazy: true,
       Dispose: (kv) => kv.close(),
     });
 
@@ -175,7 +172,7 @@ Deno.test('The Dispose option', async (t) => {
 
     const ioc = new IoCContainer()
       .RegisterFactory(Pool, () => new Pool(), { Dispose: (p) => p.close() })
-      .RegisterClass(Repo, { Deps: [Pool], Lazy: true });
+      .RegisterClass(Repo, { Deps: [Pool] });
 
     await ioc.Resolve(Repo);
     await ioc.Dispose();
@@ -208,7 +205,6 @@ Deno.test('The Dispose option', async (t) => {
   await t.step('a scoped resource is cleaned up by its scope', async () => {
     const ioc = new IoCContainer().RegisterFactory(Kv, () => new Kv(), {
       Lifetime: 'scoped',
-      Lazy: true,
       Dispose: (kv) => kv.close(),
     });
 
@@ -229,12 +225,22 @@ Deno.test('Invalid keys', async (t) => {
     const err = await assertRejects(() => ioc.Resolve('Db' as never));
 
     assert(isIoCError(err, 'IOC_INVALID_KEY'));
-    assert((err as Error).message.includes("IoCToken('Name')"), (err as Error).message);
+    assert((err as Error).message.includes("IoCToken<T>('Name')"), (err as Error).message);
 
     assertThrows(
       () => ioc.RegisterValue('Db' as never, 1 as never),
       Error,
-      'Keys must be typed tokens, symbols or classes',
+      'Keys must be tokens or classes',
     );
+  });
+
+  await t.step('symbols and plain objects are rejected too (1.0: only tokens and classes)', () => {
+    const ioc = new IoCContainer();
+
+    for (const key of [Symbol('Db'), Symbol.for('Db'), { Description: 'Db' }]) {
+      const err = assertThrows(() => ioc.RegisterValue(key as never, 1 as never));
+
+      assert(isIoCError(err, 'IOC_INVALID_KEY'), String(err));
+    }
   });
 });

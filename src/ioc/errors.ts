@@ -13,16 +13,17 @@ export type IoCErrorCode =
   | 'IOC_INVALID_KEY'
   | 'IOC_SCOPE_REQUIRED'
   | 'IOC_DUPLICATE_REGISTRATION'
-  | 'IOC_KEY_COLLISION'
+  | 'IOC_SEALED'
+  | 'IOC_INVALID_LEVEL'
   | 'IOC_START_FAILED'
   | 'IOC_MODULE_CYCLE'
   | 'IOC_RESOLVE_TIMEOUT'
   | 'IOC_NOT_ISOLATABLE';
 
 /**
- * True when `error` was thrown by the container (any version that uses codes), optionally with a
- * specific code. It checks the `code` property rather than using `instanceof`, so errors from
- * another copy of the library in the same process are recognized too.
+ * True when `error` was thrown by the container, optionally with a specific code. Prefer it to
+ * `instanceof`: it also covers `IoCActivationError` and `IoCDisposeError`, which extend
+ * `AggregateError` rather than {@link IoCError}.
  *
  * @example
  * ```ts
@@ -55,11 +56,8 @@ export abstract class IoCError extends Error {
 }
 
 /**
- * Thrown when a service is resolved that has no registration for its symbol and name.
- *
- * The message keeps the historical prefix (`No Service for symbol '…' with name '…' has been
- * registered.`) so existing `assertRejects(..., 'No Service for symbol')` checks keep working,
- * and appends the registered names and the resolution path when they are known.
+ * Thrown when a service is resolved that has no registration for its key and name. The message
+ * lists the names that are registered for the key and the resolution path, when there are any.
  */
 export class IoCServiceNotFoundError extends IoCError {
   /** The error name, for logs and `instanceof`-free checks. */
@@ -69,23 +67,23 @@ export class IoCServiceNotFoundError extends IoCError {
   public readonly code = 'IOC_SERVICE_NOT_FOUND' as const;
 
   /**
-   * Creates the error and its message from the requested symbol and name.
+   * Creates the error and its message from the requested key and name.
    *
-   * @param Symbol The symbol that was requested.
+   * @param Key The requested key's description (the token description or class name).
    * @param ServiceName The registration name that was requested (`$default` when unnamed).
-   * @param RegisteredNames The names registered for the symbol, if any.
+   * @param RegisteredNames The names registered for the key, if any.
    * @param Path The resolution path that led to this request, outermost first.
    * @param Hint An extra sentence appended to the message, when the container knows more.
    */
   constructor(
-    public readonly Symbol: symbol,
+    public readonly Key: string,
     public readonly ServiceName: string,
     public readonly RegisteredNames: string[] = [],
     public readonly Path: string[] = [],
     Hint?: string,
   ) {
-    let message =
-      `No Service for symbol '${Symbol.description}' with name '${ServiceName}' has been registered.`;
+    let message = `No service is registered for ${Key}` +
+      (ServiceName === '$default' ? '.' : ` with name '${ServiceName}'.`);
 
     if (RegisteredNames.length) {
       message += ` Registered names: [${RegisteredNames.join(', ')}].`;
@@ -118,7 +116,7 @@ export class IoCContainerDisposedError extends IoCError {
 /** One problem found by `Validate()`. */
 export interface IoCValidationIssue {
   /** What kind of problem it is. */
-  Kind: 'missing' | 'cycle' | 'captive' | 'arguments';
+  Kind: 'missing' | 'cycle' | 'captive' | 'arguments' | 'undeclared';
 
   /** The service the problem belongs to. */
   Service: string;
@@ -183,8 +181,9 @@ export class IoCCircularDependencyError extends IoCError {
 }
 
 /**
- * Thrown when a registration call is invalid: a missing key, a factory that isn't a function, a
- * value passed where a class is expected, or a key that isn't a token, symbol or class.
+ * Thrown when a call is invalid: a key that isn't a token or class (`IOC_INVALID_KEY`), a
+ * factory that isn't a function, a value passed where a class is expected, invalid options, or a
+ * module calling a method only the application may call (`IOC_INVALID_REGISTRATION`).
  */
 export class IoCRegistrationError extends IoCError {
   /** The error name, for logs and `instanceof`-free checks. */
@@ -206,8 +205,8 @@ export class IoCRegistrationError extends IoCError {
 }
 
 /**
- * Thrown in strict mode when a `scoped` service is resolved outside a scope (from the root
- * container), or outside a scope of the level it requires.
+ * Thrown when a `scoped` service is resolved outside a scope (from the root container), or
+ * outside a scope of the level it requires.
  */
 export class IoCScopeRequiredError extends IoCError {
   /** The error name, for logs and `instanceof`-free checks. */
@@ -232,8 +231,8 @@ export class IoCScopeRequiredError extends IoCError {
 }
 
 /**
- * Thrown in strict mode when a key and name that already have a registration are registered
- * again without `Replace: true` (or `Default: true`).
+ * Thrown when a key and name that already have a registration in the same container are
+ * registered again without `Replace: true` (or `Default: true`).
  */
 export class IoCDuplicateRegistrationError extends IoCError {
   /** The error name, for logs and `instanceof`-free checks. */
@@ -256,26 +255,60 @@ export class IoCDuplicateRegistrationError extends IoCError {
 }
 
 /**
- * Thrown in strict mode when a token (or symbol) and a class end up on the same key, so one would
- * silently resolve as the other.
+ * Thrown when code replaces, decorates or unregisters a registration that a module made, from
+ * outside that module. Modules decide what may be replaced: registrations made with
+ * `Default: true` can be. `Override()` throws it too, except on a container created with
+ * `{ Testing: true }`.
  */
-export class IoCKeyCollisionError extends IoCError {
+export class IoCSealedError extends IoCError {
   /** The error name, for logs and `instanceof`-free checks. */
-  public override name = 'IoCKeyCollisionError';
+  public override name = 'IoCSealedError';
 
   /** The stable error code. */
-  public readonly code = 'IOC_KEY_COLLISION' as const;
+  public readonly code = 'IOC_SEALED' as const;
 
   /**
    * Creates the error.
    *
-   * @param Key The shared key.
+   * @param Service The registration that was to be changed.
+   * @param Module The module that owns it, if a module does.
+   * @param Action What was attempted (`replace`, `decorate`, `unregister`, `override`).
    */
-  constructor(public readonly Key: string) {
+  constructor(
+    public readonly Service: string,
+    public readonly Module: string | undefined,
+    public readonly Action: 'replace' | 'decorate' | 'unregister' | 'override',
+  ) {
     super(
-      `The key '${Key}' is used by both a class and a token; give the token a distinct, ` +
-        `namespaced id.`,
+      Module
+        ? `${Service} belongs to module '${Module}', so only that module can ${Action} it. ` +
+          `If it should be replaceable, register it with Default: true in '${Module}'; in ` +
+          `tests, use a container created with { Testing: true }.`
+        : `Override() is for tests: create the container with { Testing: true } to use it on ` +
+          `${Service}, or register a replacement with Replace: true.`,
     );
+  }
+}
+
+/**
+ * Thrown when a scope level is used that the container doesn't declare (see the `Levels`
+ * option), or when a scope is created inside a scope of a deeper level.
+ */
+export class IoCLevelError extends IoCError {
+  /** The error name, for logs and `instanceof`-free checks. */
+  public override name = 'IoCLevelError';
+
+  /** The stable error code. */
+  public readonly code = 'IOC_INVALID_LEVEL' as const;
+
+  /**
+   * Creates the error.
+   *
+   * @param Level The level that was given.
+   * @param message What is wrong with it.
+   */
+  constructor(public readonly Level: string, message: string) {
+    super(message);
   }
 }
 
@@ -335,9 +368,10 @@ export class IoCModuleCycleError extends IoCError {
 }
 
 /**
- * Thrown by `Start()` when a module's `OnStart` fails. The modules started before it have
- * already been stopped (their `OnStop` ran, in reverse order); errors from those stops are in
- * `RollbackErrors`. The original failure is the `cause`.
+ * Thrown by `Start()` when a module's `OnStart` fails. By then the started modules have been
+ * stopped and everything built during this `Start()` was disposed; errors from that rollback are
+ * in `RollbackErrors`. The first failure is the `cause`; when several modules of one layer failed
+ * together, `Failures` lists each one.
  */
 export class IoCStartError extends IoCError {
   /** The error name, for logs and `instanceof`-free checks. */
@@ -346,22 +380,32 @@ export class IoCStartError extends IoCError {
   /** The stable error code. */
   public readonly code = 'IOC_START_FAILED' as const;
 
+  /** Every module that failed in the failing layer, with its error, in module order. */
+  public readonly Failures: { Module: string; Error: unknown }[];
+
   /**
    * Creates the error.
    *
-   * @param Module The name of the module whose `OnStart` failed.
+   * @param Module The name of the (first) module whose `OnStart` failed.
    * @param cause The error it threw.
-   * @param RollbackErrors Errors thrown by `OnStop` while rolling back.
+   * @param RollbackErrors Errors thrown while rolling back (`OnStop`, disposal).
+   * @param Failures Every failure of the layer; defaults to just this one.
    */
   constructor(
     public readonly Module: string,
     cause: unknown,
     public readonly RollbackErrors: unknown[] = [],
+    Failures?: { Module: string; Error: unknown }[],
   ) {
+    const others = (Failures?.length ?? 1) - 1;
+
     super(
-      `Module '${Module}' failed to start: ${cause instanceof Error ? cause.message : cause}`,
+      `Module '${Module}' failed to start: ${cause instanceof Error ? cause.message : cause}` +
+        (others > 0 ? ` (and ${others} more module(s) in the same layer)` : ''),
       { cause },
     );
+
+    this.Failures = Failures ?? [{ Module, Error: cause }];
   }
 }
 
@@ -385,8 +429,9 @@ export class IoCNotIsolatableError extends IoCError {
 }
 
 /**
- * Thrown (with `PendingTimeoutMs` set) when a `Resolve` is still pending after the timeout.
- * `Waiting` lists the pending builds it was waiting on, as far as the container can see them.
+ * Thrown when a resolve, a build during `Start()`/`Activate()`, or a module's `OnStart`/`OnStop`
+ * is still pending after `PendingTimeoutMs` (30 seconds unless configured). `Waiting` lists the
+ * pending builds it was waiting on, as far as the container can see them.
  */
 export class IoCResolveTimeoutError extends IoCError {
   /** The error name, for logs and `instanceof`-free checks. */
@@ -408,10 +453,11 @@ export class IoCResolveTimeoutError extends IoCError {
     public readonly Waiting: string[] = [],
   ) {
     super(
-      `Resolving ${Service} did not finish within ${TimeoutMs}ms` +
+      `${Service} did not finish within ${TimeoutMs}ms` +
         (Waiting.length ? `; still pending: ${Waiting.join(', ')}` : '') +
-        `. A factory may never settle, or factories may wait on each other through a captured ` +
-        `container; resolve through the factory's parameter, or set the AsyncContext option.`,
+        `. Something it awaits may never settle (a connection, a lock), or factories may wait ` +
+        `on each other through a container captured in a closure; resolve through the ` +
+        `factory's parameter. Raise PendingTimeoutMs if it is just slow.`,
     );
   }
 }

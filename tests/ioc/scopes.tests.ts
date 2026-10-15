@@ -1,6 +1,10 @@
 // Async functions without await are deliberate here: they produce promise-returning factories.
 // deno-lint-ignore-file require-await
-import { IoCContainerDisposedError } from '../../src/ioc/errors.ts';
+import {
+  IoCContainerDisposedError,
+  IoCDisposeError,
+  IoCScopeRequiredError,
+} from '../../src/ioc/errors.ts';
 import { IoCContainer } from '../../src/ioc/ioc.ts';
 import { IoCToken } from '../../src/ioc/IoCToken.ts';
 import {
@@ -27,9 +31,9 @@ class Handler {
 function setup() {
   const root = new IoCContainer();
 
-  root.Register(Config);
-  root.Register(RequestContext, { Lifetime: 'scoped', Lazy: true });
-  root.Register(
+  root.RegisterClass(Config);
+  root.RegisterClass(RequestContext, { Lifetime: 'scoped' });
+  root.RegisterFactory(
     Handler,
     async (c) => new Handler(await c.Resolve(RequestContext), await c.Resolve(Config)),
     {
@@ -38,6 +42,11 @@ function setup() {
   );
 
   return root;
+}
+
+/** The number of live child scopes a container tracks (a protected field, read for the test). */
+function liveScopes(container: IoCContainer): number {
+  return (container as unknown as { children: Set<unknown> }).children.size;
 }
 
 Deno.test('CreateScope - resolution', async (t) => {
@@ -67,12 +76,17 @@ Deno.test('CreateScope - resolution', async (t) => {
     assert(a1 !== b1);
   });
 
-  await t.step('the root keeps its own scoped instance', async () => {
+  await t.step('the root has no scoped instance: resolving one there throws', async () => {
     const root = setup();
     const scope = root.CreateScope();
 
-    assert((await root.Resolve(RequestContext)) !== (await scope.Resolve(RequestContext)));
-    assertStrictEquals(await root.Resolve(RequestContext), await root.Resolve(RequestContext));
+    await assertRejects(
+      () => root.Resolve(RequestContext),
+      IoCScopeRequiredError,
+      'Scoped service RequestContext was resolved outside a scope',
+    );
+
+    assertStrictEquals(await scope.Resolve(RequestContext), await scope.Resolve(RequestContext));
   });
 
   await t.step('transients built in a scope receive that scope', async () => {
@@ -100,43 +114,46 @@ Deno.test('CreateScope - resolution', async (t) => {
 
   await t.step('singleton factories never capture a scope', async () => {
     const root = new IoCContainer();
+    const $Captive = IoCToken<{ ctx: RequestContext }>('Captive');
 
-    root.Register(RequestContext, { Lifetime: 'scoped', Lazy: true });
-    root.Register(
-      async (c) => ({ ctx: await c.Resolve(RequestContext) }),
-      { Type: root.Symbol('Captive'), Lazy: true },
-    );
+    root.RegisterClass(RequestContext, { Lifetime: 'scoped' });
+    root.RegisterFactory($Captive, async (c) => ({ ctx: await c.Resolve(RequestContext) }));
 
     const scope = root.CreateScope();
-    const captive = await scope.Resolve<{ ctx: RequestContext }>(root.Symbol('Captive'));
 
-    // The singleton was built against the root, so it holds the root's instance, not the scope's.
-    assertStrictEquals(captive.ctx, await root.Resolve(RequestContext));
-    assert(captive.ctx !== (await scope.Resolve(RequestContext)));
+    // The singleton is built against the root, which has no RequestContext: it can't capture
+    // the scope's instance.
+    await assertRejects(() => scope.Resolve($Captive), IoCScopeRequiredError);
+
+    assertInstanceOf(await scope.Resolve(RequestContext), RequestContext);
   });
 
-  await t.step(
-    'a scoped registration that is not lazy is still per scope in children',
-    async () => {
-      const root = new IoCContainer();
-      let built = 0;
+  await t.step('scoped registrations are built per scope, never at registration', async () => {
+    const root = new IoCContainer();
+    let built = 0;
 
-      root.Register(RequestContext, () => {
-        built++;
-        return new RequestContext();
-      }, { Lifetime: 'scoped' });
+    root.RegisterFactory(RequestContext, () => {
+      built++;
+      return new RequestContext();
+    }, { Lifetime: 'scoped' });
 
-      assertEquals(built, 1);
+    await root.Activate();
 
-      const scope = root.CreateScope();
+    assertEquals(built, 0);
 
-      assertEquals(built, 1);
+    const scope = root.CreateScope();
 
-      await scope.Resolve(RequestContext);
+    assertEquals(built, 0);
 
-      assertEquals(built, 2);
-    },
-  );
+    await scope.Resolve(RequestContext);
+    await scope.Resolve(RequestContext);
+
+    assertEquals(built, 1);
+
+    await root.CreateScope().Resolve(RequestContext);
+
+    assertEquals(built, 2);
+  });
 
   await t.step('nested scopes get their own scoped instances', async () => {
     const root = setup();
@@ -151,7 +168,11 @@ Deno.test('CreateScope - resolution', async (t) => {
     const root = setup();
     const scope = root.CreateScope();
 
-    assertEquals(scope.services.size, 0);
+    const services = scope.Describe().Services;
+
+    assertEquals(services.length, 3);
+    assert(services.every((s) => s.Depth === 1));
+    assert(scope.Describe().Scope);
   });
 });
 
@@ -160,7 +181,7 @@ Deno.test('CreateScope - overrides', async (t) => {
     const root = setup();
     const scope = root.CreateScope();
 
-    scope.Register(Config, () => Object.assign(new Config(), { env: 'test' }));
+    scope.RegisterFactory(Config, () => Object.assign(new Config(), { env: 'test' }));
 
     assertEquals((await scope.Resolve(Config)).env, 'test');
     assertEquals((await root.Resolve(Config)).env, 'prod');
@@ -170,39 +191,40 @@ Deno.test('CreateScope - overrides', async (t) => {
     const root = setup();
     const scope = root.CreateScope();
 
-    scope.Register(Config, () => Object.assign(new Config(), { env: 'test' }));
+    scope.RegisterFactory(Config, () => Object.assign(new Config(), { env: 'test' }));
 
     assertEquals((await scope.Resolve(Handler)).config.env, 'test');
   });
 
   await t.step('test override pattern: fake a dependency without touching the root', async () => {
     const $Mailer = IoCToken<{ send(to: string): string }>('Mailer');
+    const $Signup = IoCToken<{ welcome(to: string): Promise<string> }>('Signup');
     const root = new IoCContainer();
 
-    root.Register($Mailer, () => ({ send: (to) => `smtp:${to}` }));
-    root.Register(
+    root.RegisterFactory($Mailer, () => ({ send: (to) => `smtp:${to}` }));
+    root.RegisterFactory(
+      $Signup,
       async (c) => ({ welcome: async (to: string) => (await c.Resolve($Mailer)).send(to) }),
-      { Type: root.Symbol('Signup'), Lifetime: 'transient' },
+      { Lifetime: 'transient' },
     );
 
     const test = root.CreateScope();
     const sent: string[] = [];
 
-    test.Register($Mailer, () => ({ send: (to) => (sent.push(to), 'fake') }));
+    test.RegisterFactory($Mailer, () => ({ send: (to) => (sent.push(to), 'fake') }));
 
-    const signup = await test.Resolve<{ welcome(to: string): Promise<string> }>(
-      test.Symbol('Signup'),
-    );
+    const signup = await test.Resolve($Signup);
 
     assertEquals(await signup.welcome('a@b.c'), 'fake');
     assertEquals(sent, ['a@b.c']);
+    assertEquals(await (await root.Resolve($Signup)).welcome('x'), 'smtp:x');
   });
 
   await t.step('later parent registrations are visible to existing scopes', async () => {
     const root = new IoCContainer();
     const scope = root.CreateScope();
 
-    root.Register(Config);
+    root.RegisterClass(Config);
 
     assertInstanceOf(await scope.Resolve(Config), Config);
   });
@@ -211,23 +233,11 @@ Deno.test('CreateScope - overrides', async (t) => {
     const root = setup();
     const scope = root.CreateScope();
 
-    scope.Register(Config, () => Object.assign(new Config(), { env: 'scope' }));
+    scope.RegisterFactory(Config, () => Object.assign(new Config(), { env: 'scope' }));
 
     assertEquals(scope.Unregister(Config), true);
     assertEquals((await scope.Resolve(Config)).env, 'prod');
     assertEquals(scope.Unregister(Config), false);
-  });
-
-  await t.step('CopyTo from a scope flattens the chain, nearest winning', async () => {
-    const root = setup();
-    const scope = root.CreateScope();
-    const flat = new IoCContainer();
-
-    scope.Register(Config, () => Object.assign(new Config(), { env: 'scope' }));
-    scope.CopyTo(flat);
-
-    assertEquals((await flat.Resolve(Config)).env, 'scope');
-    assertInstanceOf(await flat.Resolve(Handler), Handler);
   });
 });
 
@@ -256,7 +266,7 @@ Deno.test('CreateScope - disposal', async (t) => {
 
     const root = new IoCContainer();
 
-    root.Register(Resource, () => new Resource('per-request'), { Lifetime: 'scoped', Lazy: true });
+    root.RegisterFactory(Resource, () => new Resource('per-request'), { Lifetime: 'scoped' });
 
     {
       await using scope = root.CreateScope();
@@ -272,18 +282,15 @@ Deno.test('CreateScope - disposal', async (t) => {
 
     const root = new IoCContainer();
 
-    root.Register(Resource, () => new Resource('first'), {
+    root.RegisterFactory(Resource, () => new Resource('first'), {
       Lifetime: 'scoped',
-      Lazy: true,
       Name: 'a',
     });
-    root.Register(SyncResource, () => new SyncResource('second'), {
+    root.RegisterFactory(SyncResource, () => new SyncResource('second'), {
       Lifetime: 'scoped',
-      Lazy: true,
     });
-    root.Register(Resource, () => new Resource('third'), {
+    root.RegisterFactory(Resource, () => new Resource('third'), {
       Lifetime: 'scoped',
-      Lazy: true,
       Name: 'c',
     });
 
@@ -302,7 +309,7 @@ Deno.test('CreateScope - disposal', async (t) => {
 
     const root = new IoCContainer();
 
-    root.Register(Resource, () => new Resource('singleton'), { Lazy: true });
+    root.RegisterFactory(Resource, () => new Resource('singleton'));
 
     const scope = root.CreateScope();
 
@@ -319,8 +326,9 @@ Deno.test('CreateScope - disposal', async (t) => {
     const root = new IoCContainer();
     const scope = root.CreateScope();
 
-    scope.Register(Resource, () => new Resource('scope-singleton'));
+    scope.RegisterFactory(Resource, () => new Resource('scope-singleton'));
 
+    await scope.Resolve(Resource);
     await scope.Dispose();
 
     assertEquals(Resource.log, ['async:scope-singleton']);
@@ -331,7 +339,7 @@ Deno.test('CreateScope - disposal', async (t) => {
 
     const root = new IoCContainer();
 
-    root.Register(Resource, () => new Resource('transient'), { Lifetime: 'transient' });
+    root.RegisterFactory(Resource, () => new Resource('transient'), { Lifetime: 'transient' });
 
     const scope = root.CreateScope();
 
@@ -355,9 +363,9 @@ Deno.test('CreateScope - disposal', async (t) => {
 
     const root = new IoCContainer();
 
-    root.Register(Failing, () => new Failing('a'), { Lifetime: 'scoped', Lazy: true, Name: 'a' });
-    root.Register(Resource, () => new Resource('ok'), { Lifetime: 'scoped', Lazy: true });
-    root.Register(Failing, () => new Failing('b'), { Lifetime: 'scoped', Lazy: true, Name: 'b' });
+    root.RegisterFactory(Failing, () => new Failing('a'), { Lifetime: 'scoped', Name: 'a' });
+    root.RegisterFactory(Resource, () => new Resource('ok'), { Lifetime: 'scoped' });
+    root.RegisterFactory(Failing, () => new Failing('b'), { Lifetime: 'scoped', Name: 'b' });
 
     const scope = root.CreateScope();
 
@@ -365,8 +373,9 @@ Deno.test('CreateScope - disposal', async (t) => {
     await scope.Resolve(Resource);
     await scope.Resolve(Failing, 'b');
 
-    const err = await assertRejects(() => scope.Dispose(), AggregateError);
+    const err = await assertRejects(() => scope.Dispose(), IoCDisposeError);
 
+    assertInstanceOf(err, AggregateError);
     assertEquals(err.errors.map((e: Error) => e.message), ['fail b', 'fail a']);
     assertEquals(Resource.log, ['async:ok']);
   });
@@ -378,28 +387,13 @@ Deno.test('CreateScope - disposal', async (t) => {
     await scope.Dispose();
     await scope.Dispose();
 
+    assertEquals(scope.State, 'disposed');
     await assertRejects(() => scope.Resolve(Config), IoCContainerDisposedError);
-    assertThrows(() => scope.Register(Config), IoCContainerDisposedError);
+    assertThrows(() => scope.RegisterClass(Config), IoCContainerDisposedError);
     assertThrows(() => scope.CreateScope(), IoCContainerDisposedError);
-  });
 
-  await t.step('the root does not track or dispose its scopes', async () => {
-    Resource.log = [];
-
-    const root = new IoCContainer();
-
-    root.Register(Resource, () => new Resource('scoped'), { Lifetime: 'scoped', Lazy: true });
-
-    const scope = root.CreateScope();
-
-    await scope.Resolve(Resource);
-    await root.Dispose();
-
-    assertEquals(Resource.log, []);
-
-    await scope.Dispose();
-
-    assertEquals(Resource.log, ['async:scoped']);
+    // The parent is unaffected.
+    assertInstanceOf(await root.Resolve(Config), Config);
   });
 
   await t.step('root Dispose disposes root singletons it created', async () => {
@@ -407,13 +401,160 @@ Deno.test('CreateScope - disposal', async (t) => {
 
     const root = new IoCContainer();
 
-    root.Register(Resource, () => new Resource('eager'));
-    root.Register(Resource, async () => new Resource('async-lazy'), { Lazy: true, Name: 'lazy' });
-    root.Register(Resource, () => new Resource('never-built'), { Lazy: true, Name: 'never' });
+    root.RegisterFactory(Resource, () => new Resource('first'));
+    root.RegisterFactory(Resource, async () => new Resource('async'), { Name: 'async' });
+    root.RegisterFactory(Resource, () => new Resource('never-built'), { Name: 'never' });
 
-    await root.Resolve(Resource, 'lazy');
+    await root.Resolve(Resource);
+    await root.Resolve(Resource, 'async');
     await root.Dispose();
 
-    assertEquals(Resource.log, ['async:async-lazy', 'async:eager']);
+    assertEquals(Resource.log, ['async:async', 'async:first']);
   });
 });
+
+Deno.test('CreateScope - parent disposal', async (t) => {
+  class Resource {
+    constructor(public name: string, public log: string[]) {}
+
+    public async [Symbol.asyncDispose]() {
+      await Promise.resolve();
+      this.log.push(this.name);
+    }
+  }
+
+  const $Res = IoCToken<Resource>('Res');
+
+  await t.step('disposing a parent disposes its live scopes too', async () => {
+    const log: string[] = [];
+    const root = new IoCContainer();
+
+    root.RegisterFactory($Res, () => new Resource('scoped', log), { Lifetime: 'scoped' });
+
+    const scope = root.CreateScope();
+
+    await scope.Resolve($Res);
+    await root.Dispose();
+
+    assertEquals(log, ['scoped']);
+    assertEquals(scope.State, 'disposed');
+
+    // Disposing the scope again does nothing more.
+    await scope.Dispose();
+
+    assertEquals(log, ['scoped']);
+  });
+
+  await t.step(
+    'after stopping modules, live scopes are disposed deepest first, then own instances',
+    async () => {
+      const log: string[] = [];
+      const root = new IoCContainer();
+
+      root.RegisterFactory($Res, () => new Resource('root', log), { Name: 'root' });
+
+      root.RegisterFactory($Res, () => new Resource('scoped', log), { Lifetime: 'scoped' });
+
+      root.Use({
+        Name: 'Server',
+        Register: () => {},
+        OnStop: () => {
+          log.push('module stopped');
+        },
+      });
+
+      await root.Start();
+
+      const outer = root.CreateScope();
+      const inner = outer.CreateScope();
+      const innermost = inner.CreateScope();
+
+      // Built outer first and innermost before inner, so disposal order can't come from
+      // creation order alone.
+      (await outer.Resolve($Res)).name = 'outer';
+      (await innermost.Resolve($Res)).name = 'innermost';
+      (await inner.Resolve($Res)).name = 'inner';
+
+      await root.Dispose();
+
+      assertEquals(log, ['module stopped', 'innermost', 'inner', 'outer', 'root']);
+
+      for (const scope of [outer, inner, innermost]) assertEquals(scope.State, 'disposed');
+    },
+  );
+
+  await t.step('a scope disposed on its own is removed from its parent', async () => {
+    const log: string[] = [];
+    const root = new IoCContainer();
+
+    root.RegisterFactory($Res, () => new Resource('scoped', log), { Lifetime: 'scoped' });
+
+    const kept = root.CreateScope();
+    const done = root.CreateScope();
+    const child = done.CreateScope();
+
+    assertEquals(liveScopes(root), 2);
+    assertEquals(liveScopes(done), 1);
+
+    await done.Resolve($Res);
+    await done.Dispose();
+
+    assertEquals(liveScopes(root), 1);
+    assertEquals(child.State, 'disposed');
+
+    await kept.Resolve($Res);
+    await root.Dispose();
+
+    // Each instance was disposed exactly once.
+    assertEquals(log, ['scoped', 'scoped']);
+    assertEquals(liveScopes(root), 0);
+  });
+
+  await t.step('a scope of a disposed parent rejects every use', async () => {
+    const root = setup();
+    const scope = root.CreateScope();
+    const nested = scope.CreateScope();
+
+    await root.Dispose();
+
+    for (const s of [scope, nested]) {
+      await assertRejects(() => s.Resolve(Config), IoCContainerDisposedError);
+      await assertRejects(() => s.TryResolve(Config), IoCContainerDisposedError);
+      assertThrows(() => s.RegisterClass(Config), IoCContainerDisposedError);
+      assertThrows(() => s.CreateScope(), IoCContainerDisposedError);
+    }
+
+    // Disposing them now is a no-op.
+    await scope.Dispose();
+    await nested.Dispose();
+  });
+
+  await t.step('errors from disposing child scopes reach the parent Dispose', async () => {
+    class Failing {
+      public [Symbol.dispose]() {
+        throw new Error('child failed');
+      }
+    }
+
+    const root = new IoCContainer();
+
+    root.RegisterClass(Failing, { Lifetime: 'scoped' });
+
+    const scope = root.CreateScope();
+
+    await scope.Resolve(Failing);
+
+    const err = await assertRejects(() => root.Dispose(), IoCDisposeError);
+
+    assertEquals(err.errors.length, 1);
+    assert(isDisposeErrorOf(err.errors[0], 'child failed'));
+    assertEquals(root.State, 'disposed');
+    assertEquals(scope.State, 'disposed');
+  });
+});
+
+/** True when `err` is an `IoCDisposeError` wrapping an error with `message`. */
+function isDisposeErrorOf(err: unknown, message: string): boolean {
+  return err instanceof IoCDisposeError &&
+    err.errors.some((e) => (e as Error).message === message);
+}

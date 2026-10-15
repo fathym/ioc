@@ -13,6 +13,7 @@ const url = new URL(target, `file://${globalThis.process?.cwd?.() ?? globalThis.
 const {
   IoCCircularDependencyError,
   IoCContainer,
+  IoCSealedError,
   IoCServiceNotFoundError,
   IoCToken,
   IoCValidationError,
@@ -52,8 +53,8 @@ const $Db = IoCToken('Smoke/Db');
 const ioc = new IoCContainer()
   .Typed()
   .RegisterClass(Config)
-  .RegisterFactory($Db, () => Promise.resolve({ query: (sql) => [sql] }), { Lazy: true })
-  .RegisterClass(Repo, { Deps: [Config, $Db], Lazy: true });
+  .RegisterFactory($Db, () => Promise.resolve({ query: (sql) => [sql] }))
+  .RegisterClass(Repo, { Deps: [Config, $Db] });
 
 ioc.Validate();
 
@@ -70,7 +71,7 @@ const $Flaky = IoCToken('Smoke/Flaky');
 ioc.RegisterFactory($Flaky, () => {
   attempts++;
   return attempts === 1 ? Promise.reject(new Error('not up yet')) : Promise.resolve('up');
-}, { Lazy: true });
+});
 
 await rejects(() => ioc.Resolve($Flaky), Error, 'a failing factory rejects');
 const [a, b] = await Promise.all([ioc.Resolve($Flaky), ioc.Resolve($Flaky)]);
@@ -87,7 +88,7 @@ class Session {
   }
 }
 
-ioc.RegisterClass(Session, { Lifetime: 'scoped', Lazy: true });
+ioc.RegisterClass(Session, { Lifetime: 'scoped' });
 
 const s1 = ioc.CreateScope();
 const s2 = ioc.CreateScope();
@@ -106,11 +107,11 @@ await rejects(() => ioc.Resolve(IoCToken('Smoke/Missing')), IoCServiceNotFoundEr
 const cyclic = new IoCContainer();
 const $A = IoCToken('Smoke/A');
 const $B = IoCToken('Smoke/B');
-cyclic.RegisterFactory($A, async (c) => await c.Resolve($B), { Lazy: true });
-cyclic.RegisterFactory($B, async (c) => await c.Resolve($A), { Lazy: true });
+cyclic.RegisterFactory($A, async (c) => await c.Resolve($B));
+cyclic.RegisterFactory($B, async (c) => await c.Resolve($A));
 await rejects(() => cyclic.Resolve($A), IoCCircularDependencyError, 'cycles throw');
 
-const invalid = new IoCContainer().RegisterClass(Repo, { Deps: [Config, $Db], Lazy: true });
+const invalid = new IoCContainer().RegisterClass(Repo, { Deps: [Config, $Db] });
 let validation;
 try {
   invalid.Validate();
@@ -118,6 +119,62 @@ try {
   validation = err;
 }
 check(validation instanceof IoCValidationError, 'Validate reports missing dependencies');
+
+// Cycles through a captured container throw across `await`, where the runtime offers an async
+// context without an import (Node.js 20.16+/22.3+, Deno, Bun).
+if (typeof globalThis.process?.getBuiltinModule === 'function') {
+  const captured = new IoCContainer();
+  const $X = IoCToken('Smoke/X');
+  const $Y = IoCToken('Smoke/Y');
+  const tick = () => new Promise((r) => setTimeout(r, 1));
+  captured.RegisterFactory($X, async () => (await tick(), await captured.Resolve($Y)));
+  captured.RegisterFactory($Y, async () => (await tick(), await captured.Resolve($X)));
+  await rejects(() => captured.Resolve($X), IoCCircularDependencyError, 'captured cycles throw');
+}
+
+// Modules: layered start, sealing, and disposal reaching child scopes.
+const events = [];
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const $Url = IoCToken('Smoke/Url');
+const Core = {
+  Name: 'Core',
+  Register: (c) => c.RegisterValue($Url, 'core'),
+  OnStart: () => sleep(20).then(() => events.push('start:Core')),
+  OnStop: () => events.push('stop:Core'),
+};
+const Cache = {
+  Name: 'Cache',
+  Register: () => {},
+  OnStart: () => sleep(20).then(() => events.push('start:Cache')),
+};
+const Api = {
+  Name: 'Api',
+  Requires: [Core, Cache],
+  Register: () => {},
+  OnStart: () => events.push('start:Api'),
+};
+const app = new IoCContainer().Use(Api);
+const begin = Date.now();
+await app.Start();
+check(app.State === 'started', 'Start() reaches the started state');
+check(
+  events.at(-1) === 'start:Api' && Date.now() - begin < 200,
+  'independent modules start together',
+);
+let sealed;
+try {
+  app.RegisterValue($Url, 'evil', { Replace: true });
+} catch (err) {
+  sealed = err;
+}
+check(sealed instanceof IoCSealedError, 'module registrations are sealed');
+const tenant = app.CreateScope();
+tenant.RegisterClass(Session, { Lifetime: 'scoped' });
+const leftOpen = await tenant.Resolve(Session);
+disposed.length = 0;
+await app.Dispose();
+check(app.State === 'disposed' && events.includes('stop:Core'), 'Dispose() stops the modules');
+check(disposed.includes(leftOpen.id), 'Dispose() disposes the live child scopes');
 
 // Decorate.
 ioc.Decorate($Db, (inner) => ({ query: (sql) => inner.query(sql.toUpperCase()) }));

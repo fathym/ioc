@@ -1,6 +1,8 @@
 // Async functions without await are deliberate here: they produce promise-returning factories.
 // deno-lint-ignore-file require-await
+import { IoCServiceNotFoundError } from '../../src/ioc/errors.ts';
 import { IoCContainer } from '../../src/ioc/ioc.ts';
+import { IoCToken } from '../../src/ioc/IoCToken.ts';
 import {
   assert,
   assertEquals,
@@ -10,8 +12,8 @@ import {
 } from '../test.deps.ts';
 import { delay } from './_helpers.ts';
 
-Deno.test('Lazy - deferred creation', async (t) => {
-  await t.step('lazy class is not constructed until resolved', async () => {
+Deno.test('Laziness - deferred creation', async (t) => {
+  await t.step('a class is not constructed until resolved', async () => {
     const ioc = new IoCContainer();
     let built = 0;
 
@@ -21,7 +23,7 @@ Deno.test('Lazy - deferred creation', async (t) => {
       }
     }
 
-    ioc.Register(Svc, { Lazy: true });
+    ioc.RegisterClass(Svc);
 
     await delay(5);
     assertEquals(built, 0);
@@ -30,19 +32,20 @@ Deno.test('Lazy - deferred creation', async (t) => {
     assertEquals(built, 1);
   });
 
-  await t.step('lazy factory is not called until resolved', async () => {
+  await t.step('a factory is not called until resolved', async () => {
     const ioc = new IoCContainer();
+    const $F = IoCToken<{ n: number }>('F');
     let calls = 0;
 
-    ioc.Register(() => ({ n: ++calls }), { Type: ioc.Symbol('F'), Lazy: true });
+    ioc.RegisterFactory($F, () => ({ n: ++calls }));
 
     await delay(5);
     assertEquals(calls, 0);
 
-    assertEquals(await ioc.Resolve(ioc.Symbol('F')), { n: 1 });
+    assertEquals(await ioc.Resolve($F), { n: 1 });
   });
 
-  await t.step('lazy with class key and explicit factory honors Lazy', async () => {
+  await t.step('a class key with an explicit factory is deferred too', async () => {
     const ioc = new IoCContainer();
     let opened = 0;
 
@@ -52,7 +55,7 @@ Deno.test('Lazy - deferred creation', async (t) => {
       }
     }
 
-    ioc.Register(Kv, () => new Kv('/tmp/db'), { Lazy: true, Name: 'main' });
+    ioc.RegisterFactory(Kv, () => new Kv('/tmp/db'), { Name: 'main' });
 
     await delay(5);
     assertEquals(opened, 0);
@@ -61,96 +64,7 @@ Deno.test('Lazy - deferred creation', async (t) => {
     assertEquals(opened, 1);
   });
 
-  await t.step('lazy singleton is memoized', async () => {
-    const ioc = new IoCContainer();
-    let calls = 0;
-
-    ioc.Register(() => ({ n: ++calls }), { Type: ioc.Symbol('Memo'), Lazy: true });
-
-    const a = await ioc.Resolve(ioc.Symbol('Memo'));
-    const b = await ioc.Resolve(ioc.Symbol('Memo'));
-
-    assertStrictEquals(a, b);
-    assertEquals(calls, 1);
-  });
-
-  await t.step('concurrent resolves share one async creation', async () => {
-    const ioc = new IoCContainer();
-    let calls = 0;
-
-    ioc.Register(async () => {
-      calls++;
-      await delay(10);
-      return { n: calls };
-    }, { Type: ioc.Symbol('Concurrent'), Lazy: true });
-
-    const results = await Promise.all(
-      Array.from({ length: 25 }, () => ioc.Resolve(ioc.Symbol('Concurrent'))),
-    );
-
-    assertEquals(calls, 1);
-    assertEquals(new Set(results).size, 1);
-  });
-
-  await t.step('a rejected creation is not memoized; the next resolve retries', async () => {
-    const ioc = new IoCContainer();
-    let attempts = 0;
-
-    ioc.Register(async () => {
-      attempts++;
-      if (attempts === 1) throw new Error('db not ready');
-      return { attempt: attempts };
-    }, { Type: ioc.Symbol('Retry'), Lazy: true });
-
-    await assertRejects(() => ioc.Resolve(ioc.Symbol('Retry')), Error, 'db not ready');
-
-    assertEquals(await ioc.Resolve(ioc.Symbol('Retry')), { attempt: 2 });
-    assertEquals(await ioc.Resolve(ioc.Symbol('Retry')), { attempt: 2 });
-    assertEquals(attempts, 2);
-  });
-
-  await t.step(
-    'concurrent resolves during a failing creation all reject, then retry once',
-    async () => {
-      const ioc = new IoCContainer();
-      let attempts = 0;
-
-      ioc.Register(async () => {
-        attempts++;
-        await delay(5);
-        if (attempts === 1) throw new Error('first fails');
-        return 'ok';
-      }, { Type: ioc.Symbol('Group'), Lazy: true });
-
-      const results = await Promise.allSettled([
-        ioc.Resolve(ioc.Symbol('Group')),
-        ioc.Resolve(ioc.Symbol('Group')),
-        ioc.Resolve(ioc.Symbol('Group')),
-      ]);
-
-      assert(results.every((r) => r.status === 'rejected'));
-      assertEquals(attempts, 1);
-
-      assertEquals(await ioc.Resolve(ioc.Symbol('Group')), 'ok');
-      assertEquals(attempts, 2);
-    },
-  );
-
-  await t.step('a synchronous throw in a lazy factory rejects and retries', async () => {
-    const ioc = new IoCContainer();
-    let attempts = 0;
-
-    ioc.Register(() => {
-      attempts++;
-      if (attempts === 1) throw new Error('sync fail');
-      return 'recovered';
-    }, { Type: ioc.Symbol('SyncFail'), Lazy: true });
-
-    await assertRejects(() => ioc.Resolve(ioc.Symbol('SyncFail')), Error, 'sync fail');
-    assertEquals(await ioc.Resolve(ioc.Symbol('SyncFail')), 'recovered');
-  });
-
-  await t.step('lazy transient creates per resolve and nothing at registration', async () => {
+  await t.step('a transient creates per resolve and nothing at registration', async () => {
     const ioc = new IoCContainer();
     let built = 0;
 
@@ -160,7 +74,7 @@ Deno.test('Lazy - deferred creation', async (t) => {
       }
     }
 
-    ioc.Register(T, { Lazy: true, Lifetime: 'transient' });
+    ioc.RegisterClass(T, { Lifetime: 'transient' });
 
     await delay(1);
     assertEquals(built, 0);
@@ -169,54 +83,64 @@ Deno.test('Lazy - deferred creation', async (t) => {
     assertEquals(built, 2);
   });
 
-  await t.step(
-    'lazy scoped is created on resolve and disposable without being created',
-    async () => {
-      const ioc = new IoCContainer();
-      let built = 0;
+  await t.step('a scoped service can be unregistered without ever being created', async () => {
+    const ioc = new IoCContainer();
+    let built = 0;
 
-      class S {
-        constructor() {
-          built++;
-        }
+    class S {
+      constructor() {
+        built++;
       }
+    }
 
-      const dispose = ioc.Register(S, { Lazy: true, Lifetime: 'scoped' });
+    ioc.RegisterClass(S, { Lifetime: 'scoped' });
 
-      dispose();
+    assert(ioc.Unregister(S));
 
-      assertEquals(built, 0);
-      await assertRejects(() => ioc.Resolve(S), Error, 'No Service for symbol');
-    },
-  );
+    assertEquals(built, 0);
 
-  await t.step('lazy scoped resolves one instance until disposed', async () => {
+    await using scope = ioc.CreateScope();
+
+    await assertRejects(
+      () => scope.Resolve(S),
+      IoCServiceNotFoundError,
+      'No service is registered for S.',
+    );
+  });
+
+  await t.step('a scoped service resolves one instance per scope until unregistered', async () => {
     const ioc = new IoCContainer();
 
     class S {}
 
-    const dispose = ioc.Register(S, { Lazy: true, Lifetime: 'scoped' });
+    ioc.RegisterClass(S, { Lifetime: 'scoped' });
 
-    assertStrictEquals(await ioc.Resolve(S), await ioc.Resolve(S));
+    await using scope = ioc.CreateScope();
 
-    dispose();
+    assertStrictEquals(await scope.Resolve(S), await scope.Resolve(S));
 
-    await assertRejects(() => ioc.Resolve(S));
+    ioc.Unregister(S);
+
+    await assertRejects(() => scope.Resolve(S), IoCServiceNotFoundError);
   });
 
-  await t.step('re-registering before resolve means the first is never built', async () => {
-    const ioc = new IoCContainer();
-    const built: string[] = [];
+  await t.step(
+    'replacing a registration before resolve means the first is never built',
+    async () => {
+      const ioc = new IoCContainer();
+      const $Twice = IoCToken<number>('Twice');
+      const built: string[] = [];
 
-    ioc.Register(() => built.push('first'), { Type: ioc.Symbol('Twice'), Lazy: true });
-    ioc.Register(() => built.push('second'), { Type: ioc.Symbol('Twice'), Lazy: true });
+      ioc.RegisterFactory($Twice, () => built.push('first'));
+      ioc.RegisterFactory($Twice, () => built.push('second'), { Replace: true });
 
-    await ioc.Resolve(ioc.Symbol('Twice'));
+      await ioc.Resolve($Twice);
 
-    assertEquals(built, ['second']);
-  });
+      assertEquals(built, ['second']);
+    },
+  );
 
-  await t.step('lazy factories can resolve other services through their parameter', async () => {
+  await t.step('factories can resolve other services through their parameter', async () => {
     const ioc = new IoCContainer();
 
     class Config {
@@ -227,8 +151,8 @@ Deno.test('Lazy - deferred creation', async (t) => {
       constructor(public config: Config) {}
     }
 
-    ioc.Register(Repo, async (c) => new Repo(await c.Resolve(Config)), { Lazy: true });
-    ioc.Register(Config);
+    ioc.RegisterFactory(Repo, async (c) => new Repo(await c.Resolve(Config)));
+    ioc.RegisterClass(Config);
 
     const repo = await ioc.Resolve(Repo);
 
@@ -236,38 +160,138 @@ Deno.test('Lazy - deferred creation', async (t) => {
     assertStrictEquals(repo.config, await ioc.Resolve(Config));
   });
 
-  await t.step('lazy registration fixes registration order', async () => {
+  await t.step('registration order does not matter', async () => {
     const ioc = new IoCContainer();
+    const $Early = IoCToken<{ late: Late }>('Early');
 
     class Late {
       public late = true;
     }
 
-    ioc.Register(async (c) => ({ late: await c.Resolve(Late) }), {
-      Type: ioc.Symbol('Early'),
-      Lazy: true,
-    });
+    ioc.RegisterFactory($Early, async (c) => ({ late: await c.Resolve(Late) }));
 
-    ioc.Register(Late);
+    ioc.RegisterClass(Late);
 
-    const early = await ioc.Resolve<{ late: Late }>(ioc.Symbol('Early'));
+    const early = await ioc.Resolve($Early);
 
     assertInstanceOf(early.late, Late);
   });
 
-  await t.step('lazy factory parameter behaves like the container', async () => {
+  await t.step('the factory parameter behaves like the container', async () => {
     const ioc = new IoCContainer();
+    const $Seen = IoCToken<object>('Seen');
     let seen: IoCContainer | undefined;
 
-    ioc.Register((c) => {
+    class Shared {}
+
+    ioc.RegisterClass(Shared);
+
+    ioc.RegisterFactory($Seen, (c) => {
       seen = c;
       return {};
-    }, { Type: ioc.Symbol('Seen'), Lazy: true });
+    });
 
-    await ioc.Resolve(ioc.Symbol('Seen'));
+    await ioc.Resolve($Seen);
 
     assert(seen instanceof IoCContainer);
-    assertStrictEquals(seen!.services, ioc.services);
-    assertStrictEquals(seen!.services, ioc.services);
+    assert(seen.Has($Seen));
+    assertEquals(seen.Names(Shared), ioc.Names(Shared));
+    assertStrictEquals(await seen.Resolve(Shared), await ioc.Resolve(Shared));
+  });
+});
+
+Deno.test('Laziness - memoization, failure retry and concurrent first builds', async (t) => {
+  await t.step('a singleton is memoized', async () => {
+    const ioc = new IoCContainer();
+    const $Memo = IoCToken<{ n: number }>('Memo');
+    let calls = 0;
+
+    ioc.RegisterFactory($Memo, () => ({ n: ++calls }));
+
+    const a = await ioc.Resolve($Memo);
+    const b = await ioc.Resolve($Memo);
+
+    assertStrictEquals(a, b);
+    assertEquals(calls, 1);
+  });
+
+  await t.step('concurrent resolves share one async creation', async () => {
+    const ioc = new IoCContainer();
+    const $Concurrent = IoCToken<{ n: number }>('Concurrent');
+    let calls = 0;
+
+    ioc.RegisterFactory($Concurrent, async () => {
+      calls++;
+      await delay(10);
+      return { n: calls };
+    });
+
+    const results = await Promise.all(
+      Array.from({ length: 25 }, () => ioc.Resolve($Concurrent)),
+    );
+
+    assertEquals(calls, 1);
+    assertEquals(new Set(results).size, 1);
+  });
+
+  await t.step('a rejected creation is not memoized; the next resolve retries', async () => {
+    const ioc = new IoCContainer();
+    const $Retry = IoCToken<{ attempt: number }>('Retry');
+    let attempts = 0;
+
+    ioc.RegisterFactory($Retry, async () => {
+      attempts++;
+      if (attempts === 1) throw new Error('db not ready');
+      return { attempt: attempts };
+    });
+
+    await assertRejects(() => ioc.Resolve($Retry), Error, 'db not ready');
+
+    assertEquals(await ioc.Resolve($Retry), { attempt: 2 });
+    assertEquals(await ioc.Resolve($Retry), { attempt: 2 });
+    assertEquals(attempts, 2);
+  });
+
+  await t.step(
+    'concurrent resolves during a failing creation all reject, then retry once',
+    async () => {
+      const ioc = new IoCContainer();
+      const $Group = IoCToken<string>('Group');
+      let attempts = 0;
+
+      ioc.RegisterFactory($Group, async () => {
+        attempts++;
+        await delay(5);
+        if (attempts === 1) throw new Error('first fails');
+        return 'ok';
+      });
+
+      const results = await Promise.allSettled([
+        ioc.Resolve($Group),
+        ioc.Resolve($Group),
+        ioc.Resolve($Group),
+      ]);
+
+      assert(results.every((r) => r.status === 'rejected'));
+      assertEquals(attempts, 1);
+
+      assertEquals(await ioc.Resolve($Group), 'ok');
+      assertEquals(attempts, 2);
+    },
+  );
+
+  await t.step('a synchronous throw in a factory rejects and retries', async () => {
+    const ioc = new IoCContainer();
+    const $SyncFail = IoCToken<string>('SyncFail');
+    let attempts = 0;
+
+    ioc.RegisterFactory($SyncFail, () => {
+      attempts++;
+      if (attempts === 1) throw new Error('sync fail');
+      return 'recovered';
+    });
+
+    await assertRejects(() => ioc.Resolve($SyncFail), Error, 'sync fail');
+    assertEquals(await ioc.Resolve($SyncFail), 'recovered');
   });
 });

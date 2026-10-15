@@ -1,6 +1,6 @@
 // Every instance has exactly one owner (the container that first created it), which disposes it
 // exactly once; values handed in are never disposed; late arrivals are not leaked.
-import { IoCContainer, type IoCDiagnostic } from '../../src/ioc/ioc.ts';
+import { IoCContainer, type IoCEvent } from '../../src/ioc/ioc.ts';
 import { IoCToken } from '../../src/ioc/IoCToken.ts';
 import { assert, assertEquals } from '../test.deps.ts';
 
@@ -16,7 +16,7 @@ const tick = (ms = 1) => new Promise((r) => setTimeout(r, ms));
 
 Deno.test('Ownership', async (t) => {
   await t.step('a decorator returning the inner instance: disposed once', async () => {
-    const ioc = new IoCContainer().RegisterClass(Counted, { Lazy: true });
+    const ioc = new IoCContainer().RegisterClass(Counted);
 
     ioc.Decorate(Counted, (inner) => inner);
 
@@ -28,7 +28,7 @@ Deno.test('Ownership', async (t) => {
   });
 
   await t.step("decorating in a scope never disposes the parent's singleton", async () => {
-    const root = new IoCContainer().RegisterClass(Counted, { Lazy: true });
+    const root = new IoCContainer().RegisterClass(Counted);
 
     const scope = root.CreateScope();
 
@@ -51,8 +51,8 @@ Deno.test('Ownership', async (t) => {
     const $Alias = IoCToken<Counted>('OwnAlias');
 
     const ioc = new IoCContainer()
-      .RegisterFactory($Primary, () => new Counted(), { Lazy: true })
-      .RegisterFactory($Alias, (c) => c.Resolve($Primary), { Lazy: true });
+      .RegisterFactory($Primary, () => new Counted())
+      .RegisterFactory($Alias, (c) => c.Resolve($Primary));
 
     const alias = await ioc.Resolve($Alias);
 
@@ -79,25 +79,21 @@ Deno.test('Ownership', async (t) => {
     assertEquals(value.disposed, 0);
   });
 
-  await t.step(
-    'two containers sharing a singleton through CopyTo: the owner disposes it',
-    async () => {
-      const source = new IoCContainer().RegisterClass(Counted);
-      const target = new IoCContainer();
+  await t.step("a scope resolving the root's singleton: only the root disposes it", async () => {
+    const root = new IoCContainer().RegisterClass(Counted);
 
-      source.CopyTo(target);
+    const scope = root.CreateScope();
 
-      const svc = await target.Resolve(Counted);
+    const svc = await scope.Resolve(Counted);
 
-      await target.Dispose();
+    await scope.Dispose();
 
-      assertEquals(svc.disposed, 0);
+    assertEquals(svc.disposed, 0);
 
-      await source.Dispose();
+    await root.Dispose();
 
-      assertEquals(svc.disposed, 1);
-    },
-  );
+    assertEquals(svc.disposed, 1);
+  });
 
   await t.step(
     'an instance that finishes building after Dispose() is disposed on arrival',
@@ -107,7 +103,7 @@ Deno.test('Ownership', async (t) => {
       const ioc = new IoCContainer().RegisterFactory($Slow, async () => {
         await tick(10);
         return new Counted();
-      }, { Lazy: true });
+      });
 
       const pending = ioc.Resolve($Slow);
 
@@ -122,7 +118,7 @@ Deno.test('Ownership', async (t) => {
   );
 
   await t.step('a late arrival that fails to dispose is reported, not thrown', async () => {
-    const diagnostics: IoCDiagnostic[] = [];
+    const warnings: IoCEvent[] = [];
 
     class Failing {
       [Symbol.dispose]() {
@@ -132,13 +128,14 @@ Deno.test('Ownership', async (t) => {
 
     const $Late = IoCToken<Failing>('OwnLateFailing');
 
-    const ioc = new IoCContainer({ Diagnostics: (d) => diagnostics.push(d) }).RegisterFactory(
+    const ioc = new IoCContainer({
+      OnEvent: (e) => e.Type === 'warning' && warnings.push(e),
+    }).RegisterFactory(
       $Late,
       async () => {
         await tick(10);
         return new Failing();
       },
-      { Lazy: true },
     );
 
     const pending = ioc.Resolve($Late);
@@ -147,12 +144,12 @@ Deno.test('Ownership', async (t) => {
     await pending;
     await tick();
 
-    assertEquals(diagnostics.map((d) => d.Code), ['IOC_LATE_DISPOSE_FAILED']);
-    assert(diagnostics[0].Message.includes('cannot close'));
+    assertEquals(warnings.map((e) => e.Type === 'warning' && e.Code), ['IOC_LATE_DISPOSE_FAILED']);
+    assert(warnings[0].Type === 'warning' && warnings[0].Message.includes('cannot close'));
   });
 
   await t.step('scoped instances are still owned and disposed by their scope', async () => {
-    const root = new IoCContainer().RegisterClass(Counted, { Lifetime: 'scoped', Lazy: true });
+    const root = new IoCContainer().RegisterClass(Counted, { Lifetime: 'scoped' });
 
     const scope = root.CreateScope();
 

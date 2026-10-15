@@ -1,42 +1,29 @@
 // Internal machinery shared by IoCContainer. Nothing here is exported from mod.ts.
-//
-// Several published versions of this module can be loaded in one process (dependents pin
-// different exact versions) and their containers call each other's CopyTo. So every marker is
-// a `Symbol.for` key rather than a module-private WeakSet or `#private` field, and container
-// detection never uses `instanceof`.
 
 // deno-lint-ignore no-explicit-any
 type Indexable = any;
 
-/** Marks a function stored in `services` as a thunk created by a protocol-aware container. */
-export const IOC_REGISTRATION = Symbol.for('@fathym/ioc/registration');
+/** On a view: the resolution frame the view's calls continue from. */
+export const IOC_CONTEXT: unique symbol = Symbol('@fathym/ioc/context');
 
-/** Present on protocol-aware containers; its value is the protocol version. */
-export const IOC_PROTOCOL = Symbol.for('@fathym/ioc/protocol');
+/** On a view: the real container the view was created from. */
+export const IOC_SELF: unique symbol = Symbol('@fathym/ioc/self');
 
-/** On a context view: the resolution frame the view's calls continue from. */
-export const IOC_CONTEXT = Symbol.for('@fathym/ioc/context');
-
-/** On a context view: the real container the view was created from. */
-export const IOC_SELF = Symbol.for('@fathym/ioc/self');
-
-export const IOC_PROTOCOL_VERSION = 1;
+/** On a module view: the module whose `Register`, `OnStart` or `OnStop` is running. */
+export const IOC_MODULE: unique symbol = Symbol('@fathym/ioc/module');
 
 /**
  * Who owns (and so disposes) each disposable instance: the first container that created it, or
- * {@link IOC_EXTERNAL} for values handed in with `RegisterValue`. Shared through `globalThis`
- * under a `Symbol.for` key, so every copy of the library in the process agrees on ownership: a
- * decorator or alias factory that returns an instance another container created never makes a
- * second owner.
+ * {@link IOC_EXTERNAL} for values handed in with `RegisterValue`. A decorator or alias factory
+ * that returns an instance another container created never makes a second owner.
  */
-export const IOC_OWNERS: WeakMap<object, object> = ((globalThis as Indexable)[
-  Symbol.for('@fathym/ioc/owners')
-] ??= new WeakMap<object, object>());
+export const IOC_OWNERS: WeakMap<object, object> = new WeakMap<object, object>();
 
 /** Owner recorded for values the container was given rather than created; never disposed. */
-export const IOC_EXTERNAL: object = ((globalThis as Indexable)[
-  Symbol.for('@fathym/ioc/external')
-] ??= Object.freeze({ external: true }));
+export const IOC_EXTERNAL: object = Object.freeze({ external: true });
+
+/** A registration key: a token created by `IoCToken`, or a class. */
+export type IoCKey = object;
 
 /** Any function or class; used for constructor identity, where nothing else is assumed. */
 // deno-lint-ignore ban-types
@@ -46,7 +33,7 @@ export type IoCLifetime = 'singleton' | 'transient' | 'scoped';
 
 /** A normalized declared dependency: what to resolve, and under which name. */
 export interface IoCDependencyRecord {
-  key: AnyFunction | symbol;
+  key: IoCKey;
   name: string;
   /** Injected as a resolver function (`IoCLazy`) or as every registration (`IoCAll`). */
   mode?: 'lazy' | 'all';
@@ -57,6 +44,8 @@ export interface IoCHolder {
   state: 'empty' | 'pending' | 'ready';
   value?: unknown;
   promise?: Promise<unknown>;
+  /** How long the last successful build took, in milliseconds. */
+  buildMs?: number;
   /** While pending: the frame building it (for cycle paths across concurrent resolutions). */
   building?: IoCResolveFrame;
   /**
@@ -90,24 +79,22 @@ export interface IoCResolveFrame {
   settled: boolean;
   /** Set when the factory threw or rejected: the build this frame ran is abandoned. */
   failed?: { error: unknown };
-  /** The registration whose factory this frame runs (absent on frames from older versions). */
+  /** The registration whose factory this frame runs. */
   reg?: IoCRegistration;
 }
 
-/**
- * A registration as seen across container versions (protocol v1). Behavior travels with the
- * registration, so each version runs its own logic for the entries it created.
- */
+/** One registration. Its behavior (building, caching, scoping) lives in `resolveIn`. */
 export interface IoCRegistration {
-  readonly v: 1;
-  readonly symbol: symbol;
+  readonly key: IoCKey;
   readonly name: string;
   readonly lifetime: IoCLifetime;
   readonly kind: 'class' | 'factory' | 'value';
-  /** The exact constructor, when the registration is keyed by its own class. */
+  /** The class the container constructs, for `RegisterClass` registrations. */
   readonly ctor?: AnyFunction;
   /** The container that created the registration; singleton factories always run against it. */
   readonly owner: object;
+  /** The module whose `Register` made it, if any; only that module may change it. */
+  readonly module?: { readonly Name: string };
   readonly holder?: IoCHolder;
   readonly label: string;
   /** Declared constructor dependencies (`RegisterClass(…, { Deps })`), used by `Validate()`. */
@@ -123,9 +110,9 @@ export interface IoCRegistration {
   readonly scopeLevel?: string;
   /**
    * Creates an unstored copy of this registration owned by `owner` (a fresh holder, the same
-   * factory), returning its thunk. Used by `Isolate()`.
+   * factory). Used by `Isolate()`.
    */
-  fork?(owner: object): unknown;
+  fork(owner: object): IoCRegistration;
   resolveIn(container: object, frame?: IoCResolveFrame): unknown;
 }
 
@@ -153,31 +140,6 @@ export function withFrame<T>(frame: IoCResolveFrame, fn: () => T): T {
   } finally {
     activeFrame = previous;
   }
-}
-
-/** The registration behind a stored entry, if the entry is a protocol thunk. */
-export function registrationOf(entry: unknown): IoCRegistration | undefined {
-  if (typeof entry !== 'function') return undefined;
-
-  const reg = (entry as Indexable)[IOC_REGISTRATION];
-
-  return typeof reg?.resolveIn === 'function' ? reg : undefined;
-}
-
-/** Creates the anonymous, marked thunk that is stored in `services` for a registration. */
-export function createThunk(reg: IoCRegistration): (ioc?: object) => unknown {
-  // Older containers invoke stored functions only when `fn.name` is empty. A function created
-  // inside an array literal gets no inferred name, which is cheaper than redefining `name`.
-  const thunk = [(ioc?: object) => reg.resolveIn(ioc ?? reg.owner)][0];
-
-  (thunk as Indexable)[IOC_REGISTRATION] = reg;
-
-  return thunk;
-}
-
-/** Wraps a registration for a pre-protocol container, which calls stored thunks with no arguments. */
-export function createLegacyThunk(reg: IoCRegistration, target: object): () => unknown {
-  return [() => reg.resolveIn(target)][0];
 }
 
 /** True when `fn` should be constructed with `new` rather than called as a factory. */
@@ -375,18 +337,33 @@ export function framePath(frame: IoCResolveFrame | undefined): string[] {
   return path;
 }
 
-/** Readable label for a registration key: `Symbol.description` plus `[name]` when named. */
-export function labelFor(symbol: symbol, name: string): string {
-  return name === '$default' ? `${symbol.description}` : `${symbol.description}[${name}]`;
+/** The readable name of a key: a token's description, or a class's name. */
+export function keyDescription(key: IoCKey): string {
+  if (typeof key === 'function') return key.name || '(anonymous class)';
+
+  return String((key as { Description?: unknown }).Description ?? '(unknown key)');
+}
+
+/** Readable label for a registration: the key's description plus `[name]` when named. */
+export function labelFor(key: IoCKey, name: string): string {
+  const description = keyDescription(key);
+
+  return name === '$default' ? description : `${description}[${name}]`;
 }
 
 /**
  * Creates a view of `container` that carries `frame`, so `Resolve` calls made by a factory
  * through its parameter continue the same resolution chain (enabling cycle detection and
  * resolution paths in errors). The view shares all state with the container via the prototype
- * chain; nothing is ever assigned on it.
+ * chain; nothing is ever assigned on it. A view made from a module view keeps its module.
  */
 export function createView<T extends object>(container: T, frame: IoCResolveFrame): T {
+  const module = (container as Indexable)[IOC_MODULE];
+
+  if (module) {
+    return Object.create(container, { [IOC_CONTEXT]: { value: frame } }) as T;
+  }
+
   const self = (container as Indexable)[IOC_SELF] ?? container;
 
   let View = viewConstructors.get(self);
@@ -408,6 +385,19 @@ export function createView<T extends object>(container: T, frame: IoCResolveFram
 }
 
 const viewConstructors = new WeakMap<object, new (frame: IoCResolveFrame) => object>();
+
+/**
+ * Creates a view of `container` that acts as `module`: registrations made through it are
+ * recorded as the module's, and the module may change them later.
+ */
+export function createModuleView<T extends object>(container: T, module: { Name: string }): T {
+  const self = (container as Indexable)[IOC_SELF] ?? container;
+
+  return Object.create(self, {
+    [IOC_SELF]: { value: self },
+    [IOC_MODULE]: { value: module },
+  }) as T;
+}
 
 /** Records `result` into `holder`, memoizing successes and resetting on rejection (retry). */
 export function settleInto(holder: IoCHolder, result: unknown): unknown {

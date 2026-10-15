@@ -1,55 +1,74 @@
 import { IoCCircularDependencyError } from '../../src/ioc/errors.ts';
 import { IoCContainer } from '../../src/ioc/ioc.ts';
+import { IoCToken } from '../../src/ioc/IoCToken.ts';
 import { assertEquals, assertInstanceOf, assertRejects, assertStrictEquals } from '../test.deps.ts';
 import { delay, withinTimeout } from './_helpers.ts';
 
+const $A = IoCToken<{ b: unknown }>('A');
+const $B = IoCToken<unknown>('B');
+
 Deno.test('Cycles - detected instead of hanging', async (t) => {
-  await t.step('lazy A -> B -> A through factory parameters', async () => {
+  await t.step('A -> B -> A through factory parameters', async () => {
     const ioc = new IoCContainer();
 
-    ioc.Register(async (c) => ({ b: await c.Resolve(c.Symbol('B')) }), {
-      Type: ioc.Symbol('A'),
-      Lazy: true,
-    });
-    ioc.Register(async (c) => ({ a: await c.Resolve(c.Symbol('A')) }), {
-      Type: ioc.Symbol('B'),
-      Lazy: true,
-    });
+    ioc.RegisterFactory($A, async (c) => ({ b: await c.Resolve($B) }));
+    ioc.RegisterFactory($B, async (c) => ({ a: await c.Resolve($A) }));
 
     const err = await withinTimeout(
-      assertRejects(() => ioc.Resolve(ioc.Symbol('A')), IoCCircularDependencyError),
+      assertRejects(() => ioc.Resolve($A), IoCCircularDependencyError),
     );
 
     assertEquals(err.Path, ['A', 'B', 'A']);
   });
 
-  await t.step('lazy cycle through closure-captured container (first await)', async () => {
+  await t.step('cycle through a closure-captured container (first await)', async () => {
     const ioc = new IoCContainer();
 
-    ioc.Register(async () => ({ b: await ioc.Resolve(ioc.Symbol('B')) }), {
-      Type: ioc.Symbol('A'),
-      Lazy: true,
+    ioc.RegisterFactory($A, async () => ({ b: await ioc.Resolve($B) }));
+    ioc.RegisterFactory($B, async () => ({ a: await ioc.Resolve($A) }));
+
+    await withinTimeout(assertRejects(() => ioc.Resolve($A), IoCCircularDependencyError));
+  });
+
+  await t.step('cycle through a closure-captured container, without async context', async () => {
+    const ioc = new IoCContainer({ AsyncContext: false });
+
+    ioc.RegisterFactory($A, async () => ({ b: await ioc.Resolve($B) }));
+    ioc.RegisterFactory($B, async () => ({ a: await ioc.Resolve($A) }));
+
+    await withinTimeout(assertRejects(() => ioc.Resolve($A), IoCCircularDependencyError));
+  });
+
+  await t.step('cycle through a closure-captured container after an await', async () => {
+    const ioc = new IoCContainer();
+
+    ioc.RegisterFactory($A, async () => {
+      await delay(1);
+      return { b: await ioc.Resolve($B) };
     });
-    ioc.Register(async () => ({ a: await ioc.Resolve(ioc.Symbol('A')) }), {
-      Type: ioc.Symbol('B'),
-      Lazy: true,
+    ioc.RegisterFactory($B, async () => {
+      await delay(1);
+      return { a: await ioc.Resolve($A) };
     });
 
-    await withinTimeout(
-      assertRejects(() => ioc.Resolve(ioc.Symbol('A')), IoCCircularDependencyError),
+    const err = await withinTimeout(
+      assertRejects(() => ioc.Resolve($A), IoCCircularDependencyError),
     );
+
+    assertEquals(err.code, 'IOC_CIRCULAR_DEPENDENCY');
+    assertEquals(err.Path, ['A', 'B', 'A']);
   });
 
   await t.step('transient self-dependency', async () => {
     const ioc = new IoCContainer();
+    const $Self = IoCToken<{ self: unknown }>('Self');
 
-    ioc.Register(async (c) => ({ self: await c.Resolve(c.Symbol('Self')) }), {
-      Type: ioc.Symbol('Self'),
+    ioc.RegisterFactory($Self, async (c) => ({ self: await c.Resolve($Self) }), {
       Lifetime: 'transient',
     });
 
     const err = await withinTimeout(
-      assertRejects(() => ioc.Resolve(ioc.Symbol('Self')), IoCCircularDependencyError),
+      assertRejects(() => ioc.Resolve($Self), IoCCircularDependencyError),
     );
 
     assertEquals(err.Path, ['Self', 'Self']);
@@ -58,49 +77,38 @@ Deno.test('Cycles - detected instead of hanging', async (t) => {
   await t.step('transient A -> transient B -> A', async () => {
     const ioc = new IoCContainer();
 
-    ioc.Register(async (c) => ({ b: await c.Resolve(c.Symbol('B')) }), {
-      Type: ioc.Symbol('A'),
-      Lifetime: 'transient',
-    });
-    ioc.Register(async (c) => ({ a: await c.Resolve(c.Symbol('A')) }), {
-      Type: ioc.Symbol('B'),
-      Lifetime: 'transient',
-    });
+    ioc.RegisterFactory($A, async (c) => ({ b: await c.Resolve($B) }), { Lifetime: 'transient' });
+    ioc.RegisterFactory($B, async (c) => ({ a: await c.Resolve($A) }), { Lifetime: 'transient' });
 
     const err = await withinTimeout(
-      assertRejects(() => ioc.Resolve(ioc.Symbol('B')), IoCCircularDependencyError),
+      assertRejects(() => ioc.Resolve($B), IoCCircularDependencyError),
     );
 
     assertEquals(err.Path, ['B', 'A', 'B']);
   });
 
-  await t.step('mixed lifetimes: lazy singleton -> transient -> lazy singleton', async () => {
+  await t.step('mixed lifetimes: singleton -> transient -> singleton', async () => {
     const ioc = new IoCContainer();
+    const $S = IoCToken<{ t: unknown }>('S');
+    const $T = IoCToken<{ s: unknown }>('T');
 
-    ioc.Register(async (c) => ({ t: await c.Resolve(c.Symbol('T')) }), {
-      Type: ioc.Symbol('S'),
-      Lazy: true,
-    });
-    ioc.Register(async (c) => ({ s: await c.Resolve(c.Symbol('S')) }), {
-      Type: ioc.Symbol('T'),
-      Lifetime: 'transient',
-    });
+    ioc.RegisterFactory($S, async (c) => ({ t: await c.Resolve($T) }));
+    ioc.RegisterFactory($T, async (c) => ({ s: await c.Resolve($S) }), { Lifetime: 'transient' });
 
-    await withinTimeout(
-      assertRejects(() => ioc.Resolve(ioc.Symbol('S')), IoCCircularDependencyError),
-    );
+    await withinTimeout(assertRejects(() => ioc.Resolve($S), IoCCircularDependencyError));
   });
 
-  await t.step('synchronous re-entry of a lazy singleton', async () => {
+  await t.step('synchronous re-entry of a singleton', async () => {
     const ioc = new IoCContainer();
+    const $Reentrant = IoCToken<object>('Reentrant');
     let inner: Promise<unknown> | undefined;
 
-    ioc.Register(() => {
-      inner = ioc.Resolve(ioc.Symbol('Reentrant'));
+    ioc.RegisterFactory($Reentrant, () => {
+      inner = ioc.Resolve($Reentrant);
       return {};
-    }, { Type: ioc.Symbol('Reentrant'), Lazy: true });
+    });
 
-    await ioc.Resolve(ioc.Symbol('Reentrant'));
+    await ioc.Resolve($Reentrant);
 
     await assertRejects(() => inner!, IoCCircularDependencyError);
   });
@@ -108,18 +116,16 @@ Deno.test('Cycles - detected instead of hanging', async (t) => {
   await t.step('long cycle reports the full path', async () => {
     const ioc = new IoCContainer();
     const names = ['N0', 'N1', 'N2', 'N3', 'N4'];
+    const tokens = names.map((name) => IoCToken<{ next: unknown }>(name));
 
-    names.forEach((name, i) => {
-      const next = names[(i + 1) % names.length];
+    tokens.forEach(($N, i) => {
+      const $Next = tokens[(i + 1) % tokens.length];
 
-      ioc.Register(async (c) => ({ next: await c.Resolve(c.Symbol(next)) }), {
-        Type: ioc.Symbol(name),
-        Lazy: true,
-      });
+      ioc.RegisterFactory($N, async (c) => ({ next: await c.Resolve($Next) }));
     });
 
     const err = await withinTimeout(
-      assertRejects(() => ioc.Resolve(ioc.Symbol('N2')), IoCCircularDependencyError),
+      assertRejects(() => ioc.Resolve(tokens[2]), IoCCircularDependencyError),
     );
 
     assertEquals(err.Path, ['N2', 'N3', 'N4', 'N0', 'N1', 'N2']);
@@ -128,48 +134,35 @@ Deno.test('Cycles - detected instead of hanging', async (t) => {
   await t.step('a failed cycle leaves services resolvable once the cycle is broken', async () => {
     const ioc = new IoCContainer();
 
-    ioc.Register(async (c) => ({ b: await c.Resolve(c.Symbol('B')) }), {
-      Type: ioc.Symbol('A'),
-      Lazy: true,
-    });
-    ioc.Register(async (c) => ({ a: await c.Resolve(c.Symbol('A')) }), {
-      Type: ioc.Symbol('B'),
-      Lazy: true,
-    });
+    ioc.RegisterFactory($A, async (c) => ({ b: await c.Resolve($B) }));
+    ioc.RegisterFactory($B, async (c) => ({ a: await c.Resolve($A) }));
 
-    await withinTimeout(assertRejects(() => ioc.Resolve(ioc.Symbol('A'))));
+    await withinTimeout(assertRejects(() => ioc.Resolve($A)));
 
-    ioc.Register(() => ({ fixed: true }), { Type: ioc.Symbol('B'), Lazy: true });
+    ioc.RegisterFactory($B, () => ({ fixed: true }), { Replace: true });
 
-    assertEquals(await ioc.Resolve(ioc.Symbol('A')), { b: { fixed: true } });
+    assertEquals(await ioc.Resolve($A), { b: { fixed: true } });
   });
 });
 
 Deno.test('Cycles - no false positives', async (t) => {
   await t.step('diamond dependencies resolve and share the bottom singleton', async () => {
     const ioc = new IoCContainer();
+    const $Bottom = IoCToken<{ id: number }>('Bottom');
+    const $Left = IoCToken<{ d: unknown }>('Left');
+    const $Right = IoCToken<{ d: unknown }>('Right');
+    const $Top = IoCToken<{ b: { d: unknown }; c: { d: unknown } }>('Top');
     let bottomBuilt = 0;
 
-    ioc.Register(() => ({ id: ++bottomBuilt }), { Type: ioc.Symbol('D'), Lazy: true });
-    ioc.Register(async (c) => ({ d: await c.Resolve(c.Symbol('D')) }), {
-      Type: ioc.Symbol('B'),
-      Lazy: true,
+    ioc.RegisterFactory($Bottom, () => ({ id: ++bottomBuilt }));
+    ioc.RegisterFactory($Left, async (c) => ({ d: await c.Resolve($Bottom) }));
+    ioc.RegisterFactory($Right, async (c) => ({ d: await c.Resolve($Bottom) }));
+    ioc.RegisterFactory($Top, async (c) => {
+      const [b, cc] = await Promise.all([c.Resolve($Left), c.Resolve($Right)]);
+      return { b, c: cc };
     });
-    ioc.Register(async (c) => ({ d: await c.Resolve(c.Symbol('D')) }), {
-      Type: ioc.Symbol('C'),
-      Lazy: true,
-    });
-    ioc.Register(
-      async (c) => {
-        const [b, cc] = await Promise.all([c.Resolve(c.Symbol('B')), c.Resolve(c.Symbol('C'))]);
-        return { b, c: cc };
-      },
-      { Type: ioc.Symbol('A'), Lazy: true },
-    );
 
-    const a = await withinTimeout(
-      ioc.Resolve<{ b: { d: unknown }; c: { d: unknown } }>(ioc.Symbol('A')),
-    );
+    const a = await withinTimeout(ioc.Resolve($Top));
 
     assertStrictEquals(a.b.d, a.c.d);
     assertEquals(bottomBuilt, 1);
@@ -177,17 +170,16 @@ Deno.test('Cycles - no false positives', async (t) => {
 
   await t.step('the same transient twice in one chain is not a cycle', async () => {
     const ioc = new IoCContainer();
+    const $Leaf = IoCToken<{ leaf: boolean }>('Leaf');
+    const $Twice = IoCToken<{ first: unknown; second: unknown }>('Twice');
 
-    ioc.Register(() => ({ leaf: true }), { Type: ioc.Symbol('Leaf'), Lifetime: 'transient' });
-    ioc.Register(
-      async (c) => ({
-        first: await c.Resolve(c.Symbol('Leaf')),
-        second: await c.Resolve(c.Symbol('Leaf')),
-      }),
-      { Type: ioc.Symbol('Twice'), Lazy: true },
-    );
+    ioc.RegisterFactory($Leaf, () => ({ leaf: true }), { Lifetime: 'transient' });
+    ioc.RegisterFactory($Twice, async (c) => ({
+      first: await c.Resolve($Leaf),
+      second: await c.Resolve($Leaf),
+    }));
 
-    const twice = await ioc.Resolve<{ first: unknown; second: unknown }>(ioc.Symbol('Twice'));
+    const twice = await ioc.Resolve($Twice);
 
     assertEquals(twice.first, { leaf: true });
     assertEquals(twice.second, { leaf: true });
@@ -204,7 +196,7 @@ Deno.test('Cycles - no false positives', async (t) => {
       }
     }
 
-    ioc.Register(SelfAware, (c) => new SelfAware(c), { Lazy: true });
+    ioc.RegisterFactory(SelfAware, (c) => new SelfAware(c));
 
     const svc = await ioc.Resolve(SelfAware);
 
@@ -215,17 +207,17 @@ Deno.test('Cycles - no false positives', async (t) => {
 
   await t.step('a deep chain (100 services) resolves', async () => {
     const ioc = new IoCContainer();
+    const chain = Array.from({ length: 100 }, (_, i) => IoCToken<number>(`Chain${i}`));
 
-    ioc.Register(() => 0, { Type: ioc.Symbol('Chain0'), Lazy: true });
+    ioc.RegisterFactory(chain[0], () => 0);
 
     for (let i = 1; i < 100; i++) {
-      ioc.Register(async (c) => (await c.Resolve<number>(c.Symbol(`Chain${i - 1}`))) + 1, {
-        Type: ioc.Symbol(`Chain${i}`),
-        Lazy: true,
-      });
+      const $Previous = chain[i - 1];
+
+      ioc.RegisterFactory(chain[i], async (c) => (await c.Resolve($Previous)) + 1);
     }
 
-    assertEquals(await withinTimeout(ioc.Resolve(ioc.Symbol('Chain99'))), 99);
+    assertEquals(await withinTimeout(ioc.Resolve(chain[99])), 99);
   });
 
   await t.step('sibling resolutions in parallel are independent', async () => {
@@ -233,7 +225,7 @@ Deno.test('Cycles - no false positives', async (t) => {
 
     class Shared {}
 
-    ioc.Register(Shared, { Lazy: true });
+    ioc.RegisterClass(Shared);
 
     const results = await withinTimeout(
       Promise.all([ioc.Resolve(Shared), ioc.Resolve(Shared), ioc.Resolve(Shared)]),
@@ -243,14 +235,18 @@ Deno.test('Cycles - no false positives', async (t) => {
     assertEquals(new Set(results).size, 1);
   });
 
-  await t.step('eager factories using a closure resolve earlier registrations', async () => {
+  await t.step('factories using a closure resolve other registrations', async () => {
     const ioc = new IoCContainer();
+    const $UsesA = IoCToken<{ a: A }>('UsesA');
 
     class A {}
 
-    ioc.Register(A);
-    ioc.Register(async () => ({ a: await ioc.Resolve(A) }), { Type: ioc.Symbol('UsesA') });
+    ioc.RegisterClass(A);
+    ioc.RegisterFactory($UsesA, async () => ({ a: await ioc.Resolve(A) }));
 
-    assertInstanceOf((await ioc.Resolve<{ a: A }>(ioc.Symbol('UsesA'))).a, A);
+    await withinTimeout(ioc.Activate());
+
+    assertInstanceOf((await ioc.Resolve($UsesA)).a, A);
+    assertStrictEquals((await ioc.Resolve($UsesA)).a, await ioc.Resolve(A));
   });
 });

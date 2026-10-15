@@ -1,6 +1,6 @@
 /**
- * A symbol that carries the type of the service registered under it, so resolving it needs no
- * explicit generic:
+ * A key for a service that isn't a class: an interface, a function type, a string, a config
+ * object. It carries the service's type, so resolving it needs no explicit generic:
  *
  * @example Register and resolve by token
  * ```ts
@@ -19,14 +19,13 @@
  * const db = await ioc.Resolve($Db); // db: Db
  * ```
  *
- * Tokens are plain `Symbol.for(id)` symbols at runtime, so `IoCToken('Db')` and `ioc.Symbol('Db')`
- * find the same registration. The type is different: a plain symbol carries no service type, so
- * it is not a token. Methods that take a key accept plain symbols too, but `Deps` only accepts
- * tokens and classes, because only those can be type-checked.
+ * **Every call creates a new, unique key.** The description is only a label for errors and
+ * `Describe()`: two tokens with the same description are two different keys. To share a service,
+ * share (import) its token; to keep a service private to a package, don't export its token.
  *
- * The optional second type argument fixes the token's id in its type. Two tokens of the same
- * service type are then still told apart by a {@link IoCContainer.Typed typed container}, which
- * matters for tokens of plain types such as `string`:
+ * The optional second type argument fixes the description in the token's type. Two tokens of the
+ * same service type are then still told apart by a {@link IoCContainer.Typed typed container},
+ * which matters for tokens of plain types such as `string`:
  *
  * ```ts
  * import { IoCToken } from '@fathym/ioc';
@@ -34,20 +33,34 @@
  * const $DbUrl = IoCToken<string, 'DbUrl'>('DbUrl');
  * ```
  */
-export type IoCToken<T, TId extends string = string> = symbol & {
+export interface IoCToken<T, TId extends string = string> {
+  /** The label used in errors and `Describe()`. Not part of the token's identity. */
+  readonly Description: TId;
+
   /** Type-only marker carrying the service type; never present at runtime. */
   readonly '@fathym/ioc/type': T;
+}
 
-  /** Type-only marker carrying the token's id; never present at runtime. */
-  readonly '@fathym/ioc/id': TId;
-};
+const tokens = new WeakSet<object>();
 
 /**
- * Creates a typed token for `id` (the same symbol as `Symbol.for(id)` / `ioc.Symbol(id)`). Pass
- * the id as a second type argument (`IoCToken<string, 'DbUrl'>('DbUrl')`) to keep it in the type.
+ * Creates a new, unique token. Pass the description as a second type argument
+ * (`IoCToken<string, 'DbUrl'>('DbUrl')`) to keep it in the type.
  */
-export function IoCToken<T, const TId extends string = string>(id: TId): IoCToken<T, TId> {
-  return Symbol.for(id) as IoCToken<T, TId>;
+export function IoCToken<T, const TId extends string = string>(description: TId): IoCToken<T, TId> {
+  const token = Object.freeze({
+    Description: description,
+    toString: () => `IoCToken(${description})`,
+  }) as unknown as IoCToken<T, TId>;
+
+  tokens.add(token);
+
+  return token;
+}
+
+/** True for a token created by {@link IoCToken}. */
+export function isIoCToken(value: unknown): value is IoCToken<unknown> {
+  return typeof value === 'object' && value !== null && tokens.has(value);
 }
 
 /** The service type carried by a token. */

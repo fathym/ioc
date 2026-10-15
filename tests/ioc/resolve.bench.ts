@@ -1,65 +1,59 @@
-// Hot-path benchmarks, current container vs the frozen 0.0.36 implementation.
-// Run with `deno task bench`.
+// Hot-path benchmarks. Run with `deno task bench`.
 import { IoCContainer } from '../../src/ioc/ioc.ts';
-import { LegacyIoCContainer } from '../fixtures/legacy-ioc.ts';
+import { IoCToken } from '../../src/ioc/IoCToken.ts';
 
 class Svc {
   public n = 1;
 }
 
-const current = new IoCContainer();
-const legacy = new LegacyIoCContainer();
-
-current.Register(Svc);
-legacy.Register(Svc);
-
-current.Register(Svc, () => new Svc(), { Lifetime: 'transient', Name: 't' });
-legacy.Register(Svc, () => new Svc(), { Lifetime: 'transient', Name: 't' });
-
-current.Register(Svc, () => Promise.resolve(new Svc()), { Lazy: true, Name: 'lazy' });
-
-for (let i = 0; i < 200; i++) {
-  current.Register(() => i, { Type: current.Symbol(`S${i}`) });
-  legacy.Register(() => ({ i }) as never, { Type: legacy.Symbol(`S${i}`) });
+class Dep {
+  constructor(public svc: Svc) {}
 }
 
-Deno.bench('resolve singleton (current)', { group: 'singleton', baseline: true }, async () => {
-  await current.Resolve(Svc);
+const $Transient = IoCToken<Svc, 'Transient'>('Transient');
+const $Async = IoCToken<Svc, 'Async'>('Async');
+
+const tokens = Array.from({ length: 200 }, (_, i) => IoCToken<number>(`S${i}`));
+
+const ioc = new IoCContainer()
+  .RegisterClass(Svc)
+  .RegisterClass(Dep, { Deps: [Svc], Lifetime: 'transient' })
+  .RegisterFactory($Transient, () => new Svc(), { Lifetime: 'transient' })
+  .RegisterFactory($Async, () => Promise.resolve(new Svc()));
+
+tokens.forEach((token, i) => ioc.RegisterValue(token, i));
+
+const quiet = new IoCContainer({ AsyncContext: false, PendingTimeoutMs: 0 })
+  .RegisterFactory($Transient, () => new Svc(), { Lifetime: 'transient' });
+
+await ioc.Activate();
+
+Deno.bench('resolve a built singleton', { group: 'resolve', baseline: true }, async () => {
+  await ioc.Resolve(Svc);
 });
 
-Deno.bench('resolve singleton (0.0.36)', { group: 'singleton' }, async () => {
-  await legacy.Resolve(Svc);
+Deno.bench('resolve an async singleton (built)', { group: 'resolve' }, async () => {
+  await ioc.Resolve($Async);
 });
 
-Deno.bench('resolve transient (current)', { group: 'transient', baseline: true }, async () => {
-  await current.Resolve(Svc, 't');
+Deno.bench('resolve one of 200 values', { group: 'resolve' }, async () => {
+  await ioc.Resolve(tokens[137]);
 });
 
-Deno.bench('resolve transient (0.0.36)', { group: 'transient' }, async () => {
-  await legacy.Resolve(Svc, 't');
+Deno.bench('resolve a transient', { group: 'transient', baseline: true }, async () => {
+  await ioc.Resolve($Transient);
 });
 
-Deno.bench('resolve lazy singleton after first build (current)', async () => {
-  await current.Resolve(Svc, 'lazy');
+Deno.bench('resolve a transient (no async context)', { group: 'transient' }, async () => {
+  await quiet.Resolve($Transient);
 });
 
-Deno.bench('register factory (current)', { group: 'register', baseline: true }, () => {
-  new IoCContainer().Register(() => 1, { Type: Symbol.for('R') });
+Deno.bench('resolve a transient with Deps', { group: 'transient' }, async () => {
+  await ioc.Resolve(Dep);
 });
 
-Deno.bench('register factory (0.0.36)', { group: 'register' }, () => {
-  const ioc = new LegacyIoCContainer();
-  ioc.Register(() => ({}) as never, { Type: ioc.Symbol('R') });
-});
+Deno.bench('create and dispose a scope', { group: 'scope' }, async () => {
+  await using scope = ioc.CreateScope();
 
-Deno.bench('CopyTo 200 registrations (current)', { group: 'copy', baseline: true }, () => {
-  current.CopyTo(new IoCContainer());
-});
-
-Deno.bench('CopyTo 200 registrations (0.0.36)', { group: 'copy' }, () => {
-  legacy.CopyTo(new LegacyIoCContainer());
-});
-
-Deno.bench('CreateScope + resolve parent singleton (current)', async () => {
-  await current.CreateScope().Resolve(Svc);
+  await scope.Resolve(Svc);
 });

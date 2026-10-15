@@ -1,116 +1,178 @@
+import {
+  IoCScopeRequiredError,
+  IoCSealedError,
+  IoCServiceNotFoundError,
+} from '../../src/ioc/errors.ts';
 import { IoCContainer } from '../../src/ioc/ioc.ts';
-import { assertEquals, assertInstanceOf, assertRejects, assertStrictEquals } from '../test.deps.ts';
+import type { IoCModule } from '../../src/ioc/IoCModule.ts';
+import { IoCToken } from '../../src/ioc/IoCToken.ts';
+import {
+  assert,
+  assertEquals,
+  assertFalse,
+  assertInstanceOf,
+  assertNotStrictEquals,
+  assertRejects,
+  assertStrictEquals,
+  assertThrows,
+} from '../test.deps.ts';
 
 class Session {
-  public id = crypto.randomUUID();
+  public id: string = crypto.randomUUID();
 }
 
-Deno.test('Scoped registrations (root container)', async (t) => {
-  await t.step('dispose removes the registration synchronously', async () => {
+Deno.test('Scoped registrations', async (t) => {
+  await t.step('resolving a scoped service from the root throws IOC_SCOPE_REQUIRED', async () => {
     const ioc = new IoCContainer();
-    const dispose = ioc.Register(Session, { Lifetime: 'scoped' });
 
-    assertInstanceOf(await ioc.Resolve(Session), Session);
+    ioc.RegisterClass(Session, { Lifetime: 'scoped' });
 
-    dispose();
+    const err = await assertRejects(() => ioc.Resolve(Session), IoCScopeRequiredError);
 
-    await assertRejects(() => ioc.Resolve(Session), Error, 'No Service for symbol');
+    assertEquals(err.code, 'IOC_SCOPE_REQUIRED');
+    assertEquals(err.Service, 'Session');
   });
 
-  await t.step('dispose does not remove a later re-registration', async () => {
+  await t.step('Unregister removes the registration synchronously', async () => {
     const ioc = new IoCContainer();
-    const dispose = ioc.Register(Session, { Lifetime: 'scoped' });
 
-    ioc.Register(Session, () => Object.assign(new Session(), { id: 'replacement' }));
+    ioc.RegisterClass(Session, { Lifetime: 'scoped' });
 
-    dispose();
+    await using scope = ioc.CreateScope();
 
+    assertInstanceOf(await scope.Resolve(Session), Session);
+
+    assert(ioc.Unregister(Session));
+    assertFalse(ioc.Has(Session));
+
+    await assertRejects(
+      () => scope.Resolve(Session),
+      IoCServiceNotFoundError,
+      'No service is registered for Session.',
+    );
+  });
+
+  await t.step('a replacement takes over, and Unregister removes it', async () => {
+    const ioc = new IoCContainer();
+
+    ioc.RegisterClass(Session, { Lifetime: 'scoped' });
+    ioc.RegisterFactory(Session, () => Object.assign(new Session(), { id: 'replacement' }), {
+      Replace: true,
+    });
+
+    // The replacement is a singleton, so the root resolves it.
     assertEquals((await ioc.Resolve(Session)).id, 'replacement');
+
+    assert(ioc.Unregister(Session));
+
+    await assertRejects(() => ioc.Resolve(Session), IoCServiceNotFoundError);
   });
 
-  await t.step('dispose of an older scoped registration keeps the newer scoped one', async () => {
+  await t.step('Unregister is idempotent', async () => {
     const ioc = new IoCContainer();
-    const disposeOld = ioc.Register(Session, { Lifetime: 'scoped' });
-    const disposeNew = ioc.Register(Session, () => Object.assign(new Session(), { id: 'new' }), {
-      Lifetime: 'scoped',
-    });
 
-    disposeOld();
-    assertEquals((await ioc.Resolve(Session)).id, 'new');
+    ioc.RegisterClass(Session, { Lifetime: 'scoped' });
 
-    disposeNew();
-    await assertRejects(() => ioc.Resolve(Session));
+    assert(ioc.Unregister(Session));
+    assertFalse(ioc.Unregister(Session));
+    assertFalse(ioc.Unregister(Session));
+
+    await using scope = ioc.CreateScope();
+
+    await assertRejects(() => scope.Resolve(Session), IoCServiceNotFoundError);
   });
 
-  await t.step('dispose is idempotent', async () => {
+  await t.step('Unregister only affects its own name', async () => {
     const ioc = new IoCContainer();
-    const dispose = ioc.Register(Session, { Lifetime: 'scoped' });
 
-    dispose();
-    dispose();
-    dispose();
+    ioc.RegisterClass(Session, { Lifetime: 'scoped', Name: 'a' });
+    ioc.RegisterClass(Session, { Lifetime: 'scoped', Name: 'b' });
 
-    await assertRejects(() => ioc.Resolve(Session));
+    ioc.Unregister(Session, 'a');
+
+    await using scope = ioc.CreateScope();
+
+    await assertRejects(() => scope.Resolve(Session, 'a'), IoCServiceNotFoundError);
+    assertInstanceOf(await scope.Resolve(Session, 'b'), Session);
   });
 
-  await t.step('dispose only affects its own name', async () => {
+  await t.step('a scoped service is one instance per scope', async () => {
     const ioc = new IoCContainer();
-    const disposeA = ioc.Register(Session, { Lifetime: 'scoped', Name: 'a' });
 
-    ioc.Register(Session, { Lifetime: 'scoped', Name: 'b' });
+    ioc.RegisterClass(Session, { Lifetime: 'scoped' });
 
-    disposeA();
+    await using first = ioc.CreateScope();
+    await using second = ioc.CreateScope();
 
-    await assertRejects(() => ioc.Resolve(Session, 'a'));
-    assertInstanceOf(await ioc.Resolve(Session, 'b'), Session);
+    assertStrictEquals(await first.Resolve(Session), await first.Resolve(Session));
+    assertNotStrictEquals(await first.Resolve(Session), await second.Resolve(Session));
   });
 
-  await t.step('scoped is a singleton until disposed', async () => {
+  await t.step('scoped factory with a token', async () => {
     const ioc = new IoCContainer();
+    const $Scoped = IoCToken<{ scoped: boolean }>('Scoped');
 
-    ioc.Register(Session, { Lifetime: 'scoped' });
+    ioc.RegisterFactory($Scoped, () => ({ scoped: true }), { Lifetime: 'scoped' });
 
-    assertStrictEquals(await ioc.Resolve(Session), await ioc.Resolve(Session));
+    await using scope = ioc.CreateScope();
+
+    assertEquals(await scope.Resolve($Scoped), { scoped: true });
+
+    ioc.Unregister($Scoped);
+
+    await assertRejects(() => scope.Resolve($Scoped), IoCServiceNotFoundError);
   });
 
-  await t.step('scoped factory with symbol', async () => {
+  await t.step('registration can be re-added after Unregister', async () => {
     const ioc = new IoCContainer();
-    const dispose = ioc.Register(() => ({ scoped: true }), {
-      Type: ioc.Symbol('Scoped'),
-      Lifetime: 'scoped',
-    });
 
-    assertEquals(await ioc.Resolve(ioc.Symbol('Scoped')), { scoped: true });
+    ioc.RegisterClass(Session, { Lifetime: 'scoped' });
 
-    dispose();
+    await using scope = ioc.CreateScope();
 
-    await assertRejects(() => ioc.Resolve(ioc.Symbol('Scoped')));
-  });
+    const first = await scope.Resolve(Session);
 
-  await t.step('registration can be re-added after dispose', async () => {
-    const ioc = new IoCContainer();
-    const dispose = ioc.Register(Session, { Lifetime: 'scoped' });
-    const first = await ioc.Resolve(Session);
+    ioc.Unregister(Session);
 
-    dispose();
+    ioc.RegisterClass(Session, { Lifetime: 'scoped' });
 
-    ioc.Register(Session, { Lifetime: 'scoped' });
-
-    const second = await ioc.Resolve(Session);
+    const second = await scope.Resolve(Session);
 
     assertInstanceOf(second, Session);
     assertEquals(first === second, false);
   });
 
-  await t.step('disposing in the source after CopyTo leaves the copy in the target', async () => {
-    const source = new IoCContainer();
-    const target = new IoCContainer();
-    const dispose = source.Register(Session, { Lifetime: 'scoped' });
+  await t.step('Unregister on a scope leaves the parent registration', async () => {
+    const ioc = new IoCContainer();
 
-    source.CopyTo(target);
-    dispose();
+    ioc.RegisterClass(Session, { Lifetime: 'scoped' });
 
-    await assertRejects(() => source.Resolve(Session));
-    assertInstanceOf(await target.Resolve(Session), Session);
+    await using scope = ioc.CreateScope();
+
+    assertFalse(scope.Unregister(Session));
+    assertInstanceOf(await scope.Resolve(Session), Session);
+  });
+
+  await t.step('containers sharing a module keep their registrations apart', async () => {
+    const Sessions: IoCModule = {
+      Name: 'Sessions',
+      Register(ioc) {
+        ioc.RegisterClass(Session, { Lifetime: 'scoped' });
+      },
+    };
+
+    const source = new IoCContainer({ Testing: true }).Use(Sessions);
+    const target = new IoCContainer().Use(Sessions);
+
+    // Outside testing mode, the app may not remove what a module registered.
+    assertThrows(() => target.Unregister(Session), IoCSealedError);
+
+    assert(source.Unregister(Session));
+
+    await using sourceScope = source.CreateScope();
+    await using targetScope = target.CreateScope();
+
+    await assertRejects(() => sourceScope.Resolve(Session), IoCServiceNotFoundError);
+    assertInstanceOf(await targetScope.Resolve(Session), Session);
   });
 });

@@ -1,9 +1,16 @@
 // Async functions without await are deliberate here: they produce promise-returning factories.
 // deno-lint-ignore-file require-await
+import {
+  IoCDuplicateRegistrationError,
+  IoCRegistrationError,
+  IoCServiceNotFoundError,
+} from '../../src/ioc/errors.ts';
 import { IoCContainer } from '../../src/ioc/ioc.ts';
+import { IoCToken } from '../../src/ioc/IoCToken.ts';
 import {
   assert,
   assertEquals,
+  assertFalse,
   assertInstanceOf,
   assertRejects,
   assertStrictEquals,
@@ -23,8 +30,8 @@ Deno.test('Register - options are never mutated', async (t) => {
     const ioc = new IoCContainer();
     const opts = { Lifetime: 'transient' as const };
 
-    ioc.Register(Alpha, opts);
-    ioc.Register(Beta, opts);
+    ioc.RegisterClass(Alpha, opts);
+    ioc.RegisterClass(Beta, opts);
 
     assertEquals(opts, { Lifetime: 'transient' });
     assertInstanceOf(await ioc.Resolve(Alpha), Alpha);
@@ -35,8 +42,8 @@ Deno.test('Register - options are never mutated', async (t) => {
     const ioc = new IoCContainer();
     const opts = { Name: 'n' };
 
-    ioc.Register(Alpha, () => new Alpha(), opts);
-    ioc.Register(Beta, () => new Beta(), opts);
+    ioc.RegisterFactory(Alpha, () => new Alpha(), opts);
+    ioc.RegisterFactory(Beta, () => new Beta(), opts);
 
     assertEquals(opts, { Name: 'n' });
     assertInstanceOf(await ioc.Resolve(Alpha, 'n'), Alpha);
@@ -47,110 +54,144 @@ Deno.test('Register - options are never mutated', async (t) => {
     const ioc = new IoCContainer();
     const opts = Object.freeze({ Lifetime: 'transient' as const });
 
-    ioc.Register(Alpha, opts);
+    ioc.RegisterClass(Alpha, opts);
 
     assertInstanceOf(await ioc.Resolve(Alpha), Alpha);
   });
 
-  await t.step('shared scoped options return independent disposers', async () => {
+  await t.step('shared scoped options keep the registrations independent', async () => {
     const ioc = new IoCContainer();
     const opts = { Lifetime: 'scoped' as const };
 
-    const disposeA = ioc.Register(Alpha, opts);
-    const disposeB = ioc.Register(Beta, opts);
+    ioc.RegisterClass(Alpha, opts);
+    ioc.RegisterClass(Beta, opts);
 
-    disposeA();
+    assert(ioc.Unregister(Alpha));
 
-    await assertRejects(() => ioc.Resolve(Alpha), Error, 'No Service for symbol');
-    assertInstanceOf(await ioc.Resolve(Beta), Beta);
+    await using scope = ioc.CreateScope();
 
-    disposeB();
+    await assertRejects(
+      () => scope.Resolve(Alpha),
+      IoCServiceNotFoundError,
+      'No service is registered for Alpha.',
+    );
+    assertInstanceOf(await scope.Resolve(Beta), Beta);
   });
 
-  await t.step('Type defaults per call, not from a previous registration', async () => {
+  await t.step('Type is per call, never written back to shared options', async () => {
     const ioc = new IoCContainer();
-    const opts: { Lazy: boolean; Type?: symbol } = { Lazy: true };
+    const opts: { Lifetime?: 'transient' } = {};
 
-    ioc.Register(Alpha, opts);
-    ioc.Register(Beta, opts);
+    ioc.RegisterClass(Alpha, opts);
+    ioc.RegisterClass(Beta, opts);
 
-    assertEquals(opts.Type, undefined);
-    assertInstanceOf(await ioc.Resolve(ioc.Symbol('Beta')), Beta);
+    assertEquals(opts, {});
+    assertInstanceOf(await ioc.Resolve(Alpha), Alpha);
+    assertInstanceOf(await ioc.Resolve(Beta), Beta);
   });
 });
 
-Deno.test('Register - class vs factory detection', async (t) => {
+Deno.test('Register - classes and factories', async (t) => {
   await t.step('arrow factory held in a named variable', async () => {
     const ioc = new IoCContainer();
+    const $Db = IoCToken<{ db: boolean }>('Db');
     const makeDb = (_ioc: IoCContainer) => ({ db: true });
 
-    ioc.Register(makeDb, { Type: ioc.Symbol('Db') });
+    ioc.RegisterFactory($Db, makeDb);
 
-    assertEquals(await ioc.Resolve(ioc.Symbol('Db')), { db: true });
+    assertEquals(await ioc.Resolve($Db), { db: true });
   });
 
   await t.step('async arrow factory held in a named variable', async () => {
     const ioc = new IoCContainer();
+    const $Db = IoCToken<{ db: string }>('Db');
     const makeDb = async (_ioc: IoCContainer) => ({ db: 'async' });
 
-    ioc.Register(makeDb, { Type: ioc.Symbol('Db') });
+    ioc.RegisterFactory($Db, makeDb);
 
-    assertEquals(await ioc.Resolve(ioc.Symbol('Db')), { db: 'async' });
+    assertEquals(await ioc.Resolve($Db), { db: 'async' });
   });
 
   await t.step('async function declaration is a factory', async () => {
     const ioc = new IoCContainer();
+    const $Db = IoCToken<{ db: string }>('Db');
 
     async function createDb() {
       return { db: 'fn' };
     }
 
-    ioc.Register(createDb, { Type: ioc.Symbol('Db') });
+    ioc.RegisterFactory($Db, createDb);
 
-    assertEquals(await ioc.Resolve(ioc.Symbol('Db')), { db: 'fn' });
+    assertEquals(await ioc.Resolve($Db), { db: 'fn' });
   });
 
   await t.step('object method shorthand is a factory', async () => {
     const ioc = new IoCContainer();
+    const $M = IoCToken<{ from: string }>('M');
     const factories = {
       make() {
         return { from: 'method' };
       },
     };
 
-    ioc.Register(factories.make, { Type: ioc.Symbol('M') });
+    ioc.RegisterFactory($M, factories.make);
 
-    assertEquals(await ioc.Resolve(ioc.Symbol('M')), { from: 'method' });
+    assertEquals(await ioc.Resolve($M), { from: 'method' });
   });
 
-  await t.step('named function declaration is constructed (legacy behavior)', async () => {
+  await t.step('RegisterClass rejects functions that are not classes', () => {
     const ioc = new IoCContainer();
+
+    const untyped = ioc as unknown as { RegisterClass(...args: unknown[]): unknown };
+
+    const factories = {
+      make() {
+        return {};
+      },
+    };
+
+    function* gen() {
+      yield 1;
+    }
+
+    for (const fn of [() => ({}), async () => ({}), factories.make, gen]) {
+      assertThrows(() => untyped.RegisterClass(fn), IoCRegistrationError, 'expects a class');
+    }
+
+    assertEquals(ioc.Describe().Services, []);
+  });
+
+  await t.step('named function declaration is constructed by RegisterClass', async () => {
+    const ioc = new IoCContainer();
+    const $Legacy = IoCToken<{ kind: string }>('Legacy');
 
     function LegacyService(this: { kind: string }) {
       this.kind = 'legacy';
     }
 
     // deno-lint-ignore no-explicit-any
-    ioc.Register(LegacyService as any, { Type: ioc.Symbol('Legacy') });
+    ioc.RegisterClass(LegacyService as any, { Type: $Legacy });
 
-    assertEquals((await ioc.Resolve<{ kind: string }>(ioc.Symbol('Legacy'))).kind, 'legacy');
+    assertEquals((await ioc.Resolve($Legacy)).kind, 'legacy');
   });
 
   await t.step('named function returning an object yields that object', async () => {
     const ioc = new IoCContainer();
+    const $Cfg = IoCToken<{ url: string }>('Cfg');
 
     function buildConfig() {
       return { url: 'x' };
     }
 
     // deno-lint-ignore no-explicit-any
-    ioc.Register(buildConfig as any, { Type: ioc.Symbol('Cfg') });
+    ioc.RegisterClass(buildConfig as any, { Type: $Cfg });
 
-    assertEquals(await ioc.Resolve(ioc.Symbol('Cfg')), { url: 'x' });
+    assertEquals(await ioc.Resolve($Cfg), { url: 'x' });
   });
 
   await t.step('anonymous class with a Type is constructed', async () => {
     const ioc = new IoCContainer();
+    const $Anon = IoCToken<{ value: number }>('Anon');
     const Anon = (() =>
       class {
         public value = 7;
@@ -158,33 +199,38 @@ Deno.test('Register - class vs factory detection', async (t) => {
 
     assertEquals(Anon.name, '');
 
-    ioc.Register(Anon, { Type: ioc.Symbol('Anon') });
+    ioc.RegisterClass(Anon, { Type: $Anon });
 
-    const resolved = await ioc.Resolve<{ value: number }>(ioc.Symbol('Anon'));
+    const resolved = await ioc.Resolve($Anon);
 
     assertInstanceOf(resolved, Anon);
     assertEquals(resolved.value, 7);
   });
 
-  await t.step('anonymous class without a Type is rejected', () => {
+  await t.step('anonymous class without a Type is its own key', async () => {
     const ioc = new IoCContainer();
     const Anon = (() => class {})();
+    const Other = (() => class {})();
 
-    assertThrows(() => ioc.Register(Anon), Error, 'The Type was missing');
+    ioc.RegisterClass(Anon);
+
+    assertInstanceOf(await ioc.Resolve(Anon), Anon);
+    assertEquals(ioc.Describe().Services[0].Key, '(anonymous class)');
+    await assertRejects(() => ioc.Resolve(Other), IoCServiceNotFoundError);
   });
 
-  await t.step('generator function is called, not constructed', async () => {
+  await t.step('generator function is called by RegisterFactory, not constructed', async () => {
     const ioc = new IoCContainer();
+    const $Gen = IoCToken<Generator<number>>('Gen');
 
     function* numbers() {
       yield 1;
       yield 2;
     }
 
-    // deno-lint-ignore no-explicit-any
-    ioc.Register(numbers as any, { Type: ioc.Symbol('Gen') });
+    ioc.RegisterFactory($Gen, numbers);
 
-    const gen = await ioc.Resolve<Generator<number>>(ioc.Symbol('Gen'));
+    const gen = await ioc.Resolve($Gen);
 
     assertEquals([...gen], [1, 2]);
   });
@@ -192,7 +238,7 @@ Deno.test('Register - class vs factory detection', async (t) => {
   await t.step('native constructors are constructed', async () => {
     const ioc = new IoCContainer();
 
-    ioc.Register(Map);
+    ioc.RegisterClass(Map);
 
     assertInstanceOf(await ioc.Resolve(Map), Map);
   });
@@ -207,208 +253,257 @@ Deno.test('Register - class vs factory detection', async (t) => {
       }
     }
 
-    ioc.Register(Svc, () => new Svc('factory'));
+    ioc.RegisterFactory(Svc, () => new Svc('factory'));
 
     assertEquals((await ioc.Resolve(Svc)).label, 'factory');
     assertEquals(constructed, 1);
   });
 
-  await t.step('subclass is keyed by its own name', async () => {
+  await t.step('subclass is keyed by itself, not by its base', async () => {
     const ioc = new IoCContainer();
 
     class Base {}
     class Derived extends Base {}
 
-    ioc.Register(Derived);
+    ioc.RegisterClass(Derived);
 
     assertInstanceOf(await ioc.Resolve(Derived), Derived);
-    await assertRejects(() => ioc.Resolve(Base), Error, "symbol 'Base'");
+    await assertRejects(
+      () => ioc.Resolve(Base),
+      IoCServiceNotFoundError,
+      'No service is registered for Base.',
+    );
+  });
+
+  await t.step('same-named classes are unrelated keys', async () => {
+    const ioc = new IoCContainer();
+
+    const First = (() => class Config {})();
+    const Second = (() => class Config {})();
+
+    ioc.RegisterClass(First);
+    ioc.RegisterClass(Second);
+
+    assertInstanceOf(await ioc.Resolve(First), First);
+    assertInstanceOf(await ioc.Resolve(Second), Second);
   });
 });
 
 Deno.test('Register - keys, names and return values', async (t) => {
-  await t.step('factory without options throws', () => {
+  await t.step('keys must be tokens or classes', () => {
     const ioc = new IoCContainer();
 
-    assertThrows(() => ioc.Register(() => 1), Error, 'The Type was missing');
-  });
+    // deno-lint-ignore no-explicit-any
+    const untyped = ioc as any;
 
-  await t.step('factory with options but no Type throws', () => {
-    const ioc = new IoCContainer();
+    for (const key of ['Db', Symbol('Db'), Symbol.for('Db'), { Description: 'Db' }, null]) {
+      const err = assertThrows(
+        () => untyped.RegisterFactory(key, () => 1),
+        IoCRegistrationError,
+        'Keys must be tokens or classes',
+      );
 
-    assertThrows(() => ioc.Register(() => 1, { Name: 'x' }), Error, 'The Type was missing');
+      assertEquals(err.code, 'IOC_INVALID_KEY');
+    }
   });
 
   await t.step('a failed registration leaves no entry behind', async () => {
     const ioc = new IoCContainer();
+    const $X = IoCToken<number>('X');
 
     try {
-      ioc.Register(() => 1);
+      // deno-lint-ignore no-explicit-any
+      ioc.RegisterFactory(Symbol.for('X') as any, () => 1);
     } catch {
       // expected
     }
 
-    assertEquals(ioc.services.size, 0);
-    await assertRejects(() => ioc.Resolve(Symbol.for('anything')), Error);
+    try {
+      // deno-lint-ignore no-explicit-any
+      ioc.RegisterFactory($X, undefined as any);
+    } catch {
+      // expected
+    }
+
+    assertEquals(ioc.Describe().Services, []);
+    await assertRejects(() => ioc.Resolve($X), IoCServiceNotFoundError);
   });
 
   await t.step('empty Name is the default name', async () => {
     const ioc = new IoCContainer();
 
-    ioc.Register(Alpha, { Name: '' });
+    ioc.RegisterClass(Alpha, { Name: '' });
 
     assertInstanceOf(await ioc.Resolve(Alpha), Alpha);
+    assertEquals(ioc.Names(Alpha), ['$default']);
   });
 
-  await t.step('explicit Type equal to the class symbol behaves like the default', async () => {
+  await t.step('class under an interface token is not resolvable by class', async () => {
     const ioc = new IoCContainer();
+    const $IThing = IoCToken<{ kind: string }>('IThing');
 
-    ioc.Register(Alpha, { Type: ioc.Symbol('Alpha') });
+    ioc.RegisterClass(Alpha, { Type: $IThing });
 
-    assertStrictEquals(await ioc.Resolve(Alpha), await ioc.Resolve(ioc.Symbol('Alpha')));
-  });
-
-  await t.step('class under an interface symbol is not resolvable by class', async () => {
-    const ioc = new IoCContainer();
-
-    ioc.Register(Alpha, { Type: ioc.Symbol('IThing') });
-
-    assertInstanceOf(await ioc.Resolve(ioc.Symbol('IThing')), Alpha);
-    await assertRejects(() => ioc.Resolve(Alpha), Error, "symbol 'Alpha'");
-  });
-
-  await t.step('non-global symbols work as keys', async () => {
-    const ioc = new IoCContainer();
-    const local = Symbol('local');
-
-    ioc.Register(() => 'local-value', { Type: local });
-
-    assertEquals(await ioc.Resolve(local), 'local-value');
-    await assertRejects(() => ioc.Resolve(Symbol('local')), Error, 'No Service for symbol');
-  });
-
-  await t.step('Symbol.for keys work without ioc.Symbol', async () => {
-    const ioc = new IoCContainer();
-
-    ioc.Register(() => 'direct', { Type: Symbol.for('Direct') });
-
-    assertEquals(await ioc.Resolve(Symbol.for('Direct')), 'direct');
-    assertEquals(await ioc.Resolve(ioc.Symbol('Direct')), 'direct');
-  });
-
-  await t.step('scoped registration returns a function; others return undefined', () => {
-    const ioc = new IoCContainer();
-
-    assertEquals(typeof ioc.Register(Alpha, { Lifetime: 'scoped' }), 'function');
-    assertEquals(
-      typeof ioc.Register(() => 1, { Type: ioc.Symbol('S'), Lifetime: 'scoped' }),
-      'function',
+    assertInstanceOf(await ioc.Resolve($IThing), Alpha);
+    await assertRejects(
+      () => ioc.Resolve(Alpha),
+      IoCServiceNotFoundError,
+      'No service is registered for Alpha.',
     );
-    assertEquals(typeof ioc.Register(Beta, () => new Beta(), { Lifetime: 'scoped' }), 'function');
-    assertEquals(ioc.Register(Alpha, { Lazy: true }), undefined);
-    assertEquals(ioc.Register(Alpha, { Lifetime: 'transient' }), undefined);
+  });
+
+  await t.step('a token is its own key: an equal description is another key', async () => {
+    const ioc = new IoCContainer();
+    const $Local = IoCToken<string>('local');
+
+    ioc.RegisterFactory($Local, () => 'local-value');
+
+    assertEquals(await ioc.Resolve($Local), 'local-value');
+    await assertRejects(
+      () => ioc.Resolve(IoCToken<string>('local')),
+      IoCServiceNotFoundError,
+      'No service is registered for local.',
+    );
+  });
+
+  await t.step('registration methods return the container, for chaining', () => {
+    const ioc = new IoCContainer();
+    const $S = IoCToken<number>('S');
+    const $V = IoCToken<number>('V');
+
+    assertStrictEquals(ioc.RegisterClass(Alpha, { Lifetime: 'scoped' }), ioc);
+    assertStrictEquals(ioc.RegisterFactory($S, () => 1, { Lifetime: 'scoped' }), ioc);
+    assertStrictEquals(ioc.RegisterFactory(Beta, () => new Beta(), { Lifetime: 'scoped' }), ioc);
+    assertStrictEquals(ioc.RegisterClass(Alpha, { Lifetime: 'transient', Replace: true }), ioc);
+    assertStrictEquals(ioc.RegisterValue($V, 1), ioc);
   });
 
   await t.step(
-    'synchronous constructor errors propagate and keep the previous registration',
+    'registering a class constructs nothing; its errors surface on Resolve',
     async () => {
       const ioc = new IoCContainer();
       let fail = false;
+      let constructed = 0;
 
       class Flaky {
         public n = 1;
 
         constructor() {
+          constructed++;
+
           if (fail) throw new Error('ctor failed');
         }
       }
 
-      ioc.Register(Flaky);
+      ioc.RegisterClass(Flaky);
+
+      assertEquals(constructed, 0);
 
       const first = await ioc.Resolve(Flaky);
 
       fail = true;
 
-      assertThrows(() => ioc.Register(Flaky), Error, 'ctor failed');
+      // Registering again is a duplicate: it throws, and keeps the previous registration.
+      assertThrows(() => ioc.RegisterClass(Flaky), IoCDuplicateRegistrationError);
       assertStrictEquals(await ioc.Resolve(Flaky), first);
+
+      // Replacing it builds nothing either: the constructor runs on the next Resolve.
+      ioc.RegisterClass(Flaky, { Replace: true });
+
+      assertEquals(constructed, 1);
+      await assertRejects(() => ioc.Resolve(Flaky), Error, 'ctor failed');
     },
   );
 
   await t.step('a registration made inside a factory is visible afterwards', async () => {
     const ioc = new IoCContainer();
+    const $Outer = IoCToken<string>('Outer');
+    const $Inner = IoCToken<string>('Inner');
 
-    ioc.Register((c) => {
-      c.Register(() => 'inner', { Type: c.Symbol('Inner') });
+    ioc.RegisterFactory($Outer, (c) => {
+      c.RegisterFactory($Inner, () => 'inner');
       return 'outer';
-    }, { Type: ioc.Symbol('Outer') });
+    });
 
-    assertEquals(await ioc.Resolve(ioc.Symbol('Outer')), 'outer');
-    assertEquals(await ioc.Resolve(ioc.Symbol('Inner')), 'inner');
+    assertFalse(ioc.Has($Inner));
+    assertEquals(await ioc.Resolve($Outer), 'outer');
+    assertEquals(await ioc.Resolve($Inner), 'inner');
   });
 
-  await t.step(
-    'registrations made through a lazy factory parameter land on the container',
-    async () => {
-      const ioc = new IoCContainer();
+  await t.step('registrations made through a factory parameter land on the container', async () => {
+    const ioc = new IoCContainer();
+    const $Lazy = IoCToken<string>('Lazy');
+    const $Nested = IoCToken<string>('Nested');
 
-      ioc.Register((c) => {
-        c.Register(() => 'from-lazy', { Type: c.Symbol('Nested') });
-        return 'lazy';
-      }, { Type: ioc.Symbol('Lazy'), Lazy: true });
+    ioc.RegisterFactory($Lazy, (c) => {
+      c.RegisterFactory($Nested, () => 'from-lazy');
+      return 'lazy';
+    });
 
-      await ioc.Resolve(ioc.Symbol('Lazy'));
+    await ioc.Resolve($Lazy);
 
-      assert(ioc.services.get(Symbol.for('Nested'))?.has('$default'));
-      assertEquals(await ioc.Resolve(ioc.Symbol('Nested')), 'from-lazy');
-    },
-  );
+    assert(ioc.Has($Nested));
+    assertEquals(ioc.Describe().Services.map((s) => s.Key), ['Lazy', 'Nested']);
+    assertEquals(await ioc.Resolve($Nested), 'from-lazy');
+  });
 });
 
-Deno.test('Register - by symbol', async (t) => {
-  await t.step('Register(symbol, factory) registers under the symbol', async () => {
+Deno.test('Register - by token', async (t) => {
+  await t.step('RegisterFactory(token, factory) registers under the token', async () => {
     const ioc = new IoCContainer();
+    const $Hooks = IoCToken<{ kind: string }>('Hooks');
 
-    ioc.Register(ioc.Symbol('Hooks'), () => ({ kind: 'embedded' }));
+    ioc.RegisterFactory($Hooks, () => ({ kind: 'embedded' }));
 
-    assertEquals(await ioc.Resolve(ioc.Symbol('Hooks')), { kind: 'embedded' });
+    assertEquals(await ioc.Resolve($Hooks), { kind: 'embedded' });
   });
 
-  await t.step('Register(symbol, factory, options) honors lifetime and name', async () => {
+  await t.step('RegisterFactory(token, factory, options) honors lifetime and name', async () => {
     const ioc = new IoCContainer();
+    const $Per = IoCToken<object>('Per');
 
-    ioc.Register(ioc.Symbol('Per'), () => ({}), { Lifetime: 'transient', Name: 'n' });
+    ioc.RegisterFactory($Per, () => ({}), { Lifetime: 'transient', Name: 'n' });
 
-    assert(
-      (await ioc.Resolve(ioc.Symbol('Per'), 'n')) !== (await ioc.Resolve(ioc.Symbol('Per'), 'n')),
-    );
+    assert((await ioc.Resolve($Per, 'n')) !== (await ioc.Resolve($Per, 'n')));
   });
 
-  await t.step('Register(symbol, factory, scoped) returns a disposer', async () => {
+  await t.step('a scoped token registration can be unregistered', async () => {
     const ioc = new IoCContainer();
-    const dispose = ioc.Register(ioc.Symbol('Sc'), () => ({}), { Lifetime: 'scoped' });
+    const $Sc = IoCToken<object>('Sc');
 
-    dispose();
+    ioc.RegisterFactory($Sc, () => ({}), { Lifetime: 'scoped' });
 
-    await assertRejects(() => ioc.Resolve(ioc.Symbol('Sc')));
+    assert(ioc.Unregister($Sc));
+    assertFalse(ioc.Unregister($Sc));
+
+    await using scope = ioc.CreateScope();
+
+    await assertRejects(() => scope.Resolve($Sc), IoCServiceNotFoundError);
   });
 
   await t.step('the factory parameter is typed', async () => {
     const ioc = new IoCContainer();
+    const $Typed = IoCToken<string>('Typed');
 
-    ioc.Register(ioc.Symbol('Typed'), (c) => c.Symbol('Typed').description);
+    ioc.RegisterFactory($Typed, (c) => {
+      const container: IoCContainer = c;
 
-    assertEquals(await ioc.Resolve(ioc.Symbol('Typed')), 'Typed');
+      return container.Has($Typed) ? $Typed.Description : 'missing';
+    });
+
+    assertEquals(await ioc.Resolve($Typed), 'Typed');
   });
 
-  await t.step('Register(symbol) without a factory throws', () => {
+  await t.step('RegisterFactory without a factory throws', () => {
     const ioc = new IoCContainer();
+    const $X = IoCToken<number>('X');
 
-    const untyped = ioc as unknown as { Register(...args: unknown[]): unknown };
+    const untyped = ioc as unknown as { RegisterFactory(...args: unknown[]): unknown };
 
     assertThrows(
-      () => untyped.Register(ioc.Symbol('X'), { Name: 'x' }),
-      Error,
-      'factory is required',
+      () => untyped.RegisterFactory($X, { Name: 'x' }),
+      IoCRegistrationError,
+      'expects a factory function',
     );
   });
 });

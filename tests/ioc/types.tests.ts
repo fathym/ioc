@@ -9,6 +9,9 @@ type Equals<A, B> = (<X>() => X extends A ? 1 : 2) extends <X>() => X extends B 
 
 function expectType<T extends true>(_: T): void {}
 
+/** Type-checks `fn` without running it: for calls that must not compile (or would throw). */
+function typeOnly(_fn: () => unknown): void {}
+
 interface Db {
   query(sql: string): string;
 }
@@ -26,9 +29,9 @@ const $Db = IoCToken<Db>('TypesDb');
 Deno.test('Types', async () => {
   const ioc = new IoCContainer();
 
-  ioc.Register($Db, () => ({ query: (s) => s }));
-  ioc.Register(Logger);
-  ioc.Register(Cache, () => ({ get: (k: string) => k }));
+  ioc.RegisterFactory($Db, () => ({ query: (s) => s }));
+  ioc.RegisterClass(Logger);
+  ioc.RegisterFactory(Cache, () => ({ get: (k: string) => k }));
 
   // Resolve infers from tokens and classes (including abstract classes).
   const db = await ioc.Resolve($Db);
@@ -40,45 +43,83 @@ Deno.test('Types', async () => {
   expectType<Equals<typeof cache, Cache>>(true);
   expectType<Equals<IoCTokenOf<typeof $Db>, Db>>(true);
 
-  // Explicit generics on plain symbols keep working (legacy call shape).
-  const legacy = await ioc.Resolve<{ Hello: string }>(ioc.Symbol('X')).catch(() => undefined);
-  expectType<Equals<typeof legacy, { Hello: string } | undefined>>(true);
+  // A token's description is kept in its type when given as the second type argument.
+  const $Named = IoCToken<string, 'TypesNamed'>('TypesNamed');
 
-  // TryResolve / ResolveAll carry the type.
+  expectType<Equals<typeof $Named.Description, 'TypesNamed'>>(true);
+  expectType<Equals<typeof $Db.Description, string>>(true);
+
+  // TryResolve / ResolveAll / ResolveNamed carry the type.
   const maybe = await ioc.TryResolve($Db);
   const all = await ioc.ResolveAll($Db);
+  const named = await ioc.ResolveNamed($Db);
   expectType<Equals<typeof maybe, Db | undefined>>(true);
   expectType<Equals<typeof all, Db[]>>(true);
+  expectType<Equals<typeof named, Map<string, Db>>>(true);
 
-  // Factory parameters are typed in every Register form.
-  ioc.Register((c) => c.Symbol('a'), { Type: ioc.Symbol('A') });
-  ioc.Register(Logger, (c) => (c.Symbol('b'), new Logger()));
-  ioc.Register($Db, (c) => (c.Symbol('c'), { query: (s) => s }));
-  ioc.RegisterFactory($Db, (c) => (c.Symbol('d'), { query: (s) => s }));
+  typeOnly(async () => {
+    // Explicit generics are gone: the type comes from the key.
+    // @ts-expect-error Resolve takes no explicit service type
+    await ioc.Resolve<{ Hello: string }>($Db);
 
-  // Scoped registrations return a disposer without a non-null assertion.
-  const dispose: () => void = ioc.Register(Logger, { Lifetime: 'scoped' });
-  dispose();
+    // @ts-expect-error neither does TryResolve
+    await ioc.TryResolve<Db>($Db);
+  });
 
-  // Typed tokens check the factory's return type.
-  // @ts-expect-error a number is not a Db
-  ioc.Register($Db, () => 42);
+  // Factory parameters are typed in every registration form.
+  ioc.RegisterFactory(Logger, (c) => {
+    expectType<Equals<typeof c, IoCContainer>>(true);
+    return new Logger();
+  }, { Name: 'factory' });
 
-  // @ts-expect-error RegisterFactory checks the return type too
-  ioc.RegisterFactory($Db, () => ({ nope: true }));
+  ioc.RegisterFactory($Db, (c, url) => {
+    expectType<Equals<typeof c, IoCContainer>>(true);
+    expectType<Equals<typeof url, string>>(true);
+    return { query: (s) => `${url}:${s}` };
+  }, { Name: 'deps', Deps: [$Named] });
 
-  // @ts-expect-error RegisterValue checks the value type
-  ioc.RegisterValue($Db, 'not a db');
+  // Registrations return the container, so they chain.
+  const same: IoCContainer = ioc.RegisterClass(Logger, { Lifetime: 'scoped', Name: 'scoped' });
+  assertEquals(same, ioc);
 
-  // @ts-expect-error abstract classes cannot be registered without a factory
-  ioc.Register(Cache);
+  typeOnly(() => {
+    // Typed tokens check the factory's return type.
+    // @ts-expect-error a number is not a Db
+    ioc.RegisterFactory($Db, () => 42);
 
-  // Token-keyed Register does not accept a Type option.
-  // @ts-expect-error Type is implied by the token
-  ioc.Register($Db, () => ({ query: (s: string) => s }), { Type: ioc.Symbol('Other') });
+    // @ts-expect-error RegisterFactory checks object shapes too
+    ioc.RegisterFactory($Db, () => ({ nope: true }));
 
-  // Plain symbols accept any factory (untyped, as before).
-  ioc.Register(ioc.Symbol('Anything'), () => 42);
+    // @ts-expect-error RegisterValue checks the value type
+    ioc.RegisterValue($Db, 'not a db');
+
+    // @ts-expect-error abstract classes cannot be registered without a factory
+    ioc.RegisterClass(Cache);
+
+    // @ts-expect-error Type is implied by the token
+    ioc.RegisterFactory($Db, () => ({ query: (s: string) => s }), { Type: $Named });
+
+    // @ts-expect-error Lazy is gone: everything is lazy
+    ioc.RegisterClass(Logger, { Lazy: true });
+  });
+
+  typeOnly(async () => {
+    // Keys are tokens or classes: strings and symbols don't compile.
+    // @ts-expect-error a plain symbol is not a key
+    ioc.RegisterFactory(Symbol.for('Anything'), () => 42);
+
+    // @ts-expect-error a string is not a key
+    ioc.RegisterValue('Anything', 42);
+
+    // @ts-expect-error nor is a plain object
+    await ioc.Resolve({ Description: 'TypesDb' });
+
+    // @ts-expect-error symbols can't be resolved
+    await ioc.Resolve(Symbol.for('TypesDb'));
+
+    // @ts-expect-error a plain symbol is not a Type token
+    ioc.RegisterClass(Logger, { Type: Symbol.for('Logger') });
+  });
 
   // Deps are checked against the constructor's parameters.
   class Repo {
@@ -90,18 +131,31 @@ Deno.test('Types', async () => {
   ioc.RegisterClass(Repo, { Deps: [$Db, Logger, $Name] });
   ioc.RegisterClass(Repo, { Deps: [[$Db, 'replica'], Logger, [$Name, 'n']], Name: 'named' });
 
-  // @ts-expect-error wrong order: Logger is not a Db
-  ioc.RegisterClass(Repo, { Deps: [Logger, $Db, $Name] });
+  typeOnly(() => {
+    // @ts-expect-error wrong order: Logger is not a Db
+    ioc.RegisterClass(Repo, { Deps: [Logger, $Db, $Name] });
 
-  // @ts-expect-error missing a dependency
-  ioc.RegisterClass(Repo, { Deps: [$Db, Logger] });
+    // @ts-expect-error missing a dependency
+    ioc.RegisterClass(Repo, { Deps: [$Db, Logger] });
 
-  // @ts-expect-error a number token for a string parameter
-  ioc.RegisterClass(Repo, { Deps: [$Db, Logger, IoCToken<number>('N')] });
+    // @ts-expect-error a number token for a string parameter
+    ioc.RegisterClass(Repo, { Deps: [$Db, Logger, IoCToken<number>('N')] });
+
+    // @ts-expect-error a plain symbol as a dependency
+    ioc.RegisterClass(Repo, { Deps: [$Db, Logger, Symbol.for('TypesName')] });
+  });
 
   // Subclasses satisfy their base class parameter.
   class FileLogger extends Logger {}
   ioc.RegisterClass(Repo, { Deps: [$Db, FileLogger, $Name], Name: 'file' });
+
+  // Override keeps the key's type.
+  typeOnly(() => {
+    new IoCContainer({ Testing: true }).Override($Db, { query: (s) => s });
+
+    // @ts-expect-error the override must be a Db
+    new IoCContainer({ Testing: true }).Override($Db, 42);
+  });
 
   assertEquals(typeof db.query, 'function');
 });

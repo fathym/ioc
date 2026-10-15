@@ -1,3 +1,4 @@
+import { IoCDuplicateRegistrationError } from '../../src/ioc/errors.ts';
 import { IoCContainer } from '../../src/ioc/ioc.ts';
 import { IoCToken } from '../../src/ioc/IoCToken.ts';
 import {
@@ -24,7 +25,7 @@ Deno.test('RegisterClass', async (t) => {
     assertInstanceOf(await ioc.Resolve(Clock), Clock);
   });
 
-  await t.step('honors lifetimes, names, lazy and Type', async () => {
+  await t.step('honors lifetimes, names and Type; builds nothing at registration', async () => {
     const ioc = new IoCContainer();
     let built = 0;
 
@@ -34,14 +35,18 @@ Deno.test('RegisterClass', async (t) => {
       }
     }
 
-    ioc.RegisterClass(Counted, { Lazy: true, Name: 'n' });
-    ioc.RegisterClass(Counted, { Lifetime: 'transient', Type: ioc.Symbol('ICounted') });
+    const $ICounted = IoCToken<Counted>('ICounted');
+
+    ioc.RegisterClass(Counted, { Name: 'n' });
+    ioc.RegisterClass(Counted, { Lifetime: 'transient', Type: $ICounted });
 
     assertEquals(built, 0);
     assertStrictEquals(await ioc.Resolve(Counted, 'n'), await ioc.Resolve(Counted, 'n'));
-    assert(
-      (await ioc.Resolve(ioc.Symbol('ICounted'))) !== (await ioc.Resolve(ioc.Symbol('ICounted'))),
-    );
+    assert((await ioc.Resolve($ICounted)) !== (await ioc.Resolve($ICounted)));
+    assertEquals(built, 3);
+
+    // Type registers under the token only, not under the class.
+    assert(!ioc.Has(Counted));
   });
 
   await t.step('returns the same container, so registrations chain', async () => {
@@ -96,7 +101,7 @@ Deno.test('RegisterFactory', async (t) => {
     assertInstanceOf(await ioc.Resolve(Clock), Clock);
   });
 
-  await t.step('honors lifetimes and lazy', async () => {
+  await t.step('honors lifetimes; nothing is built at registration', async () => {
     const ioc = new IoCContainer();
     let calls = 0;
 
@@ -114,27 +119,48 @@ Deno.test('RegisterFactory', async (t) => {
   await t.step('the factory receives the container', async () => {
     const ioc = new IoCContainer();
 
-    ioc.RegisterValue(IoCToken<string>('Url'), 'kv://local');
-    ioc.RegisterFactory(IoCToken<{ url: string }>('Conn'), async (c) => ({
-      url: await c.Resolve(IoCToken<string>('Url')),
+    const $Url = IoCToken<string>('Url');
+    const $Conn = IoCToken<{ url: string }>('Conn');
+
+    ioc.RegisterValue($Url, 'kv://local');
+    ioc.RegisterFactory($Conn, async (c) => ({
+      url: await c.Resolve($Url),
     }));
 
-    assertEquals(await ioc.Resolve(IoCToken<{ url: string }>('Conn')), { url: 'kv://local' });
+    assertEquals(await ioc.Resolve($Conn), { url: 'kv://local' });
   });
 
   await t.step(
-    'returns the same container; a later registration replaces an earlier one',
+    'returns the same container; a later registration replaces an earlier one with Replace',
     async () => {
       const ioc = new IoCContainer();
 
       const chained = ioc
         .RegisterFactory($Handler, () => () => 'first')
-        .RegisterFactory($Handler, () => () => 'second');
+        .RegisterFactory($Handler, () => () => 'second', { Replace: true });
 
       assertStrictEquals(chained, ioc);
       assertEquals((await ioc.Resolve($Handler))(''), 'second');
     },
   );
+
+  await t.step('registering a key and name again without Replace throws', async () => {
+    const ioc = new IoCContainer();
+
+    ioc.RegisterFactory($Handler, () => () => 'first');
+
+    assertThrows(
+      () => ioc.RegisterFactory($Handler, () => () => 'second'),
+      IoCDuplicateRegistrationError,
+      'Handler is already registered',
+    );
+
+    // Another name is another registration.
+    ioc.RegisterFactory($Handler, () => () => 'named', { Name: 'other' });
+
+    assertEquals((await ioc.Resolve($Handler))(''), 'first');
+    assertEquals((await ioc.Resolve($Handler, 'other'))(''), 'named');
+  });
 
   await t.step('rejects a non-function factory', () => {
     const ioc = new IoCContainer();
@@ -152,6 +178,16 @@ Deno.test('RegisterValue', async (t) => {
     ioc.RegisterValue($Handler, handler);
 
     assertStrictEquals(await ioc.Resolve($Handler), handler);
+  });
+
+  await t.step('a value is ready as soon as it is registered', () => {
+    const ioc = new IoCContainer();
+
+    ioc.RegisterValue($Handler, (req) => req);
+
+    const [service] = ioc.Describe().Services;
+
+    assertEquals([service.Kind, service.Lifetime, service.State], ['value', 'singleton', 'ready']);
   });
 
   await t.step('named values', async () => {
@@ -199,5 +235,17 @@ Deno.test('RegisterValue', async (t) => {
     await ioc.Dispose();
 
     assertEquals(disposed, false);
+  });
+
+  await t.step('a value given a Dispose callback is disposed with the container', async () => {
+    const ioc = new IoCContainer();
+    const closed: string[] = [];
+    const $Conn = IoCToken<{ name: string }>('Conn');
+
+    ioc.RegisterValue($Conn, { name: 'kv' }, { Dispose: (conn) => closed.push(conn.name) });
+
+    await ioc.Dispose();
+
+    assertEquals(closed, ['kv']);
   });
 });

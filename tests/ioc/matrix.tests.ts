@@ -1,15 +1,17 @@
 // Async functions without await are deliberate here: they produce promise-returning factories.
 // deno-lint-ignore-file require-await
-// Generated coverage: every combination of lifetime x lazy x registration form x name, run against
-// the frozen 0.0.36 container and the current one. Identity semantics (same instance vs new
-// instance, dispose) must match between the two; creation timing is checked for the current
-// container only (0.0.36 ignored Lazy for factories).
+// Generated coverage: every combination of lifetime x Activate() x registration form x name, plus
+// every lifetime x form seen through scopes, registered directly or by a module. Nothing is built
+// at registration; Activate() builds the singletons (and only those) up front.
+import { IoCScopeRequiredError, IoCServiceNotFoundError } from '../../src/ioc/errors.ts';
 import { IoCContainer } from '../../src/ioc/ioc.ts';
-import { LegacyIoCContainer } from '../fixtures/legacy-ioc.ts';
+import type { IoCModule } from '../../src/ioc/IoCModule.ts';
+import { IoCToken } from '../../src/ioc/IoCToken.ts';
 import {
   assert,
   assertEquals,
   assertInstanceOf,
+  assertNotStrictEquals,
   assertRejects,
   assertStrictEquals,
 } from '../test.deps.ts';
@@ -25,167 +27,192 @@ class Impl {
   }
 }
 
+const $IImpl = IoCToken<Impl, 'IImpl'>('IImpl');
+
 const lifetimes = ['singleton', 'transient', 'scoped'] as const;
-const lazies = [false, true] as const;
+const activations = [false, true] as const;
 const names = [undefined, 'named'] as const;
 
 type Form = {
   label: string;
-  register: (ioc: Any, opts: Record<string, unknown>) => unknown;
-  key: (ioc: Any) => Any;
+  register: (ioc: IoCContainer, opts: Record<string, unknown>) => unknown;
+  key: typeof Impl | typeof $IImpl;
   expectedLabel: string;
 };
 
 const forms: Form[] = [
   {
     label: 'class only',
-    register: (ioc, opts) => ioc.Register(Impl, opts),
-    key: () => Impl,
+    register: (ioc, opts) => ioc.RegisterClass(Impl, opts),
+    key: Impl,
     expectedLabel: 'class',
   },
   {
     label: 'class + sync factory',
-    register: (ioc, opts) => ioc.Register(Impl, () => new Impl('sync'), opts),
-    key: () => Impl,
+    register: (ioc, opts) => ioc.RegisterFactory(Impl, () => new Impl('sync'), opts),
+    key: Impl,
     expectedLabel: 'sync',
   },
   {
     label: 'class + async factory',
     register: (ioc, opts) =>
-      ioc.Register(Impl, async () => {
+      ioc.RegisterFactory(Impl, async () => {
         await Promise.resolve();
         return new Impl('async');
       }, opts),
-    key: () => Impl,
+    key: Impl,
     expectedLabel: 'async',
   },
   {
-    label: 'symbol + sync factory',
-    register: (ioc, opts) =>
-      ioc.Register(() => new Impl('sym-sync'), { ...opts, Type: ioc.Symbol('IImpl') }),
-    key: (ioc) => ioc.Symbol('IImpl'),
-    expectedLabel: 'sym-sync',
+    label: 'token + sync factory',
+    register: (ioc, opts) => ioc.RegisterFactory($IImpl, () => new Impl('tok-sync'), opts),
+    key: $IImpl,
+    expectedLabel: 'tok-sync',
   },
   {
-    label: 'symbol + async factory',
-    register: (ioc, opts) =>
-      ioc.Register(async () => new Impl('sym-async'), { ...opts, Type: ioc.Symbol('IImpl') }),
-    key: (ioc) => ioc.Symbol('IImpl'),
-    expectedLabel: 'sym-async',
+    label: 'token + async factory',
+    register: (ioc, opts) => ioc.RegisterFactory($IImpl, async () => new Impl('tok-async'), opts),
+    key: $IImpl,
+    expectedLabel: 'tok-async',
   },
   {
-    label: 'class under interface symbol',
-    register: (ioc, opts) => ioc.Register(Impl, { ...opts, Type: ioc.Symbol('IImpl') }),
-    key: (ioc) => ioc.Symbol('IImpl'),
+    label: 'class under interface token',
+    register: (ioc, opts) => ioc.RegisterClass(Impl, { ...opts, Type: $IImpl }),
+    key: $IImpl,
     expectedLabel: 'class',
   },
 ];
 
-const impls: [string, () => Any][] = [
-  ['legacy', () => new LegacyIoCContainer()],
-  ['current', () => new IoCContainer()],
-];
+Deno.test('Matrix', async (t) => {
+  for (const lifetime of lifetimes) {
+    for (const activate of activations) {
+      for (const form of forms) {
+        for (const name of names) {
+          const title = `${lifetime}${activate ? ':activated' : ''} | ${form.label} | ${
+            name ?? 'default'
+          }`;
 
-for (const [implLabel, create] of impls) {
-  Deno.test(`Matrix (${implLabel})`, async (t) => {
-    for (const lifetime of lifetimes) {
-      for (const lazy of lazies) {
-        for (const form of forms) {
-          for (const name of names) {
-            const title = `${lifetime}${lazy ? ':lazy' : ''} | ${form.label} | ${
-              name ?? 'default'
-            }`;
+          await t.step(title, async () => {
+            const ioc = new IoCContainer();
+            const opts: Record<string, unknown> = {};
 
-            await t.step(title, async () => {
-              const ioc = create();
-              const opts: Record<string, unknown> = {};
+            if (lifetime !== 'singleton') opts.Lifetime = lifetime;
+            if (name) opts.Name = name;
 
-              if (lifetime !== 'singleton') opts.Lifetime = lifetime;
-              if (lazy) opts.Lazy = true;
-              if (name) opts.Name = name;
+            Impl.built = 0;
 
-              Impl.built = 0;
+            const result = form.register(ioc, opts);
 
-              const result = form.register(ioc, opts);
+            assertStrictEquals(result, ioc, 'registration returns the container');
 
-              if (implLabel === 'current') {
-                // Let eager async factories reach their constructor call.
-                await new Promise((r) => setTimeout(r, 0));
+            // Let any stray async work run: nothing may be built at registration.
+            await new Promise((r) => setTimeout(r, 0));
 
-                const expectBuiltNow = lifetime !== 'transient' && !lazy;
+            assertEquals(Impl.built, 0, 'nothing is built at registration');
 
-                assertEquals(Impl.built, expectBuiltNow ? 1 : 0, 'creation timing');
-              }
+            if (activate) {
+              await ioc.Activate();
 
-              const resolve =
-                () => (name ? ioc.Resolve(form.key(ioc), name) : ioc.Resolve(form.key(ioc)));
+              assertEquals(
+                Impl.built,
+                lifetime === 'singleton' ? 1 : 0,
+                'Activate() builds singletons only',
+              );
+            }
 
-              const [a, b, c] = await Promise.all([resolve(), resolve(), resolve()]);
-              const d = await resolve();
+            await using scope = ioc.CreateScope();
 
-              assertInstanceOf(a, Impl);
-              assertEquals(a.label, form.expectedLabel);
+            // Scoped services need a scope; the others resolve the same from either.
+            const from: Any = lifetime === 'scoped' ? scope : ioc;
 
-              if (lifetime === 'transient') {
-                assertEquals(new Set([a, b, c, d]).size, 4, 'transient instances are distinct');
-              } else {
-                assertStrictEquals(a, b);
-                assertStrictEquals(b, c);
-                assertStrictEquals(c, d);
-              }
+            const resolve = () => (name ? from.Resolve(form.key, name) : from.Resolve(form.key));
 
-              if (name) {
-                await assertRejects(
-                  () => ioc.Resolve(form.key(ioc)),
-                  Error,
-                  'No Service for symbol',
-                );
-              }
+            if (lifetime === 'scoped') {
+              await assertRejects(
+                () => (name ? ioc.Resolve(form.key, name) : ioc.Resolve(form.key)),
+                IoCScopeRequiredError,
+              );
+            }
 
-              if (lifetime === 'scoped') {
-                assertEquals(typeof result, 'function');
-                (result as () => void)();
-                await assertRejects(() => resolve(), Error, 'No Service for symbol');
-              } else {
-                assertEquals(result, undefined);
-              }
+            const [a, b, c] = await Promise.all([resolve(), resolve(), resolve()]);
+            const d = await resolve();
 
-              if (implLabel === 'current' && lifetime !== 'transient') {
-                assert(Impl.built <= 1, `built ${Impl.built} times`);
-              }
-            });
-          }
+            assertInstanceOf(a, Impl);
+            assertEquals(a.label, form.expectedLabel);
+
+            if (lifetime === 'transient') {
+              assertEquals(new Set([a, b, c, d]).size, 4, 'transient instances are distinct');
+            } else {
+              assertStrictEquals(a, b);
+              assertStrictEquals(b, c);
+              assertStrictEquals(c, d);
+            }
+
+            if (name) {
+              await assertRejects(
+                () => from.Resolve(form.key),
+                IoCServiceNotFoundError,
+                'No service is registered for',
+              );
+            }
+
+            assert(ioc.Unregister(form.key, name));
+
+            await assertRejects(() => resolve(), IoCServiceNotFoundError);
+
+            if (lifetime !== 'transient') {
+              assert(Impl.built <= 1, `built ${Impl.built} times`);
+            }
+          });
         }
       }
     }
-  });
-}
+  }
+});
 
-Deno.test('Matrix - CopyTo preserves lifetime semantics (current)', async (t) => {
-  for (const lifetime of lifetimes) {
-    for (const lazy of lazies) {
+Deno.test('Matrix - lifetimes across scopes, registered directly or by a module', async (t) => {
+  for (const via of ['direct', 'module'] as const) {
+    for (const lifetime of lifetimes) {
       for (const form of forms) {
-        await t.step(`${lifetime}${lazy ? ':lazy' : ''} | ${form.label}`, async () => {
-          const source = new IoCContainer();
-          const target = new IoCContainer();
+        await t.step(`${via} | ${lifetime} | ${form.label}`, async () => {
           const opts: Record<string, unknown> = {};
 
           if (lifetime !== 'singleton') opts.Lifetime = lifetime;
-          if (lazy) opts.Lazy = true;
 
-          form.register(source, opts);
-          source.CopyTo(target);
+          const module: IoCModule = {
+            Name: 'Impls',
+            Register: (view) => form.register(view, opts),
+          };
 
-          const fromTarget = await target.Resolve(form.key(target));
-          const fromSource = await source.Resolve(form.key(source));
+          const ioc = new IoCContainer();
 
-          assertInstanceOf(fromTarget, Impl);
+          if (via === 'module') ioc.Use(module);
+          else form.register(ioc, opts);
+
+          await using first = ioc.CreateScope();
+          await using second = ioc.CreateScope();
+
+          const fromFirst = await first.Resolve(form.key);
+          const fromFirstAgain = await first.Resolve(form.key);
+          const fromSecond = await second.Resolve(form.key);
+
+          assertInstanceOf(fromFirst, Impl);
+          assertEquals(fromFirst.label, form.expectedLabel);
 
           if (lifetime === 'transient') {
-            assert(fromTarget !== fromSource);
+            assertNotStrictEquals(fromFirst, fromFirstAgain);
+            assertNotStrictEquals(fromFirst, fromSecond);
+          } else if (lifetime === 'scoped') {
+            assertStrictEquals(fromFirst, fromFirstAgain);
+            assertNotStrictEquals(fromFirst, fromSecond);
+            await assertRejects(() => ioc.Resolve(form.key), IoCScopeRequiredError);
           } else {
-            assertStrictEquals(fromTarget, fromSource);
+            assertStrictEquals(fromFirst, fromFirstAgain);
+            assertStrictEquals(fromFirst, fromSecond);
+            assertStrictEquals(fromFirst, await ioc.Resolve(form.key));
           }
+
+          assertEquals(ioc.Describe().Services[0].Module, via === 'module' ? 'Impls' : undefined);
         });
       }
     }

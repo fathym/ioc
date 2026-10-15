@@ -5,14 +5,23 @@ import {
   IoCContainerDisposedError,
   IoCDisposeError,
   type IoCErrorCode,
+  IoCLevelError,
   IoCRegistrationError,
+  IoCSealedError,
   IoCServiceNotFoundError,
   IoCValidationError,
   isIoCError,
 } from '../../src/ioc/errors.ts';
 import { IoCContainer } from '../../src/ioc/ioc.ts';
+import type { IoCModule } from '../../src/ioc/IoCModule.ts';
 import { IoCToken } from '../../src/ioc/IoCToken.ts';
-import { assert, assertEquals, assertInstanceOf, assertRejects } from '../test.deps.ts';
+import {
+  assert,
+  assertEquals,
+  assertInstanceOf,
+  assertRejects,
+  assertThrows,
+} from '../test.deps.ts';
 
 async function codeOf(fn: () => unknown): Promise<string | undefined> {
   try {
@@ -24,52 +33,180 @@ async function codeOf(fn: () => unknown): Promise<string | undefined> {
   return undefined;
 }
 
-Deno.test('Error codes', async (t) => {
-  await t.step('every container error carries a stable code', async () => {
+/**
+ * One way to make the container throw each code. Typed as a `Record` over `IoCErrorCode`, so a
+ * code added to the union without a producer here fails to compile.
+ */
+const producers: Record<IoCErrorCode, () => unknown> = {
+  IOC_SERVICE_NOT_FOUND: () => new IoCContainer().Resolve(IoCToken('CodesMissing')),
+
+  IOC_CONTAINER_DISPOSED: async () => {
     const ioc = new IoCContainer();
 
-    assertEquals(
-      await codeOf(() => ioc.Resolve(IoCToken('CodesMissing'))),
-      'IOC_SERVICE_NOT_FOUND',
-    );
+    await ioc.Dispose();
 
-    assertEquals(
-      await codeOf(() => ioc.RegisterFactory(IoCToken('CodesBad'), 'x' as never)),
-      'IOC_INVALID_REGISTRATION',
-    );
+    return ioc.Resolve(IoCToken('CodesAfterDispose'));
+  },
 
-    assertEquals(
-      await codeOf(() => ioc.RegisterClass((() => ({})) as never)),
-      'IOC_INVALID_REGISTRATION',
-    );
-
+  IOC_CIRCULAR_DEPENDENCY: () => {
     const $A = IoCToken<number>('CodesA');
     const $B = IoCToken<number>('CodesB');
 
-    ioc.RegisterFactory($A, async (c) => await c.Resolve($B), { Lazy: true });
-    ioc.RegisterFactory($B, async (c) => await c.Resolve($A), { Lazy: true });
+    const ioc = new IoCContainer()
+      .RegisterFactory($A, async (c) => await c.Resolve($B))
+      .RegisterFactory($B, async (c) => await c.Resolve($A));
 
-    assertEquals(await codeOf(() => ioc.Resolve($A)), 'IOC_CIRCULAR_DEPENDENCY');
+    return ioc.Resolve($A);
+  },
 
+  IOC_VALIDATION_FAILED: () => {
     class NeedsArgs {
       constructor(public x: number) {}
     }
 
-    const invalid = new IoCContainer().RegisterClass(NeedsArgs, { Lazy: true });
+    return new IoCContainer().RegisterClass(NeedsArgs).Validate();
+  },
 
-    assertEquals(await codeOf(() => invalid.Validate()), 'IOC_VALIDATION_FAILED');
+  IOC_ACTIVATION_FAILED: () =>
+    new IoCContainer()
+      .RegisterFactory(IoCToken('CodesBoom'), () => Promise.reject(new Error('boom')))
+      .Activate(),
 
-    await ioc.Dispose();
+  IOC_DISPOSE_FAILED: async () => {
+    class Exploding {
+      [Symbol.dispose]() {
+        throw new Error('nope');
+      }
+    }
 
-    assertEquals(await codeOf(() => ioc.Resolve($A)), 'IOC_CONTAINER_DISPOSED');
+    const ioc = new IoCContainer().RegisterClass(Exploding);
+
+    await ioc.Resolve(Exploding);
+
+    return ioc.Dispose();
+  },
+
+  IOC_INVALID_REGISTRATION: () =>
+    new IoCContainer().RegisterFactory(IoCToken('CodesBad'), 'x' as never),
+
+  IOC_INVALID_KEY: () => new IoCContainer().Resolve('CodesString' as never),
+
+  IOC_SCOPE_REQUIRED: () => {
+    class PerRequest {}
+
+    return new IoCContainer().RegisterClass(PerRequest, { Lifetime: 'scoped' }).Resolve(
+      PerRequest,
+    );
+  },
+
+  IOC_DUPLICATE_REGISTRATION: () => {
+    const $Twice = IoCToken<number>('CodesTwice');
+
+    return new IoCContainer().RegisterValue($Twice, 1).RegisterValue($Twice, 2);
+  },
+
+  IOC_SEALED: () => new IoCContainer().Override(IoCToken<number>('CodesOverride'), 1),
+
+  IOC_INVALID_LEVEL: () => new IoCContainer({ Levels: ['tenant'] }).CreateScope({ Level: 'x' }),
+
+  IOC_START_FAILED: () =>
+    new IoCContainer()
+      .Use({
+        Name: 'CodesFailing',
+        Register: () => {},
+        OnStart: () => {
+          throw new Error('cannot start');
+        },
+      })
+      .Start(),
+
+  IOC_MODULE_CYCLE: () => {
+    const a: { -readonly [K in keyof IoCModule]: IoCModule[K] } = {
+      Name: 'CodesA',
+      Register: () => {},
+    };
+
+    const b: IoCModule = { Name: 'CodesB', Requires: [a], Register: () => {} };
+
+    a.Requires = [b];
+
+    return new IoCContainer().Use(a);
+  },
+
+  IOC_RESOLVE_TIMEOUT: () => {
+    const $Hangs = IoCToken<number>('CodesHangs');
+
+    return new IoCContainer({ PendingTimeoutMs: 10 })
+      .RegisterFactory($Hangs, () => new Promise<number>(() => {}))
+      .Resolve($Hangs);
+  },
+
+  IOC_NOT_ISOLATABLE: () => {
+    const $Value = IoCToken<number>('CodesValue');
+
+    return new IoCContainer().RegisterValue($Value, 1).CreateScope().Isolate($Value);
+  },
+};
+
+Deno.test('Error codes', async (t) => {
+  for (const [code, produce] of Object.entries(producers)) {
+    await t.step(`${code} is produced by the container`, async () => {
+      assertEquals(await codeOf(produce), code);
+    });
+  }
+
+  await t.step('more ways to produce the newer codes', async () => {
+    // IOC_INVALID_KEY: any non-token, non-class key, wherever a key is taken.
+    assertEquals(
+      await codeOf(() => new IoCContainer().Has(Symbol.for('X') as never)),
+      'IOC_INVALID_KEY',
+    );
+    assertEquals(
+      await codeOf(() => new IoCContainer().RegisterValue({} as never, 1 as never)),
+      'IOC_INVALID_KEY',
+    );
+
+    // IOC_SEALED: replacing, decorating or unregistering a module's registration from outside.
+    const $Owned = IoCToken<number>('CodesOwned');
+
+    const ioc = new IoCContainer().Use({
+      Name: 'CodesOwner',
+      Register: (m) => m.RegisterValue($Owned, 1),
+    });
+
+    for (
+      const [action, fn] of [
+        ['replace', () => ioc.RegisterValue($Owned, 2, { Replace: true })],
+        ['decorate', () => ioc.Decorate($Owned, (n) => n + 1)],
+        ['unregister', () => ioc.Unregister($Owned)],
+      ] as const
+    ) {
+      const err = assertThrows(fn, IoCSealedError);
+
+      assertEquals([err.code, err.Module, err.Action], ['IOC_SEALED', 'CodesOwner', action]);
+    }
+
+    // IOC_INVALID_LEVEL: an undeclared level, a ScopeLevel nobody declared, or levels nested in
+    // the wrong order.
+    const levels = new IoCContainer({ Levels: ['tenant', 'request'] });
+
+    const tooDeep = assertThrows(
+      () => levels.CreateScope({ Level: 'request' }).CreateScope({ Level: 'tenant' }),
+      IoCLevelError,
+    );
+
+    assertEquals([tooDeep.code, tooDeep.Level], ['IOC_INVALID_LEVEL', 'tenant']);
+
+    assertEquals(
+      await codeOf(() => new IoCContainer().RegisterClass(class Svc {}, { ScopeLevel: 'tenant' })),
+      'IOC_INVALID_LEVEL',
+    );
   });
 
   await t.step('activation and dispose failures are AggregateErrors with codes', async () => {
     const ioc = new IoCContainer();
 
-    ioc.RegisterFactory(IoCToken('CodesBoom'), () => Promise.reject(new Error('boom')), {
-      Lazy: true,
-    });
+    ioc.RegisterFactory(IoCToken('CodesBoom'), () => Promise.reject(new Error('boom')));
 
     const activation = await assertRejects(() => ioc.Activate(), IoCActivationError);
 
@@ -86,6 +223,8 @@ Deno.test('Error codes', async (t) => {
 
     const owner = new IoCContainer().RegisterClass(Exploding);
 
+    await owner.Resolve(Exploding);
+
     const disposing = await assertRejects(() => owner.Dispose(), IoCDisposeError);
 
     assertInstanceOf(disposing, AggregateError);
@@ -95,15 +234,29 @@ Deno.test('Error codes', async (t) => {
   await t.step('isIoCError checks the code, not the class', () => {
     const codes: IoCErrorCode[] = ['IOC_SERVICE_NOT_FOUND', 'IOC_CIRCULAR_DEPENDENCY'];
 
-    assert(isIoCError(new IoCServiceNotFoundError(Symbol.for('X'), '$default')));
+    assert(isIoCError(new IoCServiceNotFoundError('X', '$default')));
     assert(isIoCError(new IoCCircularDependencyError(['A', 'A']), codes[1]));
     assert(!isIoCError(new IoCContainerDisposedError(), codes[0]));
+    assert(isIoCError(new IoCSealedError('X', undefined, 'override'), 'IOC_SEALED'));
+    assert(isIoCError(new IoCLevelError('x', 'bad level'), 'IOC_INVALID_LEVEL'));
     assert(!isIoCError(new Error('plain')));
     assert(!isIoCError(null));
 
     // An error from another copy of the library is recognized by its code alone.
     assert(isIoCError(Object.assign(new Error('foreign'), { code: 'IOC_SERVICE_NOT_FOUND' })));
     assert(!isIoCError(Object.assign(new Error('other'), { code: 'ENOENT' })));
+  });
+
+  await t.step('IoCServiceNotFoundError names the key by its description', () => {
+    assertEquals(new IoCServiceNotFoundError('X', '$default').Key, 'X');
+    assertEquals(
+      new IoCServiceNotFoundError('X', '$default').message,
+      'No service is registered for X.',
+    );
+    assertEquals(
+      new IoCServiceNotFoundError('X', 'n').message,
+      `No service is registered for X with name 'n'.`,
+    );
   });
 
   await t.step('IoCValidationError keeps Problems and adds Issues', () => {
@@ -121,77 +274,96 @@ Deno.test('Error codes', async (t) => {
 });
 
 Deno.test('Container options', async (t) => {
-  await t.step('no options behaves as before: singletons are eager', () => {
-    let built = 0;
+  await t.step(
+    'with no options, singletons are built by Activate(), not at registration',
+    async () => {
+      let built = 0;
 
-    class Eager {
-      constructor() {
-        built++;
+      class Lazy {
+        constructor() {
+          built++;
+        }
       }
-    }
 
-    new IoCContainer().RegisterClass(Eager);
+      const ioc = new IoCContainer().RegisterClass(Lazy);
 
-    assertEquals(built, 1);
+      assertEquals(built, 0);
+
+      await ioc.Activate();
+
+      assertEquals(built, 1);
+    },
+  );
+
+  await t.step('with no options, the container is strict', async () => {
+    const $Url = IoCToken<string>('CodesUrl');
+
+    class PerRequest {}
+
+    const ioc = new IoCContainer()
+      .RegisterValue($Url, 'a')
+      .RegisterClass(PerRequest, { Lifetime: 'scoped' });
+
+    assertEquals(await codeOf(() => ioc.RegisterValue($Url, 'b')), 'IOC_DUPLICATE_REGISTRATION');
+    assertEquals(await codeOf(() => ioc.Resolve(PerRequest)), 'IOC_SCOPE_REQUIRED');
+
+    // A default yields instead of colliding.
+    ioc.RegisterValue($Url, 'default', { Default: true });
+
+    assertEquals(await ioc.Resolve($Url), 'a');
   });
 
-  await t.step('LazyByDefault defers singletons unless Lazy: false', async () => {
-    let built = 0;
+  await t.step('Override needs a Testing container, and its scopes inherit that', async () => {
+    const $Now = IoCToken<number>('CodesNow');
 
-    class Deferred {
-      constructor() {
-        built++;
-      }
-    }
+    const sealed = new IoCContainer().RegisterValue($Now, 1);
 
-    class Forced {
-      constructor() {
-        built += 10;
-      }
-    }
+    assertThrows(() => sealed.Override($Now, 0), IoCSealedError, 'Testing: true');
+    assertThrows(() => sealed.CreateScope().Override($Now, 0), IoCSealedError);
 
-    const ioc = new IoCContainer({ LazyByDefault: true })
-      .RegisterClass(Deferred)
-      .RegisterClass(Forced, { Lazy: false });
+    const testing = new IoCContainer({ Testing: true }).RegisterValue($Now, 1);
+    const scope = testing.CreateScope();
 
-    assertEquals(built, 10);
+    const restore = scope.Override($Now, 0);
 
-    await ioc.Resolve(Deferred);
+    assertEquals(await scope.Resolve($Now), 0);
+    assertEquals(await testing.Resolve($Now), 1);
 
-    assertEquals(built, 11);
+    restore();
+
+    assertEquals(await scope.Resolve($Now), 1);
   });
 
-  await t.step('Create() turns on Strict and LazyByDefault', async () => {
-    let built = 0;
+  await t.step('scopes inherit their parent options', async () => {
+    const $Hangs = IoCToken<number>('CodesScopeHangs');
 
-    class Later {
-      constructor() {
-        built++;
-      }
-    }
+    const root = new IoCContainer({ Levels: ['tenant'], PendingTimeoutMs: 10 });
 
-    const ioc = IoCContainer.Create().RegisterClass(Later);
+    root.RegisterFactory($Hangs, () => new Promise<number>(() => {}), { Lifetime: 'scoped' });
 
-    assertEquals(built, 0);
+    const tenant = root.CreateScope({ Level: 'tenant' });
 
-    await ioc.Activate();
-
-    assertEquals(built, 1);
+    assertEquals(tenant.Describe().Level, 'tenant');
+    assertThrows(() => tenant.CreateScope({ Level: 'request' }), IoCLevelError);
+    assertEquals(await codeOf(() => tenant.Resolve($Hangs)), 'IOC_RESOLVE_TIMEOUT');
   });
 
-  await t.step('scopes inherit their parent options', () => {
-    let built = 0;
+  await t.step('invalid options are rejected', () => {
+    for (
+      const options of [
+        { Levels: ['tenant', 'tenant'] },
+        { Levels: [''] },
+        { PendingTimeoutMs: -1 },
+        { PendingTimeoutMs: Number.NaN },
+        { PendingTimeoutMs: Infinity },
+      ]
+    ) {
+      const err = assertThrows(() => new IoCContainer(options), IoCRegistrationError);
 
-    class InScope {
-      constructor() {
-        built++;
-      }
+      assertEquals(err.code, 'IOC_INVALID_REGISTRATION');
     }
 
-    const scope = new IoCContainer({ LazyByDefault: true }).CreateScope();
-
-    scope.RegisterClass(InScope);
-
-    assertEquals(built, 0);
+    // 0 turns the timeout off.
+    new IoCContainer({ PendingTimeoutMs: 0 });
   });
 });

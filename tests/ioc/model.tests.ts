@@ -1,17 +1,33 @@
-// Model-based randomized testing: random sequences of register / resolve / dispose / copy are run
-// against the container and a tiny reference model of the intended semantics. Seeds are fixed so
-// any failure reproduces exactly (the step name carries the seed).
+// Model-based randomized testing: random sequences of register / resolve / unregister / activate /
+// scope checks are run against the container and a tiny reference model of the intended semantics.
+// Seeds are fixed so any failure reproduces exactly (the step name carries the seed).
+import {
+  IoCDuplicateRegistrationError,
+  IoCScopeRequiredError,
+  IoCServiceNotFoundError,
+} from '../../src/ioc/errors.ts';
 import { IoCContainer } from '../../src/ioc/ioc.ts';
-import { assert, assertEquals, assertRejects, assertStrictEquals } from '../test.deps.ts';
+import { IoCToken } from '../../src/ioc/IoCToken.ts';
+import {
+  assert,
+  assertEquals,
+  assertNotStrictEquals,
+  assertRejects,
+  assertStrictEquals,
+  assertThrows,
+} from '../test.deps.ts';
 import { seededRandom } from './_helpers.ts';
 
 type Lifetime = 'singleton' | 'transient' | 'scoped';
 
 type Built = { regId: number; serial: number };
 
-type ModelEntry = { regId: number; lifetime: Lifetime; lazy: boolean };
+type ModelEntry = { regId: number; lifetime: Lifetime };
 
 class KeyClass {}
+
+const $A = IoCToken<Built>('A');
+const $B = IoCToken<Built>('B');
 
 const SEEDS = Array.from({ length: 60 }, (_, i) => 1000 + i * 7919);
 const OPS_PER_RUN = 80;
@@ -23,18 +39,26 @@ Deno.test('Model-based randomized sequences', async (t) => {
       const pick = <T>(items: readonly T[]): T => items[Math.floor(rand() * items.length)];
 
       const ioc = new IoCContainer();
-      const keys = [ioc.Symbol('A'), ioc.Symbol('B'), KeyClass] as const;
+      const keys = [$A, $B, KeyClass] as const;
       const names = ['$default', 'n1', 'n2'] as const;
+
+      // Scoped services are resolved from this long-lived scope; the root refuses them.
+      await using scope = ioc.CreateScope();
 
       // Model state.
       const model = new Map<unknown, Map<string, ModelEntry>>();
       const builds = new Map<number, number>();
-      const singletonValues = new Map<number, Built>();
-      const disposers: { regId: number; key: unknown; name: string; dispose: () => void }[] = [];
+      const expectedBuilds = new Map<number, number>();
+      const cachedValues = new Map<number, Built>();
       let nextRegId = 1;
       let serial = 0;
 
       const modelGet = (key: unknown, name: string) => model.get(key)?.get(name);
+
+      const entries = () =>
+        [...model].flatMap(([key, bank]) =>
+          [...bank].map(([name, entry]) => ({ key, name, entry }))
+        );
 
       for (let op = 0; op < OPS_PER_RUN; op++) {
         const roll = rand();
@@ -42,10 +66,11 @@ Deno.test('Model-based randomized sequences', async (t) => {
         const name = pick(names);
 
         if (roll < 0.35) {
-          // Register
+          // Register (Replace: true over an existing registration, except sometimes on purpose).
           const lifetime = pick(['singleton', 'transient', 'scoped'] as const);
-          const lazy = rand() < 0.5;
           const asyncFactory = rand() < 0.5;
+          const existing = modelGet(key, name);
+          const replace = !!existing && rand() < 0.8;
           const regId = nextRegId++;
 
           const factory = () => {
@@ -54,38 +79,42 @@ Deno.test('Model-based randomized sequences', async (t) => {
             return asyncFactory ? Promise.resolve(value) : value;
           };
 
-          const opts: Record<string, unknown> = { Lazy: lazy };
+          const opts: { Lifetime?: 'transient' | 'scoped'; Name?: string; Replace?: boolean } = {};
           if (lifetime !== 'singleton') opts.Lifetime = lifetime;
           if (name !== '$default') opts.Name = name;
+          if (replace) opts.Replace = true;
 
-          let result: unknown;
+          const register = () => ioc.RegisterFactory(key, factory, opts);
 
-          if (key === KeyClass) {
-            // deno-lint-ignore no-explicit-any
-            result = ioc.Register(KeyClass, factory as any, opts);
-          } else {
-            result = ioc.Register(factory, { ...opts, Type: key as symbol });
+          if (existing && !replace) {
+            assertThrows(register, IoCDuplicateRegistrationError);
+            continue;
           }
+
+          register();
 
           if (!model.has(key)) model.set(key, new Map());
-          model.get(key)!.set(name, { regId, lifetime, lazy });
+          model.get(key)!.set(name, { regId, lifetime });
 
-          const eager = lifetime !== 'transient' && !lazy;
-          assertEquals(builds.get(regId) ?? 0, eager ? 1 : 0, `op ${op}: creation timing`);
-
-          if (lifetime === 'scoped') {
-            assertEquals(typeof result, 'function');
-            disposers.push({ regId, key, name, dispose: result as () => void });
-          }
-        } else if (roll < 0.85) {
+          assertEquals(builds.get(regId) ?? 0, 0, `op ${op}: nothing is built at registration`);
+        } else if (roll < 0.8) {
           // Resolve
           const entry = modelGet(key, name);
-          // deno-lint-ignore no-explicit-any
-          const resolve = () => ioc.Resolve(key as any, name);
+          const from = entry?.lifetime === 'scoped' ? scope : ioc;
+          const resolve = () => from.Resolve(key, name);
 
           if (!entry) {
-            await assertRejects(resolve, Error, 'No Service for symbol');
+            await assertRejects(resolve, IoCServiceNotFoundError);
             continue;
+          }
+
+          if (entry.lifetime === 'scoped') {
+            await assertRejects(
+              () => ioc.Resolve(key, name),
+              IoCScopeRequiredError,
+              undefined,
+              `op ${op}: scoped needs a scope`,
+            );
           }
 
           const value = (await resolve()) as Built;
@@ -93,59 +122,85 @@ Deno.test('Model-based randomized sequences', async (t) => {
           assertEquals(value.regId, entry.regId, `op ${op}: resolved the current registration`);
 
           if (entry.lifetime === 'transient') {
+            expectedBuilds.set(entry.regId, (expectedBuilds.get(entry.regId) ?? 0) + 1);
             assert(
-              !singletonValues.has(entry.regId) || singletonValues.get(entry.regId) !== value,
+              cachedValues.get(entry.regId) !== value,
               `op ${op}: transient returned a cached value`,
             );
           } else {
-            const known = singletonValues.get(entry.regId);
+            const known = cachedValues.get(entry.regId);
 
             if (known) {
-              assertStrictEquals(value, known, `op ${op}: singleton identity`);
+              assertStrictEquals(value, known, `op ${op}: cached identity`);
             } else {
-              singletonValues.set(entry.regId, value);
+              cachedValues.set(entry.regId, value);
+              expectedBuilds.set(entry.regId, (expectedBuilds.get(entry.regId) ?? 0) + 1);
             }
-
-            assertEquals(builds.get(entry.regId), 1, `op ${op}: built exactly once`);
           }
+
+          assertEquals(
+            builds.get(entry.regId),
+            expectedBuilds.get(entry.regId),
+            `op ${op}: build count`,
+          );
+        } else if (roll < 0.9) {
+          // Unregister a random key and name (possibly not registered).
+          const removed = ioc.Unregister(key, name);
+
+          assertEquals(removed, !!modelGet(key, name), `op ${op}: Unregister result`);
+
+          model.get(key)?.delete(name);
         } else if (roll < 0.95) {
-          // Dispose a random scoped registration (possibly already superseded or disposed).
-          if (!disposers.length) continue;
+          // Activate builds every unbuilt singleton, and nothing else.
+          await ioc.Activate();
 
-          const target = pick(disposers);
+          for (const { key: k, name: n, entry } of entries()) {
+            if (entry.lifetime === 'singleton' && !cachedValues.has(entry.regId)) {
+              // deno-lint-ignore no-explicit-any
+              cachedValues.set(entry.regId, (await ioc.Resolve(k as any, n)) as Built);
+              expectedBuilds.set(entry.regId, 1);
+            }
+          }
 
-          target.dispose();
-
-          const current = modelGet(target.key, target.name);
-
-          if (current?.regId === target.regId) {
-            model.get(target.key)!.delete(target.name);
+          for (const [regId, count] of builds) {
+            assertEquals(count, expectedBuilds.get(regId) ?? 0, `op ${op}: Activate build count`);
           }
         } else {
-          // Copy everything into a fresh container and check it resolves identically.
-          const copy = new IoCContainer();
+          // A fresh scope shares singletons, builds its own scoped instances, and sees every
+          // registration the root has.
+          await using fresh = ioc.CreateScope();
 
-          ioc.CopyTo(copy);
+          for (const { key: k, name: n, entry } of entries()) {
+            // deno-lint-ignore no-explicit-any
+            const fromFresh = (await fresh.Resolve(k as any, n)) as Built;
 
-          for (const [k, bank] of model) {
-            for (const [n, entry] of bank) {
+            assertEquals(
+              fromFresh.regId,
+              entry.regId,
+              `op ${op}: scope resolves same registration`,
+            );
+
+            if (entry.lifetime === 'singleton') {
               // deno-lint-ignore no-explicit-any
-              const fromCopy = (await copy.Resolve(k as any, n)) as Built;
+              const fromRoot = await ioc.Resolve(k as any, n);
 
-              assertEquals(
-                fromCopy.regId,
-                entry.regId,
-                `op ${op}: copy resolves same registration`,
+              assertStrictEquals(fromFresh, fromRoot, `op ${op}: scope shares singletons`);
+
+              if (!cachedValues.has(entry.regId)) {
+                cachedValues.set(entry.regId, fromFresh);
+                expectedBuilds.set(entry.regId, 1);
+              }
+            } else {
+              assertNotStrictEquals(
+                fromFresh,
+                cachedValues.get(entry.regId),
+                `op ${op}: scope gets its own ${entry.lifetime} instance`,
               );
 
-              if (entry.lifetime !== 'transient') {
-                // deno-lint-ignore no-explicit-any
-                const fromOriginal = await ioc.Resolve(k as any, n);
-
-                assertStrictEquals(fromCopy, fromOriginal, `op ${op}: copy shares singletons`);
-                singletonValues.set(entry.regId, fromCopy);
-              }
+              expectedBuilds.set(entry.regId, (expectedBuilds.get(entry.regId) ?? 0) + 1);
             }
+
+            assertEquals(builds.get(entry.regId), expectedBuilds.get(entry.regId));
           }
         }
       }

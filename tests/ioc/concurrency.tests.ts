@@ -1,6 +1,10 @@
 // Cycles split across resolutions that run at the same time must throw, never hang; concurrent
 // resolutions that merely share a dependency must keep working.
-import { IoCCircularDependencyError } from '../../src/ioc/errors.ts';
+import {
+  IoCActivationError,
+  IoCCircularDependencyError,
+  IoCResolveTimeoutError,
+} from '../../src/ioc/errors.ts';
 import { IoCContainer } from '../../src/ioc/ioc.ts';
 import { IoCToken } from '../../src/ioc/IoCToken.ts';
 import { assert, assertEquals, assertRejects } from '../test.deps.ts';
@@ -19,7 +23,7 @@ function within<T>(p: Promise<T>, ms = 1000): Promise<T> {
   ]);
 }
 
-function cyclicPair(prefix: string, lazy = true) {
+function cyclicPair(prefix: string) {
   const $C = IoCToken<number>(`${prefix}C`);
   const $A = IoCToken<number>(`${prefix}A`);
   const $B = IoCToken<number>(`${prefix}B`);
@@ -31,12 +35,12 @@ function cyclicPair(prefix: string, lazy = true) {
     await c.Resolve($C);
     await tick();
     return (await c.Resolve($B)) + 1;
-  }, { Lazy: lazy });
+  });
   ioc.RegisterFactory($B, async (c) => {
     await c.Resolve($C);
     await tick();
     return (await c.Resolve($A)) + 1;
-  }, { Lazy: lazy });
+  });
 
   return { ioc, $A, $B };
 }
@@ -85,7 +89,7 @@ Deno.test('Concurrency - cycles never hang', async (t) => {
       ioc.RegisterFactory(key, async (c) => {
         await tick();
         return (await c.Resolve(next)) + 1;
-      }, { Lazy: true });
+      });
     });
 
     const results = await within(Promise.allSettled(keys.map((k) => ioc.Resolve(k))));
@@ -93,7 +97,7 @@ Deno.test('Concurrency - cycles never hang', async (t) => {
     assert(results.every((r) => r.status === 'rejected'));
   });
 
-  await t.step('an eager factory resolving after an await reports the cycle', async () => {
+  await t.step('a resolve joining a build Activate() started reports the cycle', async () => {
     const ioc = new IoCContainer();
 
     const $A = IoCToken<number>('ConcEagerA');
@@ -102,15 +106,18 @@ Deno.test('Concurrency - cycles never hang', async (t) => {
     ioc.RegisterFactory($B, async (c) => {
       await tick();
       return (await c.Resolve($A)) + 1;
-    }, { Lazy: true });
+    });
 
-    // Eager: built at registration; the factory parameter now carries the chain after `await`.
     ioc.RegisterFactory($A, async (c) => {
       await tick();
       return (await c.Resolve($B)) + 1;
     });
 
+    // Activate() starts the builds; the factory parameter carries the chain after `await`.
+    const activating = ioc.Activate();
+
     await assertRejects(() => within(ioc.Resolve($A)), IoCCircularDependencyError);
+    await assertRejects(() => within(activating), IoCActivationError);
   });
 
   await t.step(
@@ -120,11 +127,96 @@ Deno.test('Concurrency - cycles never hang', async (t) => {
 
       await within(Promise.allSettled([ioc.Resolve($A), ioc.Resolve($B)]));
 
-      ioc.RegisterValue($B, 41);
+      ioc.RegisterValue($B, 41, { Replace: true });
 
       assertEquals(await within(ioc.Resolve($A)), 42);
     },
   );
+});
+
+Deno.test('Concurrency - cycles through a captured container', async (t) => {
+  /** Two singletons that resolve each other through `ioc` captured in a closure, after an await. */
+  function capturedPair(prefix: string, ioc: IoCContainer) {
+    const $A = IoCToken<number>(`${prefix}A`);
+    const $B = IoCToken<number>(`${prefix}B`);
+
+    ioc.RegisterFactory($A, async () => {
+      await tick();
+      return (await ioc.Resolve($B)) + 1;
+    });
+    ioc.RegisterFactory($B, async () => {
+      await tick();
+      return (await ioc.Resolve($A)) + 1;
+    });
+
+    return { $A, $B };
+  }
+
+  await t.step('throws by default (the async context follows the chain)', async () => {
+    const ioc = new IoCContainer();
+
+    const { $A } = capturedPair('ConcCaptured', ioc);
+
+    const err = await assertRejects(() => within(ioc.Resolve($A)), IoCCircularDependencyError);
+
+    assertEquals(err.code, 'IOC_CIRCULAR_DEPENDENCY');
+    assertEquals(err.Path, ['ConcCapturedA', 'ConcCapturedB', 'ConcCapturedA']);
+  });
+
+  await t.step('two captured-container resolutions entering at once both reject', async () => {
+    const ioc = new IoCContainer();
+
+    const { $A, $B } = capturedPair('ConcCapturedPair', ioc);
+
+    const results = await within(Promise.allSettled([ioc.Resolve($A), ioc.Resolve($B)]));
+
+    for (const r of results) {
+      assertEquals(r.status, 'rejected');
+      assert((r as PromiseRejectedResult).reason instanceof IoCCircularDependencyError);
+    }
+  });
+
+  await t.step('a captured-container chain without a cycle still works', async () => {
+    const ioc = new IoCContainer();
+
+    const $Db = IoCToken<number>('ConcCapturedDb');
+    const $Repo = IoCToken<number>('ConcCapturedRepo');
+
+    ioc.RegisterFactory($Db, async () => (await tick(), 1));
+    ioc.RegisterFactory($Repo, async () => {
+      await tick();
+      return (await ioc.Resolve($Db)) + 1;
+    });
+
+    assertEquals(
+      await within(Promise.all([ioc.Resolve($Repo), ioc.Resolve($Db), ioc.Resolve($Repo)])),
+      [2, 1, 2],
+    );
+  });
+
+  await t.step('AsyncContext: false: only PendingTimeoutMs catches it', async () => {
+    const ioc = new IoCContainer({ AsyncContext: false, PendingTimeoutMs: 50 });
+
+    const { $A } = capturedPair('ConcCapturedOff', ioc);
+
+    const err = await assertRejects(() => within(ioc.Resolve($A)), IoCResolveTimeoutError);
+
+    assertEquals(err.Service, 'ConcCapturedOffA');
+    assert(err.Waiting.includes('ConcCapturedOffA'), String(err.Waiting));
+  });
+
+  await t.step('AsyncContext: false and no timeout: it hangs (the old behavior)', async () => {
+    const ioc = new IoCContainer({ AsyncContext: false, PendingTimeoutMs: 0 });
+
+    const { $A } = capturedPair('ConcCapturedHang', ioc);
+
+    const settled = await Promise.race([
+      ioc.Resolve($A).then(() => 'resolved', () => 'rejected'),
+      new Promise((r) => setTimeout(() => r('pending'), 50)),
+    ]);
+
+    assertEquals(settled, 'pending');
+  });
 });
 
 Deno.test('Concurrency - no false cycles', async (t) => {
@@ -141,9 +233,9 @@ Deno.test('Concurrency - no false cycles', async (t) => {
       built++;
       await tick();
       return { n: 1 };
-    }, { Lazy: true });
-    ioc.RegisterFactory($Repo1, async (c) => (await c.Resolve($Db)).n + 1, { Lazy: true });
-    ioc.RegisterFactory($Repo2, async (c) => (await c.Resolve($Db)).n + 2, { Lazy: true });
+    });
+    ioc.RegisterFactory($Repo1, async (c) => (await c.Resolve($Db)).n + 1);
+    ioc.RegisterFactory($Repo2, async (c) => (await c.Resolve($Db)).n + 2);
 
     assertEquals(
       await within(Promise.all([ioc.Resolve($Repo1), ioc.Resolve($Repo2), ioc.Resolve($Db)])),
@@ -163,12 +255,12 @@ Deno.test('Concurrency - no false cycles', async (t) => {
       await tick();
       await tick();
       return 1;
-    }, { Lazy: true });
-    ioc.RegisterFactory($Mid, async (c) => (await c.Resolve($Slow)) + 1, { Lazy: true });
+    });
+    ioc.RegisterFactory($Mid, async (c) => (await c.Resolve($Slow)) + 1);
     ioc.RegisterFactory($Top, async (c) => {
       const [mid, slow] = await Promise.all([c.Resolve($Mid), c.Resolve($Slow)]);
       return mid + slow;
-    }, { Lazy: true });
+    });
 
     assertEquals(await within(Promise.all([ioc.Resolve($Mid), ioc.Resolve($Top)])), [2, 3]);
   });
@@ -187,7 +279,7 @@ Deno.test('Concurrency - no false cycles', async (t) => {
           c.Resolve(keys[Math.floor(i / 2)]),
         ]);
         return deps[0] + 1;
-      }, { Lazy: true });
+      });
     });
 
     await within(ioc.Activate(), 5000);
@@ -205,7 +297,7 @@ Deno.test('Concurrency - no false cycles', async (t) => {
     ioc.RegisterFactory(Ctx, async () => {
       await tick();
       return new Ctx();
-    }, { Lifetime: 'scoped', Lazy: true });
+    }, { Lifetime: 'scoped' });
 
     await using scope = ioc.CreateScope();
 
@@ -234,7 +326,7 @@ Deno.test('Concurrency - a failed build starts nothing new', async (t) => {
         await tick();
         const values = await Promise.all(deps[i].map((d) => c.Resolve(keys[d])));
         return values.reduce((a, b) => a + b, 1);
-      }, { Lazy: true });
+      });
     });
 
     await assertRejects(() => within(ioc.Activate()), AggregateError);
@@ -256,8 +348,8 @@ Deno.test('Concurrency - a failed build starts nothing new', async (t) => {
       .RegisterFactory($Flaky, () => {
         if (fail) throw new Error('down');
         return 1;
-      }, { Lazy: true })
-      .RegisterFactory($User, async (c) => (await c.Resolve($Flaky)) + 1, { Lazy: true });
+      })
+      .RegisterFactory($User, async (c) => (await c.Resolve($Flaky)) + 1);
 
     await assertRejects(() => ioc.Resolve($User), Error, 'down');
 
@@ -313,7 +405,7 @@ Deno.test('Concurrency - randomized graphs never hang', async (t) => {
           if (wait) await new Promise((r) => setTimeout(r, wait));
           const values = await Promise.all(deps.map((d) => c.Resolve(keys[d])));
           return values.reduce((a, b) => a + b, 1);
-        }, { Lazy: true });
+        });
       });
 
       const entries = keys.filter(() => random() < 0.6);

@@ -52,7 +52,7 @@ export type IoCDependencyValues<TDeps extends readonly unknown[]> = {
  * }
  *
  * const ioc = new IoCContainer()
- *   .RegisterFactory($Mailer, () => ({ send: (to) => `sent to ${to}` }), { Lazy: true })
+ *   .RegisterFactory($Mailer, () => ({ send: (to) => `sent to ${to}` }))
  *   .RegisterClass(Signup, { Deps: [IoCLazy($Mailer)] });
  *
  * console.log(await (await ioc.Resolve(Signup)).welcome('ada@example.com'));

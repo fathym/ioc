@@ -1,6 +1,6 @@
 // Async functions without await are deliberate here: they produce promise-returning factories.
 // deno-lint-ignore-file require-await
-import { IoCServiceNotFoundError } from '../../src/ioc/errors.ts';
+import { IoCSealedError, IoCServiceNotFoundError } from '../../src/ioc/errors.ts';
 import { IoCContainer } from '../../src/ioc/ioc.ts';
 import { IoCToken } from '../../src/ioc/IoCToken.ts';
 import {
@@ -29,7 +29,7 @@ Deno.test('Decorate', async (t) => {
   await t.step('wraps the current registration', async () => {
     const ioc = new IoCContainer();
 
-    ioc.Register($Greeter, () => ({ greet: (n) => `hello ${n}` }));
+    ioc.RegisterFactory($Greeter, () => ({ greet: (n) => `hello ${n}` }));
     ioc.Decorate($Greeter, shout);
 
     assertEquals((await ioc.Resolve($Greeter)).greet('ada'), 'HELLO ADA');
@@ -38,7 +38,7 @@ Deno.test('Decorate', async (t) => {
   await t.step('decorators compose in registration order', async () => {
     const ioc = new IoCContainer();
 
-    ioc.Register($Greeter, () => ({ greet: (n) => `hi ${n}` }));
+    ioc.RegisterFactory($Greeter, () => ({ greet: (n) => `hi ${n}` }));
     ioc.Decorate($Greeter, shout);
     ioc.Decorate($Greeter, exclaim);
 
@@ -50,7 +50,7 @@ Deno.test('Decorate', async (t) => {
     let inner = 0;
     let outer = 0;
 
-    ioc.Register($Greeter, () => (inner++, { greet: (n) => n }), { Lazy: true });
+    ioc.RegisterFactory($Greeter, () => (inner++, { greet: (n) => n }));
     ioc.Decorate($Greeter, (g) => (outer++, shout(g)));
 
     assertStrictEquals(await ioc.Resolve($Greeter), await ioc.Resolve($Greeter));
@@ -61,7 +61,7 @@ Deno.test('Decorate', async (t) => {
     const ioc = new IoCContainer();
     let inner = 0;
 
-    ioc.Register($Greeter, () => (inner++, { greet: (n) => n }), { Lifetime: 'transient' });
+    ioc.RegisterFactory($Greeter, () => (inner++, { greet: (n) => n }), { Lifetime: 'transient' });
     ioc.Decorate($Greeter, shout);
 
     assert((await ioc.Resolve($Greeter)) !== (await ioc.Resolve($Greeter)));
@@ -71,7 +71,7 @@ Deno.test('Decorate', async (t) => {
   await t.step('async inner and async decorator', async () => {
     const ioc = new IoCContainer();
 
-    ioc.Register($Greeter, async () => ({ greet: (n) => `async ${n}` }));
+    ioc.RegisterFactory($Greeter, async () => ({ greet: (n) => `async ${n}` }));
     ioc.Decorate($Greeter, async (g) => {
       await Promise.resolve();
       return exclaim(g);
@@ -85,7 +85,7 @@ Deno.test('Decorate', async (t) => {
     const $Prefix = IoCToken<string>('Prefix');
 
     ioc.RegisterValue($Prefix, '>> ');
-    ioc.Register($Greeter, () => ({ greet: (n) => n }));
+    ioc.RegisterFactory($Greeter, () => ({ greet: (n) => n }));
     ioc.Decorate($Greeter, async (g, c) => {
       const prefix = await c.Resolve($Prefix);
       return { greet: (n) => prefix + g.greet(n) };
@@ -104,7 +104,7 @@ Deno.test('Decorate', async (t) => {
     const ioc = new IoCContainer();
     const calls: string[] = [];
 
-    ioc.Register(Repo);
+    ioc.RegisterClass(Repo);
     ioc.Decorate(Repo, (inner) => {
       const proxy = Object.create(inner);
       proxy.find = () => (calls.push('find'), inner.find());
@@ -118,8 +118,8 @@ Deno.test('Decorate', async (t) => {
   await t.step('named registrations are decorated independently', async () => {
     const ioc = new IoCContainer();
 
-    ioc.Register($Greeter, () => ({ greet: (n) => `a ${n}` }), { Name: 'a' });
-    ioc.Register($Greeter, () => ({ greet: (n) => `b ${n}` }), { Name: 'b' });
+    ioc.RegisterFactory($Greeter, () => ({ greet: (n) => `a ${n}` }), { Name: 'a' });
+    ioc.RegisterFactory($Greeter, () => ({ greet: (n) => `b ${n}` }), { Name: 'b' });
     ioc.Decorate($Greeter, shout, { Name: 'a' });
 
     assertEquals((await ioc.Resolve($Greeter, 'a')).greet('x'), 'A X');
@@ -129,7 +129,7 @@ Deno.test('Decorate', async (t) => {
   await t.step('the returned function restores the previous registration', async () => {
     const ioc = new IoCContainer();
 
-    ioc.Register($Greeter, () => ({ greet: (n) => n }));
+    ioc.RegisterFactory($Greeter, () => ({ greet: (n) => n }));
 
     const undo = ioc.Decorate($Greeter, shout);
 
@@ -143,7 +143,7 @@ Deno.test('Decorate', async (t) => {
   await t.step('decorating in a scope affects only the scope', async () => {
     const root = new IoCContainer();
 
-    root.Register($Greeter, () => ({ greet: (n) => n }));
+    root.RegisterFactory($Greeter, () => ({ greet: (n) => n }));
 
     const scope = root.CreateScope();
     const undo = scope.Decorate($Greeter, shout);
@@ -159,7 +159,7 @@ Deno.test('Decorate', async (t) => {
   await t.step('decorated scoped services are per scope', async () => {
     const root = new IoCContainer();
 
-    root.Register($Greeter, () => ({ greet: (n) => n }), { Lifetime: 'scoped', Lazy: true });
+    root.RegisterFactory($Greeter, () => ({ greet: (n) => n }), { Lifetime: 'scoped' });
     root.Decorate($Greeter, shout);
 
     const a = root.CreateScope();
@@ -179,7 +179,7 @@ Deno.test('Decorate', async (t) => {
     const ioc = new IoCContainer();
     let fail = true;
 
-    ioc.Register($Greeter, () => ({ greet: (n) => n }));
+    ioc.RegisterFactory($Greeter, () => ({ greet: (n) => n }));
     ioc.Decorate($Greeter, (g) => {
       if (fail) throw new Error('decorator failed');
       return g;
@@ -190,5 +190,56 @@ Deno.test('Decorate', async (t) => {
     fail = false;
 
     assertEquals((await ioc.Resolve($Greeter)).greet('ok'), 'ok');
+  });
+
+  await t.step('a module registration can only be decorated by that module', async () => {
+    const Greetings = {
+      Name: 'Greetings',
+      Register: (ioc: IoCContainer) => {
+        ioc.RegisterFactory($Greeter, () => ({ greet: (n) => `hey ${n}` }));
+        ioc.Decorate($Greeter, exclaim);
+      },
+    };
+
+    const ioc = new IoCContainer().Use(Greetings);
+
+    assertEquals((await ioc.Resolve($Greeter)).greet('m'), 'hey m!');
+
+    const err = assertThrows(() => ioc.Decorate($Greeter, shout), IoCSealedError);
+
+    assertEquals([err.Module, err.Action], ['Greetings', 'decorate']);
+
+    // A scope may decorate it for itself: the parent's registration is untouched.
+    const scope = ioc.CreateScope();
+
+    scope.Decorate($Greeter, shout);
+
+    assertEquals((await scope.Resolve($Greeter)).greet('m'), 'HEY M!');
+    assertEquals((await ioc.Resolve($Greeter)).greet('m'), 'hey m!');
+  });
+
+  await t.step('defaults and testing containers can be decorated from outside', async () => {
+    const Defaults = {
+      Name: 'Defaults',
+      Register: (ioc: IoCContainer) =>
+        ioc.RegisterFactory($Greeter, () => ({ greet: (n) => n }), { Default: true }),
+    };
+
+    const Sealed = {
+      Name: 'Sealed',
+      Register: (ioc: IoCContainer) => ioc.RegisterFactory($Greeter, () => ({ greet: (n) => n })),
+    };
+
+    const app = new IoCContainer().Use(Defaults);
+
+    app.Decorate($Greeter, shout);
+
+    assertEquals((await app.Resolve($Greeter)).greet('d'), 'D');
+
+    const testing = new IoCContainer({ Testing: true }).Use(Sealed);
+
+    testing.Decorate($Greeter, exclaim);
+
+    assertEquals((await testing.Resolve($Greeter)).greet('t'), 't!');
   });
 });

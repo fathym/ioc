@@ -75,29 +75,36 @@ Deno.test('RegisterClass with Deps', async (t) => {
     assertStrictEquals(a.repo.config, b.repo.config);
   });
 
-  await t.step('registration order does not matter for lazy registrations', async () => {
-    const ioc = new IoCContainer();
+  await t.step(
+    'registration order does not matter (nothing is built at registration)',
+    async () => {
+      const ioc = new IoCContainer();
 
-    ioc.RegisterClass(Service, { Deps: [Repo, $Url], Lazy: true });
-    ioc.RegisterClass(Repo, { Deps: [Config, $Logger], Lazy: true });
-    ioc.RegisterClass(Config, { Lazy: true });
-    ioc.RegisterValue($Logger, { log: () => {} });
-    ioc.RegisterValue($Url, 'late');
+      ioc.RegisterClass(Service, { Deps: [Repo, $Url] });
+      ioc.RegisterClass(Repo, { Deps: [Config, $Logger] });
+      ioc.RegisterClass(Config);
+      ioc.RegisterValue($Logger, { log: () => {} });
+      ioc.RegisterValue($Url, 'late');
 
-    assertEquals((await ioc.Resolve(Service)).replicaUrl, 'late');
-  });
+      assertEquals((await ioc.Resolve(Service)).replicaUrl, 'late');
+    },
+  );
 
   await t.step(
-    'an eager registration whose deps arrive later succeeds on a later resolve',
+    'a registration whose deps arrive later is built by Activate() once they are there',
     async () => {
       const ioc = new IoCContainer();
 
       ioc.RegisterClass(Repo, { Deps: [Config, $Logger] });
+
+      await assertRejects(() => ioc.Activate(), AggregateError);
+
       ioc.RegisterClass(Config);
       ioc.RegisterValue($Logger, { log: () => {} });
 
-      await new Promise((r) => setTimeout(r, 1));
+      await ioc.Activate();
 
+      assertEquals(ioc.Describe().Services.find((s) => s.Label === 'Repo')?.State, 'ready');
       assertInstanceOf(await ioc.Resolve(Repo), Repo);
     },
   );
@@ -113,7 +120,7 @@ Deno.test('RegisterClass with Deps', async (t) => {
 
     const root = new IoCContainer();
 
-    root.RegisterClass(RequestId, { Lifetime: 'scoped', Lazy: true });
+    root.RegisterClass(RequestId, { Lifetime: 'scoped' });
     root.RegisterClass(Handler, { Deps: [RequestId], Lifetime: 'transient' });
 
     const scope = root.CreateScope();
@@ -137,13 +144,14 @@ Deno.test('RegisterClass with Deps', async (t) => {
   await t.step('a missing dependency rejects with the resolution path', async () => {
     const ioc = new IoCContainer();
 
-    ioc.RegisterClass(Repo, { Deps: [Config, $Logger], Lazy: true });
+    ioc.RegisterClass(Repo, { Deps: [Config, $Logger] });
     ioc.RegisterClass(Config);
 
     const err = await assertRejects(() => ioc.Resolve(Repo), IoCServiceNotFoundError);
 
     assertEquals(err.Path, ['Repo']);
-    assertEquals(err.Symbol, $Logger);
+    assertEquals(err.Key, 'DepsLogger');
+    assert(err.message.startsWith('No service is registered for DepsLogger.'), err.message);
   });
 
   await t.step('declared cycles throw instead of hanging', async () => {
@@ -157,8 +165,8 @@ Deno.test('RegisterClass with Deps', async (t) => {
 
     const ioc = new IoCContainer();
 
-    ioc.RegisterClass(A, { Deps: [B], Lazy: true });
-    ioc.RegisterClass(B, { Deps: [A], Lazy: true });
+    ioc.RegisterClass(A, { Deps: [B] });
+    ioc.RegisterClass(B, { Deps: [A] });
 
     const err = await withinTimeout(
       assertRejects(() => ioc.Resolve(A), IoCCircularDependencyError),

@@ -2,14 +2,31 @@
 // and `Deps` may only name keys already in it. The compile-time checks below are verified by the
 // type checker when the suite runs (a regression is a type error or an unused @ts-expect-error);
 // the runtime steps check that the chain is the same container and behaves like statements.
+import {
+  IoCDuplicateRegistrationError,
+  IoCScopeRequiredError,
+  IoCServiceNotFoundError,
+} from '../../src/ioc/errors.ts';
 import { IoCContainer, type IoCNoKeys, type IoCRegistered } from '../../src/ioc/ioc.ts';
 import { IoCToken } from '../../src/ioc/IoCToken.ts';
-import { assert, assertEquals, assertRejects, assertStrictEquals } from '../test.deps.ts';
+import {
+  assert,
+  assertEquals,
+  assertRejects,
+  assertStrictEquals,
+  assertThrows,
+} from '../test.deps.ts';
 
 type Equals<A, B> = (<X>() => X extends A ? 1 : 2) extends <X>() => X extends B ? 1 : 2 ? true
   : false;
 
 function expectType<T extends true>(_: T): void {}
+
+/**
+ * Type-checks `fn` without running it: for chains that must not compile, which at runtime would
+ * register a key twice or pass a key that isn't a token or class.
+ */
+function typeOnly(_fn: () => unknown): void {}
 
 interface Db {
   query(sql: string): string;
@@ -80,33 +97,50 @@ Deno.test('Typed containers - compile-time rules', async (t) => {
 
     ioc.RegisterClass(UrlUser, { Deps: [$Url] });
 
-    // @ts-expect-error $Name is not registered (its id is part of its type)
-    ioc.RegisterClass(UrlUser, { Deps: [$Name] });
+    typeOnly(() => {
+      // @ts-expect-error $Name is not registered (its id is part of its type)
+      ioc.RegisterClass(UrlUser, { Deps: [$Name] });
+    });
   });
 
   await t.step('tokens without an id in their type are told apart by type only', () => {
     const ioc = new IoCContainer().Typed().RegisterValue($LooseUrl, 'kv://local');
 
-    // Accepted: both are `IoCToken<string, string>`. Give tokens of plain types an id type.
+    // Accepted: both are `IoCToken<string, string>`. Give tokens of plain types an id type. At
+    // runtime the two are different keys, so Validate() reports the other one as missing.
     ioc.RegisterClass(UrlUser, { Deps: [IoCToken<string>('SomethingElse')] });
+
+    assertEquals(ioc.Validate({ Throw: false }).map((i) => i.Kind), ['missing']);
   });
 
-  await t.step('plain symbols are never accepted as Deps', () => {
-    const ioc = new IoCContainer().Typed().RegisterValue($Url, 'kv://local');
+  await t.step('plain symbols and strings are never accepted as keys', () => {
+    typeOnly(() => {
+      const ioc = new IoCContainer().Typed().RegisterValue($Url, 'kv://local');
 
-    // @ts-expect-error a plain symbol carries no type
-    ioc.RegisterClass(UrlUser, { Deps: [Symbol.for('TypedUrl')] });
+      // @ts-expect-error a plain symbol is not a key
+      ioc.RegisterClass(UrlUser, { Deps: [Symbol.for('TypedUrl')] });
 
-    // @ts-expect-error not on an untyped container either
-    new IoCContainer().RegisterClass(UrlUser, { Deps: [Symbol.for('TypedUrl')] });
+      // @ts-expect-error not on an untyped container either
+      new IoCContainer().RegisterClass(UrlUser, { Deps: [Symbol.for('TypedUrl')] });
+
+      // @ts-expect-error nor a string
+      new IoCContainer().RegisterClass(UrlUser, { Deps: ['TypedUrl'] });
+    });
   });
 
-  await t.step('registering by plain symbol adds nothing to the registry', () => {
-    new IoCContainer()
-      .Typed()
-      .RegisterValue(Symbol.for('TypedUrl'), 'kv://local')
-      // @ts-expect-error the symbol registration is untyped
-      .RegisterClass(UrlUser, { Deps: [$Url] });
+  await t.step('registering by plain symbol or string does not compile', () => {
+    typeOnly(() => {
+      new IoCContainer()
+        .Typed()
+        // @ts-expect-error a plain symbol is not a key
+        .RegisterValue(Symbol.for('TypedUrl'), 'kv://local');
+
+      // @ts-expect-error a string is not a key
+      new IoCContainer().Typed().RegisterFactory('TypedUrl', () => 'kv://local');
+
+      // @ts-expect-error nor in Expect
+      new IoCContainer().Typed().Expect(Symbol.for('TypedUrl'));
+    });
   });
 
   await t.step('named dependencies need that name registered', () => {
@@ -115,28 +149,32 @@ Deno.test('Typed containers - compile-time rules', async (t) => {
       .RegisterValue($Url, 'kv://primary')
       .RegisterValue($Url, 'kv://replica', { Name: 'replica' });
 
-    ioc.RegisterClass(UrlUser, { Deps: [[$Url, 'replica']] });
+    ioc.RegisterClass(UrlUser, { Deps: [[$Url, 'replica']], Name: 'replica' });
     ioc.RegisterClass(UrlUser, { Deps: [$Url] });
-
-    // @ts-expect-error no registration named "backup"
-    ioc.RegisterClass(UrlUser, { Deps: [[$Url, 'backup']] });
 
     const namedOnly = new IoCContainer()
       .Typed()
       .RegisterValue($Url, 'kv://replica', { Name: 'replica' });
 
-    // @ts-expect-error only the "replica" name is registered, not the default
-    namedOnly.RegisterClass(UrlUser, { Deps: [$Url] });
+    typeOnly(() => {
+      // @ts-expect-error no registration named "backup"
+      ioc.RegisterClass(UrlUser, { Deps: [[$Url, 'backup']], Name: 'backup' });
+
+      // @ts-expect-error only the "replica" name is registered, not the default
+      namedOnly.RegisterClass(UrlUser, { Deps: [$Url] });
+    });
   });
 
   await t.step('the constructor parameter types are still checked', () => {
     const ioc = new IoCContainer().Typed().RegisterClass(Config).RegisterValue($Db, db);
 
-    // @ts-expect-error wrong order
-    ioc.RegisterClass(Repo, { Deps: [$Db, Config] });
+    typeOnly(() => {
+      // @ts-expect-error wrong order
+      ioc.RegisterClass(Repo, { Deps: [$Db, Config] });
 
-    // @ts-expect-error missing a dependency
-    ioc.RegisterClass(Repo, { Deps: [Config] });
+      // @ts-expect-error missing a dependency
+      ioc.RegisterClass(Repo, { Deps: [Config] });
+    });
   });
 
   await t.step('abstract class keys registered with a factory', () => {
@@ -166,8 +204,10 @@ Deno.test('Typed containers - compile-time rules', async (t) => {
       // @ts-expect-error PgDb was registered under $Db, not under its own class
       ioc.RegisterClass(UsesPg, { Deps: [PgDb] });
 
-      // @ts-expect-error NotADb does not implement Db
-      new IoCContainer().RegisterClass(NotADb, { Type: $Db });
+      typeOnly(() => {
+        // @ts-expect-error NotADb does not implement Db
+        new IoCContainer().RegisterClass(NotADb, { Type: $Db });
+      });
     },
   );
 
@@ -191,8 +231,10 @@ Deno.test('Typed containers - compile-time rules', async (t) => {
     ioc.RegisterClass(Repo, { Deps: [Config, $Db] });
     ioc.RegisterClass(UrlUser, { Deps: [$Name] });
 
-    // @ts-expect-error the parameter types are still checked
-    ioc.RegisterClass(Repo, { Deps: [$Db, Config] });
+    typeOnly(() => {
+      // @ts-expect-error the parameter types are still checked
+      ioc.RegisterClass(Repo, { Deps: [$Db, Config] });
+    });
   });
 
   await t.step('generic modules can require keys from earlier modules', () => {
@@ -224,6 +266,7 @@ Deno.test('Typed containers - compile-time rules', async (t) => {
       true,
     );
     expectType<Equals<IoCRegistered<symbol>, never>>(true);
+    expectType<Equals<IoCRegistered<string>, never>>(true);
 
     assert(plain);
   });
@@ -244,11 +287,17 @@ Deno.test('Typed containers - compile-time rules', async (t) => {
 
     const url = await ioc.Resolve($Url);
     const found = await ioc.Resolve($Db);
-    const legacy = await ioc.Resolve<number>(Symbol.for('TypedNumber')).catch(() => 0);
 
     expectType<Equals<typeof url, string>>(true);
     expectType<Equals<typeof found, Db>>(true);
-    expectType<Equals<typeof legacy, number>>(true);
+
+    typeOnly(async () => {
+      // @ts-expect-error explicit generics and symbol keys are gone
+      await ioc.Resolve<number>(Symbol.for('TypedNumber'));
+
+      // @ts-expect-error a symbol is not a key
+      await ioc.Resolve(Symbol.for('TypedNumber'));
+    });
   });
 });
 
@@ -267,8 +316,8 @@ Deno.test('Typed containers - runtime', async (t) => {
     const ioc = new IoCContainer()
       .Typed()
       .RegisterClass(Config)
-      .RegisterClass(PgDb, { Type: $Db, Lazy: true })
-      .RegisterClass(Repo, { Deps: [Config, $Db], Lazy: true });
+      .RegisterClass(PgDb, { Type: $Db })
+      .RegisterClass(Repo, { Deps: [Config, $Db] });
 
     const repo = await ioc.Resolve(Repo);
 
@@ -281,17 +330,13 @@ Deno.test('Typed containers - runtime', async (t) => {
   await t.step('Expect counts as provided for Validate, but registers nothing', async () => {
     const ioc = new IoCContainer().Typed().Expect($Url).RegisterClass(UrlUser, {
       Deps: [$Url],
-      Lazy: true,
     });
 
     assertEquals(ioc.Validate(), []);
 
-    const err = await assertRejects(() => ioc.Resolve(UrlUser));
+    const err = await assertRejects(() => ioc.Resolve(UrlUser), IoCServiceNotFoundError);
 
-    assert(
-      (err as Error).message.includes('It is declared with Expect()'),
-      (err as Error).message,
-    );
+    assert(err.message.includes('It is declared with Expect()'), err.message);
   });
 
   await t.step('a scope of a typed container supplies an expected key', async () => {
@@ -304,9 +349,9 @@ Deno.test('Typed containers - runtime', async (t) => {
     const ioc = new IoCContainer()
       .Typed()
       .Expect($Request)
-      .RegisterClass(Handler, { Deps: [$Request], Lifetime: 'scoped', Lazy: true });
+      .RegisterClass(Handler, { Deps: [$Request], Lifetime: 'scoped' });
 
-    await assertRejects(() => ioc.Resolve(Handler));
+    await assertRejects(() => ioc.Resolve(Handler), IoCScopeRequiredError);
 
     await using scope = ioc.CreateScope();
 
@@ -315,14 +360,21 @@ Deno.test('Typed containers - runtime', async (t) => {
     assertEquals((await scope.Resolve(Handler)).req.url, 'http://localhost/typed');
   });
 
-  await t.step('a later registration in a chain replaces an earlier one', async () => {
+  await t.step('a later registration in a chain replaces an earlier one with Replace', async () => {
     const ioc = new IoCContainer()
       .Typed()
       .RegisterValue($Url, 'first')
-      .RegisterValue($Url, 'second');
+      .RegisterValue($Url, 'second', { Replace: true });
 
     assertEquals(await ioc.Resolve($Url), 'second');
     assert(ioc.Unregister($Url));
     assertEquals(await ioc.TryResolve($Url), undefined);
+  });
+
+  await t.step('a chain is strict: registering a key twice without Replace throws', () => {
+    assertThrows(
+      () => new IoCContainer().Typed().RegisterValue($Url, 'first').RegisterValue($Url, 'second'),
+      IoCDuplicateRegistrationError,
+    );
   });
 });

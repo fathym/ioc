@@ -1,24 +1,8 @@
 import { IoCValidationError } from '../../src/ioc/errors.ts';
 import { IoCContainer } from '../../src/ioc/ioc.ts';
-import { assertEquals, assertStrictEquals, assertThrows } from '../test.deps.ts';
+import { assert, assertEquals, assertThrows } from '../test.deps.ts';
 
 Deno.test('Edge cases', async (t) => {
-  await t.step(
-    'a stored thunk called directly (as an older container would) resolves',
-    async () => {
-      const ioc = new IoCContainer();
-
-      class Svc {}
-
-      ioc.Register(Svc);
-
-      const thunk = ioc.ResolveDirect(Svc) as unknown as () => unknown;
-
-      assertEquals(thunk.name, '');
-      assertStrictEquals(await thunk(), await ioc.Resolve(Svc));
-    },
-  );
-
   await t.step('RegisterClass rejects non-function values', () => {
     const ioc = new IoCContainer();
     const untyped = ioc as unknown as { RegisterClass(value: unknown): unknown };
@@ -26,14 +10,23 @@ Deno.test('Edge cases', async (t) => {
     assertThrows(() => untyped.RegisterClass({}), Error, 'expects a class');
   });
 
-  await t.step('RegisterClass of an anonymous class needs a Type', () => {
+  await t.step('an anonymous class is its own key', async () => {
     const ioc = new IoCContainer();
     const Anon = (() => class {})();
+    const Other = (() => class {})();
 
-    assertThrows(() => ioc.RegisterClass(Anon), Error, 'The Type was missing');
+    ioc.RegisterClass(Anon);
+    ioc.RegisterClass(Other);
+
+    assert((await ioc.Resolve(Anon)) instanceof Anon);
+    assert(!((await ioc.Resolve(Other)) instanceof Anon));
+    assertEquals(ioc.Describe().Services.map((s) => s.Label), [
+      '(anonymous class)',
+      '(anonymous class)',
+    ]);
   });
 
-  await t.step('Validate sees shadowed same-named class registrations', () => {
+  await t.step('Validate sees both same-named classes (they are different keys)', () => {
     const First = (() =>
       class Svc {
         constructor(public dep: unknown) {}
@@ -42,11 +35,13 @@ Deno.test('Edge cases', async (t) => {
 
     const ioc = new IoCContainer();
 
-    ioc.Register(First);
-    ioc.Register(Second);
+    ioc.RegisterClass(First);
+    ioc.RegisterClass(Second);
 
     const err = assertThrows(() => ioc.Validate(), IoCValidationError);
 
     assertEquals(err.Problems.length, 1);
+    assertEquals(err.Issues[0].Kind, 'arguments');
+    assertEquals(ioc.Describe().Services.filter((s) => s.Label === 'Svc').length, 2);
   });
 });
