@@ -193,6 +193,12 @@ try {
 - Add every module before `Start()`; `Use()` after it throws. To load plugins later, give them a
   scope: `const scope = ioc.CreateScope().Use(plugin); await scope.Start();`.
 - `Start()` is idempotent: concurrent and repeated calls share one start.
+- A failed `Start()` of any kind (validation, a build, an `OnStart`) can be called again once the
+  cause is fixed.
+- `Dispose()` during `Start()` stops the module that was starting as well, and `Start()` throws
+  `IoCContainerDisposedError`.
+- With `PendingTimeoutMs`, a build or `OnStart` that never settles fails `Start()` instead of
+  hanging it.
 - Without `Start()`, `Dispose()` runs no `OnStop`.
 - `OnStop` errors are collected into the `Dispose()` error; the rest of the shutdown still runs.
 

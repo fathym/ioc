@@ -104,9 +104,9 @@ export interface IoCContainerOptions {
   AsyncContext?: IoCAsyncContext;
 
   /**
-   * Fails a `Resolve` that is still pending after this many milliseconds with an
-   * `IoCResolveTimeoutError` that lists what it is waiting on, instead of waiting forever (a
-   * hung factory, or a cycle through a captured container). Off by default.
+   * Fails a `Resolve`, a startup build or a module's `OnStart` that is still pending after this
+   * many milliseconds with an `IoCResolveTimeoutError` that lists what it is waiting on, instead
+   * of waiting forever (a hung factory, or a cycle through a captured container). Off by default.
    */
   PendingTimeoutMs?: number;
 }
@@ -919,7 +919,7 @@ export class IoCContainer<TKeys = any> {
 
         work.push(
           Promise.resolve()
-            .then(() => self.realize(entry, undefined))
+            .then(() => self.timed(self.realize(entry, undefined), reg.label, reg))
             .then(noop, (error) => {
               failures.push({ label: reg.label, error });
             }),
@@ -2146,7 +2146,18 @@ export class IoCContainer<TKeys = any> {
 
     self.assertNotDisposed();
 
-    return self.starting ??= self.startNow(options);
+    if (!self.starting) {
+      const starting = self.startNow(options);
+
+      self.starting = starting;
+
+      // A failed start can be retried once its cause is fixed.
+      starting.catch(() => {
+        if (self.starting === starting) self.starting = undefined;
+      });
+    }
+
+    return self.starting;
   }
 
   //#endregion
@@ -2164,13 +2175,20 @@ export class IoCContainer<TKeys = any> {
     key: AnyFunction | symbol,
     name: string | undefined,
   ): unknown {
+    const reg = registrationOf(entry);
+
+    return this.timed(value, reg?.label ?? labelFor(keySymbol(key), name ?? DEFAULT_NAME), reg);
+  }
+
+  /**
+   * Applies `PendingTimeoutMs` to a pending value (a resolve, a startup build, an `OnStart`).
+   *
+   * @ignore
+   */
+  protected timed(value: unknown, label: string, reg?: IoCRegistration): unknown {
     const ms = this.self().options?.PendingTimeoutMs;
 
     if (!ms || !(value instanceof Promise)) return value;
-
-    const reg = registrationOf(entry);
-
-    const label = reg?.label ?? labelFor(keySymbol(key), name ?? DEFAULT_NAME);
 
     let timer: unknown;
 
@@ -2189,25 +2207,36 @@ export class IoCContainer<TKeys = any> {
    * @ignore
    */
   protected async startNow(options?: { Validate?: boolean }): Promise<void> {
-    try {
-      if (options?.Validate !== false) this.Validate();
+    if (options?.Validate !== false) this.Validate();
 
-      await this.Activate();
+    await this.Activate();
 
-      for (const module of this.modules) {
-        if (this.disposed || this.disposing) return;
+    for (const module of this.modules) {
+      if (this.disposed || this.disposing) throw new IoCContainerDisposedError();
 
+      try {
+        await this.timed(module.OnStart?.(this), `${module.Name} OnStart`);
+      } catch (err) {
+        throw new IoCStartError(module.Name, err, await this.stopModules());
+      }
+
+      // Disposed while this module was starting: its Dispose() already stopped the others, so
+      // stop this one too rather than leaving it running against disposed services.
+      if (this.disposed || this.disposing) {
         try {
-          await module.OnStart?.(this);
+          await module.OnStop?.(this);
         } catch (err) {
-          throw new IoCStartError(module.Name, err, await this.stopModules());
+          this.diagnose(
+            'IOC_LATE_DISPOSE_FAILED',
+            `Module '${module.Name}' finished starting after Dispose() and failed to stop: ${err}`,
+            module.Name,
+          );
         }
 
-        this.started.push(module);
+        throw new IoCContainerDisposedError();
       }
-    } catch (err) {
-      this.starting = undefined;
-      throw err;
+
+      this.started.push(module);
     }
   }
 

@@ -230,7 +230,8 @@ Resolving Report did not finish within 30000ms; still pending: Report, Db. A fac
 ```
 
 `IoCResolveTimeoutError` (`IOC_RESOLVE_TIMEOUT`), only with the `PendingTimeoutMs` option. A
-`Resolve` was still waiting after the timeout. `Waiting` lists the pending builds it could see.
+`Resolve`, a build during `Start()`/`Activate()`, or a module's `OnStart` was still waiting after
+the timeout (from `Start()`, it arrives inside `IoCActivationError` or as `IoCStartError.cause`). `Waiting` lists the pending builds it could see.
 Common causes:
 
 - **A factory that never settles,** for example a connection that waits forever. The build is

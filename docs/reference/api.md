@@ -49,13 +49,13 @@ new IoCContainer(options?: IoCContainerOptions)
 With no options the container behaves exactly like earlier versions. Scopes inherit their
 parent's options.
 
-| Option             | Default | Meaning                                                                                                                                                      |
-| ------------------ | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `Strict`           | `false` | Duplicate registrations, `scoped` services resolved outside a scope, and class/token key collisions throw; a class never resolves a different same-named one |
-| `LazyByDefault`    | `false` | Singletons and scoped services are built on first resolve unless a registration says `Lazy: false`                                                           |
-| `Diagnostics`      | —       | `(d: IoCDiagnostic) => void`: notices about allowed-but-suspicious things (`IOC_REGISTRATION_REPLACED`, `IOC_CLASS_NAME_FALLBACK`, …)                        |
-| `AsyncContext`     | —       | An `AsyncLocalStorage` that lets cycle detection follow resolves made through a captured container after an `await`                                          |
-| `PendingTimeoutMs` | —       | A `Resolve` still pending after this long fails with [`IoCResolveTimeoutError`](./errors.md#resolving--did-not-finish-within-ms)                             |
+| Option             | Default | Meaning                                                                                                                                                                          |
+| ------------------ | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Strict`           | `false` | Duplicate registrations, `scoped` services resolved outside a scope, and class/token key collisions throw; a class never resolves a different same-named one                     |
+| `LazyByDefault`    | `false` | Singletons and scoped services are built on first resolve unless a registration says `Lazy: false`                                                                               |
+| `Diagnostics`      | —       | `(d: IoCDiagnostic) => void`: notices about allowed-but-suspicious things (`IOC_REGISTRATION_REPLACED`, `IOC_CLASS_NAME_FALLBACK`, …)                                            |
+| `AsyncContext`     | —       | An `AsyncLocalStorage` that lets cycle detection follow resolves made through a captured container after an `await`                                                              |
+| `PendingTimeoutMs` | —       | A `Resolve`, a `Start()`/`Activate()` build or an `OnStart` still pending after this long fails with [`IoCResolveTimeoutError`](./errors.md#resolving--did-not-finish-within-ms) |
 
 ```ts
 import { AsyncLocalStorage } from 'node:async_hooks';
@@ -698,7 +698,10 @@ the order the modules were added. Repeat and concurrent calls share one start.
 
 **Throws:** whatever `Validate()` or `Activate()` throws, or
 [`IoCStartError`](./errors.md#module--failed-to-start-) when an `OnStart` fails. The modules
-already started are stopped first, and `Start()` can be called again.
+already started are stopped first. After any failure, `Start()` can be called again once the
+cause is fixed. If `Dispose()` is called while `Start()` runs, the module that was starting is
+stopped too, and `Start()` throws
+[`IoCContainerDisposedError`](./errors.md#the-ioc-container-has-been-disposed).
 
 ```ts
 import { IoCContainer } from '@fathym/ioc';

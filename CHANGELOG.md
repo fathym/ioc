@@ -131,6 +131,11 @@ lifecycle, and the full documentation set. Existing code keeps working, and cont
 
 ### Fixed
 
+- **`Start()` edge cases:** a `Start()` that failed validation can now be retried once the graph is
+  fixed (before, it failed forever). `Dispose()` during `Start()` now stops the module that was
+  starting and makes `Start()` throw `IoCContainerDisposedError` (before, `Start()` succeeded and
+  that module's `OnStop` never ran). `PendingTimeoutMs` now also bounds startup builds and each
+  `OnStart`.
 - `Register` no longer writes `Type` into the caller's options object. Before, reusing an options
   object registered one class under another's key.
 - Arrow and async factories stored in named variables are no longer constructed as classes.

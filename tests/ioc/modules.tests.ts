@@ -391,3 +391,91 @@ Deno.test('Lifecycle - Start and Dispose', async (t) => {
     assertThrows(() => ioc.Start(), Error, 'The IoC container has been disposed.');
   });
 });
+
+Deno.test('Lifecycle - startup edge cases', async (t) => {
+  const $Db = IoCToken<{ ok: boolean }, 'ModEdgeDb'>('ModEdgeDb');
+  const $Repo = IoCToken<{ db: { ok: boolean } }, 'ModEdgeRepo'>('ModEdgeRepo');
+
+  await t.step('Start() can be retried after a Validate() failure is fixed', async () => {
+    const ioc = IoCContainer.Create().RegisterFactory($Repo, (_c, db) => ({ db }), {
+      Deps: [$Db],
+    });
+
+    await assertRejects(() => ioc.Start(), IoCValidationError);
+
+    ioc.RegisterValue($Db, { ok: true });
+
+    await ioc.Start();
+
+    assert((await ioc.Resolve($Repo)).db.ok);
+  });
+
+  await t.step(
+    'Dispose() during Start() stops the starting module and Start() rejects',
+    async () => {
+      const events: string[] = [];
+
+      let release!: () => void;
+
+      const ioc = new IoCContainer().Use(
+        module('First', events),
+        module('Slow', events, {
+          OnStart: () =>
+            new Promise<void>((r) => {
+              release = () => {
+                events.push('start:Slow');
+                r();
+              };
+            }),
+        }),
+        module('Never', events),
+      );
+
+      const starting = ioc.Start();
+
+      await new Promise((r) => setTimeout(r, 1));
+
+      const disposing = ioc.Dispose();
+
+      release();
+
+      await assertRejects(() => starting, Error, 'The IoC container has been disposed.');
+      await disposing;
+
+      assertEquals(events.filter((e) => !e.startsWith('register')), [
+        'start:First',
+        'stop:First',
+        'start:Slow',
+        'stop:Slow',
+      ]);
+    },
+  );
+
+  await t.step('PendingTimeoutMs bounds startup builds and OnStart', async () => {
+    const hungBuild = new IoCContainer({ PendingTimeoutMs: 20 }).RegisterFactory(
+      $Db,
+      () => new Promise<never>(() => {}),
+      { Lazy: true },
+    );
+
+    const activation = await assertRejects(() => hungBuild.Start());
+
+    assert(isIoCError(activation, 'IOC_ACTIVATION_FAILED'));
+    assert(
+      (activation as unknown as AggregateError).errors.some((e) =>
+        isIoCError(e, 'IOC_RESOLVE_TIMEOUT')
+      ),
+    );
+
+    const hungStart = new IoCContainer({ PendingTimeoutMs: 20 }).Use({
+      Name: 'Broker',
+      Register: () => {},
+      OnStart: () => new Promise<never>(() => {}),
+    });
+
+    const err = await assertRejects(() => hungStart.Start(), IoCStartError);
+
+    assertEquals(err.Module, 'Broker');
+    assert(isIoCError(err.cause, 'IOC_RESOLVE_TIMEOUT'));
+  });
+});

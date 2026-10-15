@@ -83,8 +83,9 @@ gap:
   Node.js and Bun) and the container follows the path across `await`s, so captured-container
   cycles throw `IoCCircularDependencyError` too. The container never imports `node:async_hooks`
   itself, so browser bundles don't pay for it.
-- **`PendingTimeoutMs`:** a resolve that is still pending after the timeout fails with
-  `IoCResolveTimeoutError`, listing what it was waiting on, instead of waiting forever.
+- **`PendingTimeoutMs`:** a resolve, a startup build or an `OnStart` that is still pending after
+  the timeout fails with `IoCResolveTimeoutError`, listing what it was waiting on, instead of
+  waiting forever.
 
 ```ts
 import { AsyncLocalStorage } from 'node:async_hooks';
