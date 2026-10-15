@@ -282,8 +282,9 @@ Dependencies are resolved **from the container or scope resolving the class**:
 - services that depend, directly or through transients, on a shorter-lived one (a
   [captive dependency](../concepts/lifetimes.md#captive-dependencies));
 - classes registered without arguments whose constructors take parameters;
-- a module's service depending on another module's service without `Requires` or `Needs`
-  (`undeclared`).
+- a module's service depending on another module's service, or on one the application
+  registers, without `Requires` or `Needs` (`undeclared`; it also reads what factories without
+  `Deps` resolved, once they have run).
 
 `Start()` calls it first. Call it in a test too, so mistakes fail CI. See
 [organizing registrations](./organizing-registrations.md).

@@ -34,6 +34,7 @@ here, and CI fails if a new one is added without an entry. For problems that don
 | `IoCScopeRequiredError`         | `IOC_SCOPE_REQUIRED`                          | [Scoped service … was resolved outside a scope](#scoped-service--was-resolved-outside-a-scope)                                                                                                                                                                        |
 | `IoCDuplicateRegistrationError` | `IOC_DUPLICATE_REGISTRATION`                  | [… is already registered](#-is-already-registered)                                                                                                                                                                                                                    |
 | `IoCSealedError`                | `IOC_SEALED`                                  | [… belongs to module '…'](#-belongs-to-module--so-other-modules-cant--it), [… belongs to the application](#-belongs-to-the-application-so-modules-cant--it), [Override() is for tests](#override-is-for-tests-create-the-container-with--testing-true--to-use-it-on-) |
+| `IoCAccessError`                | `IOC_ACCESS_DENIED`                           | [Module '…' is encapsulated and can't resolve …](#module--is-encapsulated-and-cant-resolve-)                                                                                                                                                                          |
 | `IoCLevelError`                 | `IOC_INVALID_LEVEL`                           | [Scope level errors](#scope-level-errors)                                                                                                                                                                                                                             |
 | `IoCModuleCycleError`           | `IOC_MODULE_CYCLE`                            | [Module dependency cycle: …](#module-dependency-cycle-a---b---a)                                                                                                                                                                                                      |
 | `IoCStartError`                 | `IOC_START_FAILED`                            | [Module '…' failed to start: …](#module--failed-to-start-)                                                                                                                                                                                                            |
@@ -211,6 +212,21 @@ of the order modules happen to be added in. **Fix:** add `B` to `A`'s `Requires`
 always registered, and started, first), or add `Y` to `A`'s `Needs` (when the app or any module
 may provide it).
 
+The same check covers services the application registers:
+
+```text
+Server (module 'Http') depends on Config, which the application registers, but 'Http' doesn't list it in its Needs.
+```
+
+A module that works only when the application happens to register `Y` should say so: add `Y` to
+its `Needs`, so a typed container and `Validate()` can tell the application what to provide.
+
+The check reads declared `Deps` and, for factories without `Deps`, what they actually resolved
+(after `Activate()` or `Start()` has run them). A module still provides a key the application
+replaced (a module's `Default: true` registration the application overrode). For an
+[encapsulated](#module--is-encapsulated-and-cant-resolve-) module only its direct `Requires`
+count, and the message says `neither requires 'B' directly`.
+
 ```ts
 import { IoCContainer, type IoCModule, IoCToken } from '@fathym/ioc';
 
@@ -298,6 +314,12 @@ A module's `OnStart` or `OnStop`:
 Module 'Server' OnStart did not finish within 30000ms. Something it awaits may never settle (a connection, a lock); set the module's TimeoutMs if it is just slow.
 ```
 
+A module's `Health` check (its limit is `Health()`'s `TimeoutMs`, 5 seconds by default):
+
+```text
+Module 'Database' Health did not finish within 5000ms. Something it checks may never answer; pass Health() a longer TimeoutMs if it is just slow.
+```
+
 A service with its own `TimeoutMs`:
 
 ```text
@@ -313,7 +335,8 @@ registration or module. Where it arrives:
 - from `Activate()`: inside `IoCActivationError`;
 - from `OnStart`: as `IoCStartError`'s `cause`, named `Module 'Server' OnStart`;
 - from `OnStop` and disposers: inside `IoCDisposeError`, named `Module 'Server' OnStop` or
-  `Disposing Pool` (in `IoCStartError`'s `RollbackErrors` when a failed `Start()` rolls back).
+  `Disposing Pool` (in `IoCStartError`'s `RollbackErrors` when a failed `Start()` rolls back);
+- from `Health`: never thrown, recorded as the module's `Error` in the `Health()` report.
 
 | Property    | Means                                                                      |
 | ----------- | -------------------------------------------------------------------------- |
@@ -324,8 +347,12 @@ registration or module. Where it arrives:
 **Likely causes:**
 
 - **Something that never settles,** for example a connection that waits forever, or a disposer
-  that never returns. The build is not cancelled; if it finishes later, later resolves get its
-  value. (A build abandoned by a failed `Start()` is disposed when it finishes, never cached.)
+  that never returns. The container can't stop the work itself; it tells it to give up through
+  [`ioc.Signal`](./api.md#signal) when it times out during `Start()`/`Activate()` or in a module
+  hook (pass the signal to `fetch` or your client so it actually stops). A `Resolve` that times
+  out doesn't abort the build, since other callers may still be waiting for it: if it finishes
+  later, later resolves get its value. (A build abandoned by a failed `Start()` is disposed when
+  it finishes, never cached.)
 - **A cycle the container can't report:** factories waiting on each other through a container
   captured in a closure, after an `await` (or from a callback a factory started, such as a timer
   or a request handler). The container can't tell such a call from code the build awaits, so it
@@ -418,6 +445,46 @@ Override() is for tests: create the container with { Testing: true } to use it o
 without `Testing: true`. **Fix:** in tests, create the container (or the one your test helper
 builds) with `{ Testing: true }`. In application code, register a replacement with
 `Replace: true`, or on a scope.
+
+---
+
+## Module '…' is encapsulated and can't resolve …
+
+```text
+Module 'Partner' is encapsulated and can't resolve Secret: it is neither registered by 'Partner', listed in its Needs, nor registered by a module it requires. Add it to Needs, or require the module that registers it.
+```
+
+`IoCAccessError` (`IOC_ACCESS_DENIED`). An encapsulated module (`Encapsulated: true`, or chosen by
+the container's `EncapsulateModules` option) resolved a service it didn't declare, from its
+`Register`, `OnStart`, `OnStop`, `Health`, or a factory it registered. An encapsulated module may
+resolve only what it registers, what it lists in `Needs`, and what the modules in its own
+`Requires` register (not what their requirements register). `Describe()` and `Validate()` on its
+view throw it too (the service is then `Describe()` or `Validate()`). `Module` and `Service` hold
+the details.
+
+**Fix:** if the module should have it, add the key to its `Needs` (the application then provides
+it, or a module the application adds), or add the module that registers it to its `Requires`. If
+it shouldn't, the module is reaching for something that isn't its business: pass it what it needs
+through a service it may resolve. `Validate()` reports the same dependency ahead of time, as
+[`undeclared`](#undeclared-x-module-a-depends-on-y-from-module-b-but-a-neither-requires-b-nor-lists-y-in-its-needs),
+for declared `Deps` and for what factories resolved once they have run.
+
+```ts
+import { IoCContainer, IoCToken } from '@fathym/ioc';
+
+const $Secret = IoCToken<string, 'Secret'>('Secret');
+
+const ioc = new IoCContainer().RegisterValue($Secret, 's3cr3t').Use({
+  Name: 'Partner',
+  Encapsulated: true,
+  Needs: [$Secret], // CORRECT - without it, resolving $Secret throws IoCAccessError
+  Register: () => {},
+  OnStart: async (c) => console.log((await c.Resolve($Secret)).length), // 6
+});
+
+await ioc.Start();
+await ioc.Dispose();
+```
 
 ---
 
@@ -602,13 +669,15 @@ Module 'Plugin' called Use(), which only the application can call. List the modu
 Module 'Plugin' called Expect(), which only the application can call. Declare the keys a module needs from elsewhere in its Needs instead.
 Module 'Plugin' called Start(), which only the application can call. Modules receive a view of the container for registering and resolving.
 Module 'Plugin' called Dispose(), which only the application can call. Modules receive a view of the container for registering and resolving.
+Module 'Plugin' called Health(), which only the application can call. Modules receive a view of the container for registering and resolving.
 ```
 
 A module's `Register`, `OnStart` or `OnStop`, or a factory or decorator the module registered,
-called `Use`, `Expect`, `Start`, `Activate`, `Dispose` or `Override` on the container it received.
+called `Use`, `Expect`, `Start`, `Activate`, `Dispose`, `Health` or `Override` on the container it
+received.
 That container is a [module view](./api.md#the-module-view): it registers and resolves, and
-leaves the lifecycle to the application. (`Start`, `Activate` and `Dispose` reject with it rather
-than throw.) **Fix:** list required modules in `Requires` and keys the module expects from
+leaves the lifecycle to the application. (`Start`, `Activate`, `Dispose` and `Health` reject with
+it rather than throw.) **Fix:** list required modules in `Requires` and keys the module expects from
 elsewhere in `Needs`; let the application start and dispose the container; override in tests
 with a `Testing: true` container.
 

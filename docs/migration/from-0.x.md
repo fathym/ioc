@@ -66,6 +66,7 @@ come from 0.0.x.
 | A module calling `ioc.Use(Other)` in `Register`                                                         | `Requires: [Other]` on the module                                                | Module views can't `Use`, `Expect`, `Start`, `Activate`, `Dispose` or `Override`                        |
 | A module calling `ioc.Expect($Key)` in `Register`                                                       | `Needs: [$Key]` on the module                                                    | The app still uses `Expect()` for keys each scope provides                                              |
 | A module relying on another module's services without saying so                                         | `Requires: [Other]`, or `Needs: [$Key]`                                          | `Validate()` reports `undeclared`                                                                       |
+| A module relying on a service the application registers                                                 | `Needs: [$Key]` on the module                                                    | `Validate()` reports `undeclared`, so `Start()` fails until it is declared                              |
 | A module replacing another module's services                                                            | `Default: true` in the owning module, or the replacement made by the application | Otherwise throws `IOC_SEALED`; [sealing](#sealing-default-and-testing)                                  |
 | `err.Symbol` on `IoCServiceNotFoundError`                                                               | `err.Key` (the token description or class name)                                  |                                                                                                         |
 | Matching `No Service for symbol '…'` in messages                                                        | `isIoCError(err, 'IOC_SERVICE_NOT_FOUND')`                                       | The message is `No service is registered for …`                                                         |
@@ -499,7 +500,9 @@ thing or crashed:
    `Lifetime: 'scoped'` next to `ScopeLevel`.
 6. **Decide what each module lets other modules replace.** Mark those registrations
    `Default: true` (the application can replace anything either way). Move `ioc.Use(...)` calls
-   inside modules into `Requires`, and list keys a module expects from the app in `Needs`.
+   inside modules into `Requires`, and list keys a module expects from the app in `Needs`
+   (`Start()` validates, and reports a module leaning on an app key it didn't list as
+   `undeclared`). For plugins you don't write, consider `EncapsulateModules`.
 7. **Make intended replacements explicit** with `Replace: true`.
 8. **Resolve through the factory's parameter.** Replace `Resolve` calls on a container captured
    in a closure with `(c) => c.Resolve(…)` or `Deps`, so cycles throw at once instead of timing
@@ -507,7 +510,8 @@ thing or crashed:
 9. **Start and stop through the container.** Call `await ioc.Start()` at boot (it validates and
    builds everything) and `await ioc.Dispose()` (or `await using`) at shutdown, including on
    signals. Check that `PendingTimeoutMs` (30 s) fits your slowest startup step, or give that
-   one service or module its own `TimeoutMs`.
+   one service or module its own `TimeoutMs`. Pass `ioc.Signal` to long startup work, and serve
+   `ioc.Health()` from your readiness probe instead of checking `State` by hand.
 10. **Update tests.** Create containers with `{ Testing: true }` where tests call `Override()` or
     where a test module replaces another module's registrations. Replace message matching with
     `isIoCError(err, code)`.

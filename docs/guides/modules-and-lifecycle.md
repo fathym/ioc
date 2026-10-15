@@ -147,8 +147,8 @@ what modules need; `Validate()`, which `Start()` runs first, checks the whole gr
 
 ## The module view
 
-`Register`, `OnStart`, `OnStop`, **and every factory or decorator the module registers**,
-receive a **module view** of the container, not the container itself:
+`Register`, `OnStart`, `OnStop`, `Health`, **and every factory or decorator the module
+registers**, receive a **module view** of the container, not the container itself:
 
 - **It registers as the module.** Everything registered through it belongs to the module: sealing
   and `Describe()` know where it came from.
@@ -156,8 +156,8 @@ receive a **module view** of the container, not the container itself:
   `ResolveRecord`, `Names`, `Has`), so `OnStart` can resolve the services it starts. It can also
   `Describe`, `Validate`, read `State`, `Decorate`, `Unregister`, `Isolate` and `CreateScope`
   (which returns a module view of the new scope).
-- **It can't run the application.** Calling `Use`, `Start`, `Activate`, `Dispose`, `Override`
-  or `Expect` on it throws `IoCRegistrationError` (`IOC_INVALID_REGISTRATION`):
+- **It can't run the application.** Calling `Use`, `Start`, `Activate`, `Dispose`, `Health`,
+  `Override` or `Expect` on it throws `IoCRegistrationError` (`IOC_INVALID_REGISTRATION`):
   `Module 'Search' called Dispose(), which only the application can call. …`. A module lists the
   modules it builds on in `Requires`, and the keys it expects from elsewhere (including keys each
   scope registers, such as a request) in `Needs`. Only the application calls `Expect()`, on its
@@ -246,6 +246,52 @@ console.log(await ioc.Resolve($Sender), warnings);
 
 A scope may still register its own `$Sender`: that shadows the parent for the scope only. Tests
 lift every rule with `new IoCContainer({ Testing: true })`; see [testing](./testing.md).
+
+## Encapsulated modules
+
+Sealing stops a module from changing what isn't its own. **Encapsulation** also stops it from
+resolving what it didn't declare: an encapsulated module may resolve only what it registers, the
+keys in its `Needs`, and what the modules in its own `Requires` register. Anything else throws
+`IoCAccessError` (`IOC_ACCESS_DENIED`), from its hooks and from the factories it registered.
+
+Turn it on for the modules you don't write, so a partner or third-party module's `Needs` and
+`Requires` are the complete, reviewable list of what it touches:
+
+```ts
+import { IoCContainer, type IoCModule, IoCToken, isIoCError } from '@fathym/ioc';
+
+const $Tenant = IoCToken<string, 'Tenant'>('Tenant');
+const $SigningKey = IoCToken<string, 'SigningKey'>('SigningKey');
+
+const Billing: IoCModule = {
+  Name: 'vendor:billing',
+  Needs: [$Tenant], // the one thing it may resolve from the application
+  Register: () => {},
+  OnStart: async (ioc) => {
+    console.log(await ioc.Resolve($Tenant)); // acme
+
+    const err = await ioc.Resolve($SigningKey).catch((e) => e);
+
+    console.log(isIoCError(err, 'IOC_ACCESS_DENIED')); // true
+  },
+};
+
+// Every module whose name starts with 'vendor:' is encapsulated; your own modules aren't.
+const ioc = new IoCContainer({ EncapsulateModules: (m) => m.Name.startsWith('vendor:') })
+  .RegisterValue($Tenant, 'acme')
+  .RegisterValue($SigningKey, 'secret')
+  .Use(Billing);
+
+await ioc.Start();
+await ioc.Dispose();
+```
+
+A module can also opt in itself (`Encapsulated: true`), or out (`Encapsulated: false`, which wins
+over the option). `Validate()` reports the same mistakes before anything runs, as `undeclared`.
+
+Unexported tokens already keep a package's private services out of reach of code that can't
+import them; encapsulation covers what is reachable but not declared. Neither is a security
+boundary: run untrusted code in a separate process or worker.
 
 ## Start and stop
 
@@ -444,12 +490,98 @@ await starting.catch((err) =>
 console.log(log); // [ "db started", "db stopped", "start cancelled" ]
 ```
 
+## Stopping work the container gave up on
+
+`OnStart`, `OnStop` and `Health` (and every factory) can read `ioc.Signal`, an `AbortSignal` that
+aborts when the container stops waiting for them: their timeout expired, another module in the
+same start layer failed (so the start is being rolled back), or the container is being disposed.
+Pass it to whatever does the waiting, so a cancelled start doesn't leave a migration or a
+connection attempt running:
+
+```ts
+import { IoCContainer, type IoCModule } from '@fathym/ioc';
+
+const log: string[] = [];
+
+const Migrations: IoCModule = {
+  Name: 'Migrations',
+  Register: () => {},
+  OnStart: async (ioc) => {
+    for (let step = 0; step < 100; step++) {
+      ioc.Signal?.throwIfAborted(); // stop between steps once the start is cancelled
+      await new Promise((r) => setTimeout(r, 5));
+    }
+  },
+  OnStop: () => void log.push('migrations stopped'),
+};
+
+const Broken: IoCModule = {
+  Name: 'Broken',
+  Register: () => {},
+  OnStart: () => Promise.reject(new Error('bad config')),
+};
+
+const ioc = new IoCContainer().Use(Migrations, Broken); // same layer: they start together
+
+await ioc.Start().catch((err) => log.push(err.message));
+
+console.log(log); // [ "Module 'Broken' failed to start: bad config" ]
+```
+
+`Migrations` stops at its next step instead of running all 100, and since it never finished
+starting, its `OnStop` doesn't run. See [`Signal`](../reference/api.md#signal) for every case.
+
+## Health checks
+
+Give a module a `Health` hook, and `ioc.Health()` reports whether the application is ready for
+work: it runs every started module's check at the same time, each bounded by `TimeoutMs` (5
+seconds by default), and never throws. A check fails by throwing (say why) or returning `false`.
+Serve it from your readiness probe:
+
+```ts
+import { IoCContainer, type IoCModule } from '@fathym/ioc';
+
+let queueDepth = 10;
+
+const Queue: IoCModule = {
+  Name: 'Queue',
+  Register: () => {},
+  Health: () => {
+    if (queueDepth > 1000) throw new Error(`backlog of ${queueDepth}`);
+  },
+};
+
+await using ioc = new IoCContainer().Use(Queue);
+
+const ready = async () => {
+  const report = await ioc.Health({ TimeoutMs: 1000 });
+
+  return report.Healthy ? 200 : 503;
+};
+
+console.log(await ready()); // 503: not started yet
+
+await ioc.Start();
+
+console.log(await ready()); // 200
+
+queueDepth = 5000;
+
+console.log((await ioc.Health()).Modules[0].Error); // Error: backlog of 5000
+```
+
+`Healthy` is `false` until `Start()` has succeeded and again once `Dispose()` begins. For a
+liveness probe, treat only `State === 'disposed'`, or a `Health()` that doesn't answer, as dead: a
+container that is still starting is alive, just not ready. See
+[`Health()`](../reference/api.md#healthoptions).
+
 ## `State` and `OnEvent`
 
 `ioc.State` says where the container is: `'idle'` (created, or after a failed start),
-`'starting'`, `'started'`, `'stopping'` or `'disposed'`. Use it for readiness and liveness checks.
+`'starting'`, `'started'`, `'stopping'` or `'disposed'`. For readiness, prefer `Health()`, which
+also runs the modules' checks.
 
-The `OnEvent` option receives a `start` or `stop` event per module, and a `build` event per
+The `OnEvent` option receives a `start`, `stop` or `health` event per module, and a `build` event per
 service, each with its duration in `Ms` (and `Error` when it failed), plus `warning` events with
 a `Code`: `IOC_MODULE_OVERRIDDEN`, `IOC_DEFAULT_REPLACED`, `IOC_MODULE_DUPLICATE`,
 `IOC_ROLLBACK_FAILED` and `IOC_LATE_DISPOSE_FAILED`.
@@ -525,6 +657,7 @@ console.log(await plugins.ResolveAll($Route)); // [ "/reports", "/health" ]
   registration's or a module's `TimeoutMs` overrides it for that service or module.
 - Without `Start()`, `Dispose()` runs no `OnStop`.
 - `OnStop` errors are collected into the `Dispose()` error; the rest of the shutdown still runs.
+- Long `OnStart`/`OnStop` work passes `ioc.Signal` on, so it stops when the container gives up.
 
 ## What's Next
 

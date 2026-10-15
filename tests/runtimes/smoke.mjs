@@ -11,6 +11,7 @@ if (!target) throw new Error('Pass the module to test, e.g. ./dist/npm/esm/mod.j
 const url = new URL(target, `file://${globalThis.process?.cwd?.() ?? globalThis.Deno.cwd()}/`);
 
 const {
+  IoCAccessError,
   IoCCircularDependencyError,
   IoCContainer,
   IoCResolveTimeoutError,
@@ -195,6 +196,45 @@ ioc.Decorate($Db, (inner) => ({ query: (sql) => inner.query(sql.toUpperCase()) }
 check((await ioc.Resolve($Db)).query('x')[0] === 'X', 'Decorate wraps a registration');
 
 await ioc.Dispose();
+
+// Encapsulated modules resolve only what they declare.
+const $Key = IoCToken('Key');
+let denied;
+const sandbox = new IoCContainer({ EncapsulateModules: true }).RegisterValue($Key, 'k').Use({
+  Name: 'Vendor',
+  Register: () => {},
+  OnStart: async (c) => {
+    denied = await c.Resolve($Key).catch((err) => err);
+  },
+});
+await sandbox.Start();
+check(denied instanceof IoCAccessError, 'an encapsulated module resolves only what it declares');
+await sandbox.Dispose();
+
+// Signal: a build the container gave up on is told to stop.
+const $Crawl = IoCToken('Crawl');
+let crawlSignal;
+const crawler = new IoCContainer({ PendingTimeoutMs: 20 }).RegisterFactory($Crawl, (c) => {
+  crawlSignal = c.Signal;
+  return new Promise((resolve) => c.Signal.addEventListener('abort', () => resolve('stopped')));
+});
+await crawler.Activate().catch(() => {});
+check(crawlSignal?.aborted === true, 'a startup timeout aborts the factory signal');
+await crawler.Dispose();
+
+// Health: one report from every started module's check.
+let healthy = true;
+const probed = new IoCContainer().Use({
+  Name: 'Probe',
+  Register: () => {},
+  Health: () => healthy,
+});
+check((await probed.Health()).Healthy === false, 'Health() is not ready before Start()');
+await probed.Start();
+check((await probed.Health()).Healthy === true, 'Health() passes when every check does');
+healthy = false;
+check((await probed.Health()).Modules[0].Healthy === false, 'Health() names the failing module');
+await probed.Dispose();
 
 const runtime = globalThis.Bun
   ? `Bun ${Bun.version}`

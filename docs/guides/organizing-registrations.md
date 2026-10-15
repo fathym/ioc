@@ -134,6 +134,7 @@ class Server {
 
 const Http: IoCModule = {
   Name: 'Http',
+  Needs: [$Config], // the application provides it
   Register: (ioc) => ioc.RegisterClass(Server, { Deps: [$Config] }),
   OnStart: async (ioc) => console.log(`listening on ${(await ioc.Resolve(Server)).config.port}`),
   OnStop: () => console.log('closed'),

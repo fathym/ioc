@@ -38,7 +38,8 @@ already strict, lazy and protected against hangs.
   - `captive`: a longer-lived service holding a shorter-lived one, across levels and through
     transients;
   - `arguments`: a class whose constructor needs parameters but has no `Deps`;
-  - `undeclared`: a module using another module's service without `Requires` or `Needs`.
+  - `undeclared`: a module using another module's service, or one the application registers,
+    without `Requires` or `Needs` (in its `Deps`, or in what its factories resolved).
 - **Declare dependencies** (`Deps` on classes and factories, `IoCLazy`, `IoCAll`) rather than
   resolving inside factories, so `Validate()` and `Describe()` can see the graph.
 - **`Start()`** validates, builds every singleton and starts the modules, so a broken service
@@ -118,8 +119,11 @@ See [async resolution](./async-resolution.md#following-the-chain-across-await).
   lifetime, level, dependencies, `State` and `BuildMs`; every module with its `Layer`, `Started`
   and `StartMs`; and the container's `State`. Use it for a debug endpoint, a `doctor` command, or
   a test that pins a module's public services.
-- **`OnEvent`** receives `build`, `resolve`, `start` and `stop` events with their duration (`Ms`)
-  and any `Error`, plus `warning` events for problems no caller could be told about.
+- **`OnEvent`** receives `build`, `resolve`, `start`, `stop` and `health` events with their
+  duration (`Ms`) and any `Error`, plus `warning` events for problems no caller could be told
+  about.
+- **`Health()`** runs every started module's `Health` check concurrently, each bounded, and
+  returns one report naming the module that failed: serve it from your readiness probe.
 
 ```ts
 import { IoCContainer, type IoCEvent, type IoCModule } from '@fathym/ioc';
@@ -173,6 +177,9 @@ language and the modules, not from naming conventions:
 - **Make dependencies between modules explicit.** List the modules you build on in `Requires`,
   and keys you expect the app (or a module you don't require) to register in `Needs`.
   `Validate()` reports any other cross-module dependency as `undeclared`.
+- **Encapsulate the modules other teams or vendors ship** (`EncapsulateModules`), so at runtime
+  they may resolve only what they declared: their `Needs` and `Requires` become a contract you
+  can review. See [encapsulated modules](../guides/modules-and-lifecycle.md#encapsulated-modules).
 - **One module per package or feature,** each with its own short typed chain, owned by the team
   that owns the code.
 - **Tests** build the real modules in `new IoCContainer({ Testing: true })` and `Override` what

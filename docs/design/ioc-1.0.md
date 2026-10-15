@@ -63,8 +63,14 @@ process:
   name it, so nobody else can resolve, replace or decorate it. This is the whole encapsulation
   model: it uses the language's own module system, and needs no `Exports` list.
 - Keys must be tokens or classes; anything else throws `IOC_INVALID_KEY`.
-- **Encapsulation is a guardrail, not a security boundary.** Key privacy, sealing and module
-  views prevent mistakes and make ownership clear. They don't stop hostile code running in the
+- **Encapsulated modules** limit what a module may resolve among the keys it can name: only what
+  it registers, lists in `Needs`, or gets from its direct `Requires`. Chosen per module
+  (`Encapsulated`) or by the application (`EncapsulateModules`, a predicate for "modules we
+  don't write"). The check runs in the module view (`IoCAccessError`) and, ahead of time, in
+  `Validate()`'s `undeclared` check. Ownership of a key is remembered per module, so a module
+  still provides a default the application replaced.
+- **Encapsulation is a guardrail, not a security boundary.** Key privacy, sealing, encapsulated
+  modules and module views prevent mistakes and make ownership clear. They don't stop hostile code running in the
   same process; untrusted plugins need process or worker isolation.
 
 ## Sealing
@@ -183,9 +189,10 @@ type never grows with its requirements. Measured with TypeScript 5.9, 10 service
 
 ## Validate()
 
-Issue kinds: `missing`, `cycle`, `captive`, `arguments`, and `undeclared`: a module's declared
-dependency on a key registered by another module that is neither in its (transitive) `Requires`
-nor in its `Needs`.
+Issue kinds: `missing`, `cycle`, `captive`, `arguments`, and `undeclared`: a module's dependency
+(declared in `Deps`, or observed when a factory without `Deps` ran) on a key registered by
+another module, or by the application, that is neither in its `Requires` (transitive; direct
+only for an encapsulated module) nor in its `Needs`.
 
 ## Lifecycle
 
@@ -218,6 +225,14 @@ nor in its `Needs`.
   it holds memory until shutdown.
 - **OnDemand:** a singleton registered with `OnDemand: true` is skipped by `Start()` and
   `Activate()` and built on first resolve, for resources only some code paths need.
+- **Abort signals:** each build and each `OnStart`/`OnStop`/`Health` call has its own
+  `AbortController`, created lazily when the code reads `ioc.Signal` (or when the container
+  aborts it first, so a late read still sees the abort). It aborts on a startup or hook timeout,
+  a sibling's start failure, a rollback, and `Dispose()`. A `Resolve()` timeout doesn't abort:
+  the build is shared, and other callers may still be waiting for it.
+- **Health:** `Health()` runs the started modules' `Health` hooks concurrently, each bounded by
+  its `TimeoutMs` (5 s by default, shorter than typical probe timeouts so the report names the
+  slow module), and records rather than throws failures. `Healthy` requires `State === 'started'`.
 - `Dispose()` during `Start()` stops the module that was starting and makes `Start()` throw
   `IOC_CONTAINER_DISPOSED`, unless a module had already failed: then `Start()` reports that
   failure (`IoCStartError` with the module's error).
@@ -226,8 +241,8 @@ nor in its `Needs`.
 
 - `Describe()` adds `BuildMs` to each built service and `StartMs` to each started module, plus
   the container's `State`.
-- `OnEvent(event)` receives `build`, `resolve`, `start` and `stop` events with `Ms` (and `Error`
-  when one failed), and `warning` events (`IoCWarningCode`):
+- `OnEvent(event)` receives `build`, `resolve`, `start`, `stop` and `health` events with `Ms`
+  (and `Error` when one failed), and `warning` events (`IoCWarningCode`):
   - `IOC_DEFAULT_REPLACED`: a module changed a default someone else registered;
   - `IOC_MODULE_OVERRIDDEN`: the application changed a module's non-default registration;
   - `IOC_LATE_DISPOSE_FAILED`: an instance that landed after `Dispose()` (or after a failed

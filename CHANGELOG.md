@@ -118,12 +118,27 @@ that share a container upgrade together.
 
 ### Added
 
-- **`IoCSealedError`** (`IOC_SEALED`) and **`IoCLevelError`** (`IOC_INVALID_LEVEL`).
+- **`IoCSealedError`** (`IOC_SEALED`), **`IoCLevelError`** (`IOC_INVALID_LEVEL`) and
+  **`IoCAccessError`** (`IOC_ACCESS_DENIED`).
+- **Encapsulated modules:** `IoCModule.Encapsulated` and the `EncapsulateModules` container option
+  (`true`, or `(module) => boolean`). An encapsulated module may resolve only what it registers,
+  lists in `Needs`, or what the modules in its own `Requires` register; anything else throws
+  `IoCAccessError`, from its hooks and the factories it registered.
+- **`ioc.Signal`:** inside a factory or a module's `OnStart`, `OnStop` or `Health`, an
+  `AbortSignal` (`IoCAbortSignal`) that aborts when the container gives up on that work: a
+  `Start()`/`Activate()` or module timeout, a sibling module failing to start, a rolled-back
+  `Start()`, or `Dispose()`. A `Resolve()` timeout doesn't abort the build.
+- **`ioc.Health(options?)`** and **`IoCModule.Health`:** runs every started module's check
+  concurrently, each bounded by `TimeoutMs` (5 s by default), and returns an `IoCHealthReport`
+  (`Healthy`, `State`, per-module `Healthy`/`Ms`/`Error`) for readiness and liveness probes.
+  Each result is also a `health` event.
 - **`DefineModule({ Name, Requires, Needs, Register })`:** typed modules. `Register`'s container is
   typed with the module's `Needs` and what its direct `Requires` register themselves; the chain it
   returns is what it provides (non-transitive: only its own keys); `Use()` on a typed container
   adds those keys and doesn't compile when a module's needs are unmet. Type-checking grows
   linearly with the number of modules, however deep the `Requires` graph.
+- **One module failing to start aborts the others starting in its layer** (through their
+  `Signal`), so the rollback doesn't wait for work that won't be used.
 - **`Use()` is all or nothing:** if a module's `Register` throws, every registration and module
   that call added (requirements included) is undone, so `Use()` can be retried.
 - **`TimeoutMs`** on `RegisterClass` and `RegisterFactory` overrides `PendingTimeoutMs` for one
@@ -131,8 +146,9 @@ that share a container upgrade together.
   `DefineModule`) for one module's `OnStart` and `OnStop`. Invalid values (negative, `NaN`,
   `Infinity`) throw `IoCRegistrationError` at registration or at `Use()`.
 - **`IoCModule.Needs`:** keys a module expects someone else to register. `Validate()` reports an
-  `undeclared` issue when a module depends on another module's service without `Requires` or
-  `Needs`.
+  `undeclared` issue when a module depends on another module's service, or on one the application
+  registers, without `Requires` or `Needs`, in its `Deps` or in what its factories resolved. A
+  module's `Default: true` registration the application replaced still counts as the module's.
 - **Container options `Levels`, `OnEvent` and `Testing`.** `OnEvent` receives `build`, `resolve`,
   `start`, `stop` and `warning` events (`IoCEvent`, `IoCWarningCode`), including the new
   `IOC_ROLLBACK_FAILED`, `IOC_MODULE_OVERRIDDEN` and `IOC_DEFAULT_REPLACED` warnings.

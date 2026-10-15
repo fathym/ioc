@@ -154,15 +154,24 @@ console.log(await host.ResolveAll($Route)); // [ "/health" ]
   plugin's name: that registration is sealed too.
 - **Plugins declare what the app must supply** in `Needs`; on a typed container, `Use(plugin)`
   doesn't compile until the app has registered it.
-- **Plugins get a module view, never the container.** Their `Register`, `OnStart`, `OnStop` and
-  factories can register and resolve, but can't `Use`, `Start`, `Activate`, `Dispose`,
-  `Override` or `Expect`.
+- **Encapsulate the plugins you don't write.** With
+  `new IoCContainer({ EncapsulateModules: (m) => m.Name.startsWith('plugin:') })`, such a plugin
+  may resolve only what it registers, what it lists in `Needs`, and what the modules in its own
+  `Requires` register; anything else throws `IoCAccessError`. Its `Needs` and `Requires` then
+  are the full list of what it touches, so review them like a permission request.
+- **Give plugins a `Health` hook** when they hold connections or queues, and serve
+  `ioc.Health()` from the host's readiness endpoint: each plugin's check runs concurrently and
+  is bounded, and the report names the one that failed.
+- **Plugins get a module view, never the container.** Their `Register`, `OnStart`, `OnStop`,
+  `Health` and factories can register and resolve, but can't `Use`, `Start`, `Activate`,
+  `Dispose`, `Health`, `Override` or `Expect`.
 - **`Use()` is all or nothing.** If a plugin's `Register` throws, everything that `Use()` call
   added is undone, so the host can report the bad plugin and carry on.
 - **Async setup belongs in `OnStart`** or in async factories; `Register` is synchronous. If one
   plugin fails to start, every started plugin is stopped again, and `Start()` can be retried. A
-  plugin with a slow start sets its own `TimeoutMs`.
-- **Sealing is a guardrail, not a sandbox.** It stops plugins from breaking the host by mistake.
+  plugin with a slow start sets its own `TimeoutMs`, and passes `ioc.Signal` to its long work so
+  it stops when the start is abandoned.
+- **Sealing and encapsulation are guardrails, not a sandbox.** It stops plugins from breaking the host by mistake.
   A plugin you don't trust runs in a separate process or worker, not in the host's container.
 - **Inspect the result** with `app.Describe()`: every registration lists the module that made it,
   and every module its layer and start time.

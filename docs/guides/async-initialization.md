@@ -144,6 +144,34 @@ slowest legitimate startup step (`new IoCContainer({ PendingTimeoutMs: 60_000 })
 turn it off. A timeout inside the factory, as above, is still better: it fails the one call with
 the real cause.
 
+When the container gives up on a build (a startup timeout, a failed `Start()`, or `Dispose()`),
+the build itself keeps running unless it is told to stop. Pass the factory's
+[`Signal`](../reference/api.md#signal) on, alone or combined with your own timeout:
+
+```ts
+import { IoCContainer, IoCToken } from '@fathym/ioc';
+
+const $Remote = IoCToken<Response, 'Remote'>('Remote');
+
+const ioc = new IoCContainer().RegisterFactory($Remote, (c) => {
+  const timeout = AbortSignal.timeout(2000);
+
+  // Stops at 2 seconds, or as soon as the container gives up on this build.
+  const signal = c.Signal ? AbortSignal.any([c.Signal, timeout]) : timeout;
+
+  return fetch('data:application/json,{"ok":true}', { signal });
+});
+
+await ioc.Start();
+
+console.log(await (await ioc.Resolve($Remote)).json()); // { ok: true }
+
+await ioc.Dispose();
+```
+
+A `Resolve` that times out doesn't abort the build, since other callers may still be waiting for
+it; the signal is about the container abandoning the work, not one caller.
+
 ## Recipe 5: fail fast at startup
 
 A service that is first built by the first request hides a broken configuration until then. Call

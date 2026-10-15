@@ -38,9 +38,9 @@ code block is a complete, runnable example, checked in CI.
   [ResolveAll](#resolveallkey), [ResolveNamed](#resolvenamedkey),
   [ResolveRecord](#resolverecordrecord), [Names](#nameskey), [Has](#haskey-name)
 - **Modules:** [Use](#usemodules), [IoCModule](#iocmodule), [the module view](#the-module-view),
-  [sealing](#sealing), [DefineModule](#definemoduledefinition)
+  [sealing](#sealing), [encapsulation](#encapsulation), [DefineModule](#definemoduledefinition)
 - **Lifecycle:** [Validate](#validateoptions), [Activate](#activate), [Start](#startoptions),
-  [Dispose](#dispose)
+  [Dispose](#dispose), [Health](#healthoptions), [Signal](#signal)
 - **Scopes:** [CreateScope](#createscopeoptions), [Isolate](#isolatekeys)
 - **Testing and tooling:** [Override](#overridekey-value-options), [Describe](#describe),
   [OnEvent and IoCEvent](#onevent-and-iocevent)
@@ -92,13 +92,14 @@ console.log(ioc.State); // idle
 
 `IoCContainerOptions`:
 
-| Option             | Default                           | Meaning                                                                                                                                                                                                                                                                                                                                                          |
-| ------------------ | --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `Levels`           | none                              | The scope levels the application uses, outermost first (`['tenant', 'request']`). `CreateScope({ Level })` and `ScopeLevel` must name one of them, and scopes nest in this order. Names must be distinct and non-empty.                                                                                                                                          |
-| `PendingTimeoutMs` | `30000`                           | A resolve, a build during `Start()`/`Activate()`, a module's `OnStart`/`OnStop`, or an instance's disposer still pending after this many milliseconds fails with [`IoCResolveTimeoutError`](./errors.md#-did-not-finish-within-ms). `0` turns it off. Must be finite, ≥ 0. A registration's or a module's own [`TimeoutMs`](#registration-options) overrides it. |
-| `AsyncContext`     | the runtime's `AsyncLocalStorage` | How the container follows resolution chains across `await` when a factory resolves through a captured container, for resolution paths in errors and observed dependencies. Found through `process.getBuiltinModule('node:async_hooks')` (Deno, Bun, Node.js 20.16+). `false` turns it off; an `IoCAsyncContext` you pass is used instead.                        |
-| `OnEvent`          | none                              | `(event: IoCEvent) => void`: build, resolve, start and stop timings, and warnings. See [OnEvent and IoCEvent](#onevent-and-iocevent). A listener that throws never breaks the container.                                                                                                                                                                         |
-| `Testing`          | `false`                           | For tests: lifts [sealing](#sealing) (any code may replace, decorate or unregister any registration) and enables [`Override`](#overridekey-value-options). Scopes of a testing container are testing too.                                                                                                                                                        |
+| Option               | Default                           | Meaning                                                                                                                                                                                                                                                                                                                                                          |
+| -------------------- | --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Levels`             | none                              | The scope levels the application uses, outermost first (`['tenant', 'request']`). `CreateScope({ Level })` and `ScopeLevel` must name one of them, and scopes nest in this order. Names must be distinct and non-empty.                                                                                                                                          |
+| `PendingTimeoutMs`   | `30000`                           | A resolve, a build during `Start()`/`Activate()`, a module's `OnStart`/`OnStop`, or an instance's disposer still pending after this many milliseconds fails with [`IoCResolveTimeoutError`](./errors.md#-did-not-finish-within-ms). `0` turns it off. Must be finite, ≥ 0. A registration's or a module's own [`TimeoutMs`](#registration-options) overrides it. |
+| `AsyncContext`       | the runtime's `AsyncLocalStorage` | How the container follows resolution chains across `await` when a factory resolves through a captured container, for resolution paths in errors and observed dependencies. Found through `process.getBuiltinModule('node:async_hooks')` (Deno, Bun, Node.js 20.16+). `false` turns it off; an `IoCAsyncContext` you pass is used instead.                        |
+| `OnEvent`            | none                              | `(event: IoCEvent) => void`: build, resolve, start and stop timings, and warnings. See [OnEvent and IoCEvent](#onevent-and-iocevent). A listener that throws never breaks the container.                                                                                                                                                                         |
+| `Testing`            | `false`                           | For tests: lifts [sealing](#sealing) (any code may replace, decorate or unregister any registration) and enables [`Override`](#overridekey-value-options). Scopes of a testing container are testing too.                                                                                                                                                        |
+| `EncapsulateModules` | `false`                           | Which modules may resolve only what they declare (see [encapsulation](#encapsulation)): `true` for every module, or `(module) => boolean` to choose (`(m) => m.Name.startsWith('partner:')`). A module's own `Encapsulated` setting wins. The application itself is never limited.                                                                               |
 
 The options are frozen when the container is created, so nothing (a module included) can switch
 on testing mode or change the levels later.
@@ -798,41 +799,50 @@ interface IoCModule<TNeeds = never, TProvides = never> {
   readonly Requires?: readonly IoCModule<any, any>[];
   readonly Needs?: readonly (IoCDependencyKey<any> | readonly [IoCDependencyKey<any>, string])[];
   readonly TimeoutMs?: number;
+  readonly Encapsulated?: boolean;
   Register(ioc: IoCContainer<any>): unknown;
   OnStart?(ioc: IoCContainer<any>): unknown;
   OnStop?(ioc: IoCContainer<any>): unknown;
+  Health?(ioc: IoCContainer<any>): unknown;
 }
 ```
 
-| Member                                                                                           | Meaning                                                                                                                                             |
-| ------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `Name`                                                                                           | A unique, readable name, used in errors, `Describe()` and events                                                                                    |
-| `Requires?`                                                                                      | Modules that must be added, and started, before this one                                                                                            |
-| `Needs?`                                                                                         | Keys (or `[key, name]`) the module expects someone else to register: the app, or a module it doesn't require. `Validate()` treats them as declared  |
-| `TimeoutMs?`                                                                                     | Overrides `PendingTimeoutMs` for this module's `OnStart` and `OnStop`; `0` turns the timeout off. Must be finite, ≥ 0: `Use()` throws otherwise     |
-| `Register(ioc)`                                                                                  | Adds the module's registrations. Synchronous: async setup belongs in factories or `OnStart`. Runs once per container, after the modules it requires |
-| `OnStart?(ioc)`                                                                                  | Runs from `Start()`, after every singleton was built, after the modules it requires; modules that don't require each other start at the same time   |
-| `OnStop?(ioc)`                                                                                   | Runs from `Dispose()`, in reverse layer order, before any instance is disposed, if the module started                                               |
-| The two type parameters are type-only: what the module needs and provides. A module written as a |                                                                                                                                                     |
-| plain object literal needs and provides nothing as far as types go; use                          |                                                                                                                                                     |
-| [`DefineModule`](#definemoduledefinition) to type it.                                            |                                                                                                                                                     |
+| Member          | Meaning                                                                                                                                             |
+| --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Name`          | A unique, readable name, used in errors, `Describe()` and events                                                                                    |
+| `Requires?`     | Modules that must be added, and started, before this one                                                                                            |
+| `Needs?`        | Keys (or `[key, name]`) the module expects someone else to register: the app, or a module it doesn't require. `Validate()` treats them as declared  |
+| `TimeoutMs?`    | Overrides `PendingTimeoutMs` for this module's `OnStart` and `OnStop`; `0` turns the timeout off. Must be finite, ≥ 0: `Use()` throws otherwise     |
+| `Encapsulated?` | `true`: the module may resolve only what it declares (see [encapsulation](#encapsulation)); `false`: never limited. Wins over `EncapsulateModules`  |
+| `Register(ioc)` | Adds the module's registrations. Synchronous: async setup belongs in factories or `OnStart`. Runs once per container, after the modules it requires |
+| `OnStart?(ioc)` | Runs from `Start()`, after every singleton was built, after the modules it requires; modules that don't require each other start at the same time   |
+| `OnStop?(ioc)`  | Runs from `Dispose()`, in reverse layer order, before any instance is disposed, if the module started                                               |
+| `Health?(ioc)`  | Runs from [`Health()`](#healthoptions): throw, or return `false`, when the module isn't working                                                     |
+
+The two type parameters are type-only: what the module needs and provides. A module written as a
+plain object literal needs and provides nothing as far as types go; use
+[`DefineModule`](#definemoduledefinition) to type it.
+
+`OnStart`, `OnStop` and `Health` can read [`ioc.Signal`](#signal), which aborts when the container
+gives up on them.
 
 ### The module view
 
-A module's `Register`, `OnStart` and `OnStop`, and **every factory and decorator the module
-registers**, receive a **module view** of the container, not the container itself:
+A module's `Register`, `OnStart`, `OnStop` and `Health`, and **every factory and decorator the
+module registers**, receive a **module view** of the container, not the container itself:
 
 - **It acts as the module.** What it registers belongs to the module: `Describe()` reports the
   module as the registration's origin, and the [sealing rules](#sealing) decide who may change it
   later.
 - **It registers and resolves:** `RegisterClass`, `RegisterFactory`, `RegisterValue`, `Decorate`,
   `Unregister`, `Isolate`, `Resolve`, `TryResolve`, `ResolveAll`, `ResolveNamed`,
-  `ResolveRecord`, `Names`, `Has`, `Describe`, `Validate`, `State` and `Typed`. `CreateScope()`
+  `ResolveRecord`, `Names`, `Has`, `Describe`, `Validate`, `State`, `Signal` and `Typed`. An
+  [encapsulated](#encapsulation) module's view resolves only what the module declares. `CreateScope()`
   returns a module view of the new scope, so registrations there belong to the module too.
-- **It leaves the lifecycle to the application.** `Use`, `Expect`, `Start`, `Activate`, `Dispose`
-  and `Override` throw
+- **It leaves the lifecycle to the application.** `Use`, `Expect`, `Start`, `Activate`, `Dispose`,
+  `Health` and `Override` throw
   [`IoCRegistrationError`](./errors.md#module--called--which-only-the-application-can-call)
-  (`Start`, `Activate` and `Dispose` reject).
+  (`Start`, `Activate`, `Dispose` and `Health` reject).
 - **It is closed.** The view is a separate object, not an `IoCContainer`: it has no prototype
   link to the container and holds it in a private field, so module code can't reach the
   container, or act as another module, through it. The container's options are frozen, so a
@@ -943,6 +953,57 @@ app.RegisterValue($Clock, () => 42, { Replace: true }); // IOC_MODULE_OVERRIDDEN
 console.log(await app.Resolve($Region), (await app.Resolve($Clock))(), warnings);
 // us 42 [ "IOC_DEFAULT_REPLACED", "IOC_MODULE_OVERRIDDEN" ]
 ```
+
+### Encapsulation
+
+Sealing stops modules from changing each other's registrations. Encapsulation also limits what a
+module may **resolve**: an encapsulated module may resolve only
+
+- what it registers itself,
+- the keys it lists in `Needs` (whoever registers them), and
+- what the modules in its own `Requires` register (not what their requirements register).
+
+Anything else throws [`IoCAccessError`](./errors.md#module--is-encapsulated-and-cant-resolve-)
+(`IOC_ACCESS_DENIED`), from every resolve method of its view, from its hooks, and from the
+factories it registered (their `Deps` included). `Describe()` and `Validate()` on its view throw
+it too, since they would show the whole container. A scope the module creates keeps the limit.
+
+A module is encapsulated when it says `Encapsulated: true`, or when the container's
+`EncapsulateModules` option picks it (and the module doesn't say `Encapsulated: false`). Use it
+for modules you don't write: partner and third-party plugins, so they can only use what they
+declare, and the declaration is the contract you review. `Validate()` reports the same mistakes
+ahead of time as [`undeclared`](#validateoptions), counting only direct `Requires` for an
+encapsulated module.
+
+A module still provides a key the application replaced: when the application overrides a module's
+`Default: true` registration, modules that require that module may still resolve the key.
+
+```ts
+import { IoCAccessError, IoCContainer, IoCToken } from '@fathym/ioc';
+
+const $DbUrl = IoCToken<string, 'DbUrl'>('DbUrl');
+const $ApiKey = IoCToken<string, 'ApiKey'>('ApiKey');
+
+const ioc = new IoCContainer({ EncapsulateModules: (m) => m.Name.startsWith('partner:') })
+  .RegisterValue($DbUrl, 'postgres://db.internal/app')
+  .RegisterValue($ApiKey, 'k-123')
+  .Use({
+    Name: 'partner:analytics',
+    Needs: [$ApiKey], // the contract: all it may resolve from outside
+    Register: () => {},
+    OnStart: async (c) => {
+      console.log(await c.Resolve($ApiKey)); // k-123
+      await c.Resolve($DbUrl).catch((err) => console.log(err instanceof IoCAccessError)); // true
+    },
+  });
+
+await ioc.Start();
+await ioc.Dispose();
+```
+
+> **Note:** Like sealing, encapsulation is a guardrail and a reviewable contract, not a security
+> boundary: code in the same process can still share objects in other ways. Run untrusted code in
+> a separate process or worker.
 
 ### DefineModule(definition)
 
@@ -1068,13 +1129,13 @@ Checks the registrations visible from this container without building anything, 
 `{ Throw: false }` it returns the problems instead, and an empty array when there are none. Each
 issue is `{ Kind, Service, Message }`:
 
-| `Kind`       | Problem                                                                                                                                                        |
-| ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `missing`    | A declared dependency (`Deps`) that isn't registered                                                                                                           |
-| `cycle`      | A cycle between declared dependencies (`IoCLazy` dependencies don't count)                                                                                     |
-| `captive`    | A service that depends, directly or through transients, on a shorter-lived one: a singleton on a scoped service, a tenant-level service on a request-level one |
-| `arguments`  | A class registered without `Deps` whose constructor declares parameters                                                                                        |
-| `undeclared` | A module's service depends on a service from another module that the module neither `Requires` (directly or transitively) nor lists in `Needs`                 |
+| `Kind`       | Problem                                                                                                                                                                                                                                       |
+| ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `missing`    | A declared dependency (`Deps`) that isn't registered                                                                                                                                                                                          |
+| `cycle`      | A cycle between declared dependencies (`IoCLazy` dependencies don't count)                                                                                                                                                                    |
+| `captive`    | A service that depends, directly or through transients, on a shorter-lived one: a singleton on a scoped service, a tenant-level service on a request-level one                                                                                |
+| `arguments`  | A class registered without `Deps` whose constructor declares parameters                                                                                                                                                                       |
+| `undeclared` | A module's service depends on a service from another module, or from the application, that the module neither `Requires` (directly, for an encapsulated module) nor lists in `Needs`. Covers `Deps` and what factories resolved once they ran |
 
 Lifetimes rank from longest to shortest: singleton, then each declared level in order, then
 `scoped` without a level. Transients have no rank of their own; `Validate()` looks through them.
@@ -1307,6 +1368,116 @@ try {
 console.log(ioc.State); // disposed
 ```
 
+### Health(options?)
+
+```ts ignore
+Health(options?: { TimeoutMs?: number }): Promise<IoCHealthReport>
+
+interface IoCHealthReport {
+  readonly Healthy: boolean;          // started, and every check passed
+  readonly State: IoCContainerState;
+  readonly Modules: readonly IoCModuleHealth[];
+}
+
+interface IoCModuleHealth {
+  readonly Module: string;
+  readonly Healthy: boolean;
+  readonly Ms: number;
+  readonly Error?: unknown;           // what Health threw, or an IoCResolveTimeoutError
+}
+```
+
+Checks that the application is ready for work, for readiness and liveness probes. It runs the
+`Health` hook of every started module, all at the same time, each bounded by `TimeoutMs` (default
+5000; `0` for no limit). A check fails by throwing or returning `false`; anything else passes. A
+failing or slow check is recorded in the report, never thrown. A check that times out is told
+through its [`Signal`](#signal).
+
+`Healthy` is `true` when the container has started and every check passed. Before `Start()`
+finishes, and after `Dispose()`, it is `false` and `Modules` is empty. For a liveness probe,
+treat only `State === 'disposed'` (or a `Health()` that doesn't answer) as dead: a container that
+is still starting is alive, just not ready. Keep `TimeoutMs` below your probe's own timeout, so
+the report, not the probe, names the slow module. Each result is also reported to `OnEvent` as a
+`health` event.
+
+```ts
+import { IoCContainer, IoCToken } from '@fathym/ioc';
+
+const $Pool = IoCToken<{ ping(): Promise<boolean> }, 'Pool'>('Pool');
+
+let reachable = true;
+
+const ioc = new IoCContainer().Use({
+  Name: 'Database',
+  Register: (c) => c.RegisterValue($Pool, { ping: () => Promise.resolve(reachable) }),
+  Health: async (c) => {
+    if (!await (await c.Resolve($Pool)).ping()) throw new Error('database unreachable');
+  },
+});
+
+console.log((await ioc.Health()).Healthy); // false: not started yet
+
+await ioc.Start();
+
+console.log((await ioc.Health()).Healthy); // true
+
+reachable = false;
+
+const report = await ioc.Health({ TimeoutMs: 1000 });
+
+console.log(report.Healthy, String(report.Modules[0].Error)); // false Error: database unreachable
+
+await ioc.Dispose();
+```
+
+### Signal
+
+```ts ignore
+get Signal(): IoCAbortSignal | undefined   // the platform's AbortSignal
+```
+
+Inside a factory (on the `ioc` it receives) or a module's `OnStart`, `OnStop` or `Health`, an
+`AbortSignal` that aborts when the container gives up on that work. Pass it to `fetch`, database
+clients and long loops, so abandoned work actually stops. It aborts, with the reason as
+`signal.reason`, when:
+
+- a build during `Start()`/`Activate()` times out (`IoCResolveTimeoutError`);
+- a module's `OnStart`, `OnStop` or `Health` times out (`IoCResolveTimeoutError`);
+- another module starting in the same layer fails (that module's error), or a failed `Start()`
+  rolls back and abandons the builds still running (the error that failed it);
+- the container is disposed while the work runs (`IoCContainerDisposedError`).
+
+A `Resolve` that times out does **not** abort the build: other callers may still be waiting for
+it. Each build and each hook call has its own signal, and a factory that reads `Signal` after the
+container gave up still sees it aborted. It is `undefined` elsewhere (on the container itself, or
+on a runtime without `AbortController`).
+
+```ts
+import { IoCContainer, IoCToken } from '@fathym/ioc';
+
+const $Catalog = IoCToken<string[], 'Catalog'>('Catalog');
+
+const ioc = new IoCContainer({ PendingTimeoutMs: 50 }).RegisterFactory($Catalog, async (c) => {
+  const pages: string[] = [];
+
+  // A slow import; it stops as soon as the container gives up on it.
+  while (!c.Signal?.aborted) {
+    pages.push(`page ${pages.length}`);
+    await new Promise((r) => setTimeout(r, 10));
+  }
+
+  console.log(c.Signal.reason.name); // IoCResolveTimeoutError
+
+  return pages;
+});
+
+await ioc.Start().catch((err) => console.log(err.name)); // IoCActivationError
+```
+
+`IoCAbortSignal` is the platform's `AbortSignal` type where your TypeScript setup declares one
+(DOM or Node.js types), else the part of it the container guarantees: `aborted`, `reason`,
+`throwIfAborted()`, `addEventListener('abort', …)` and `removeEventListener`.
+
 ---
 
 ## Scopes
@@ -1494,6 +1665,7 @@ type IoCEvent =
   | { Type: 'resolve'; Service: string; Ms: number; Error?: unknown }
   | { Type: 'start'; Module: string; Ms: number; Error?: unknown }
   | { Type: 'stop'; Module: string; Ms: number; Error?: unknown }
+  | { Type: 'health'; Module: string; Ms: number; Healthy: boolean; Error?: unknown }
   | { Type: 'warning'; Code: IoCWarningCode; Message: string; Service?: string };
 ```
 
@@ -1502,6 +1674,7 @@ What the `OnEvent` option receives:
 - **`build`:** a service was built, or failed to build (`Error` is set), with how long it took;
 - **`resolve`:** a `Resolve` call finished, or failed;
 - **`start` / `stop`:** a module's `OnStart` / `OnStop` finished, or failed;
+- **`health`:** a module's `Health` check finished, from [`Health()`](#healthoptions);
 - **`warning`:** something failed where no caller could be told.
 
 | `IoCWarningCode`          | When                                                                                                                                                 |
@@ -1657,27 +1830,29 @@ All type-only:
 | `IoCModuleDefinition<TRequires, TNeeds, TResult>` | What `DefineModule` takes                                                                                                                 |
 | `IoCModuleNeeds<M>`, `IoCModuleProvides<M>`       | What a module needs (including what the modules it requires need and don't get from their own requirements), and what it registers itself |
 | `IoCModulesNeed<Ms>`, `IoCModulesProvide<Ms>`     | The same for a list of modules                                                                                                            |
-| `IoCModuleKeys<TRequires, TNeeds>`                | The registry a typed module's `Register`, `OnStart` and `OnStop` see: its `Needs` and what its direct `Requires` register                 |
+| `IoCModuleKeys<TRequires, TNeeds>`                | The registry a typed module's `Register`, `OnStart`, `OnStop` and `Health` see: its `Needs` and what its direct `Requires` register       |
 | `IoCKeysOf<TContainer>`                           | The registry of a container, read from its type                                                                                           |
 | `IoCModuleTypes<TNeeds, TProvides>`               | The type-only marker carried by a module                                                                                                  |
 
 ### Other types
 
-| Type                                              | Meaning                                                                        |
-| ------------------------------------------------- | ------------------------------------------------------------------------------ |
-| `IoCServiceKey<T>`                                | `IoCToken<T>` or `IoCServiceKeyConstructor<T>`: anything a service is keyed by |
-| `IoCServiceConstructor<T>`                        | A constructible class producing `T`                                            |
-| `IoCServiceKeyConstructor<T>`                     | A class (abstract allowed) used as a key                                       |
-| `IoCServiceResolver<T>`                           | A factory: `(ioc: IoCContainer) => T \| Promise<T>`                            |
-| `IoCServiceOptions`                               | The options shared by every registration method                                |
-| `IoCRegisterOptions<TName, T>`                    | `RegisterFactory`'s options (without `Deps`)                                   |
-| `IoCRegisterClassOptions<C, TKeys, TName, TType>` | `RegisterClass`'s options                                                      |
-| `IoCContainerOptions`                             | The container's [options](#container-options)                                  |
-| `IoCAsyncContext`                                 | The part of `AsyncLocalStorage` the `AsyncContext` option uses                 |
-| `IoCContainerState`                               | `'idle' \| 'starting' \| 'started' \| 'stopping' \| 'disposed'`                |
-| `IoCDescription`, `IoCServiceDescription`         | What [`Describe()`](#describe) returns                                         |
-| `IoCEvent`, `IoCWarningCode`                      | What [`OnEvent`](#onevent-and-iocevent) receives                               |
-| `IoCValidationIssue`                              | One problem found by `Validate()`: `{ Kind, Service, Message }`                |
+| Type                                                     | Meaning                                                                        |
+| -------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| `IoCServiceKey<T>`                                       | `IoCToken<T>` or `IoCServiceKeyConstructor<T>`: anything a service is keyed by |
+| `IoCServiceConstructor<T>`                               | A constructible class producing `T`                                            |
+| `IoCServiceKeyConstructor<T>`                            | A class (abstract allowed) used as a key                                       |
+| `IoCServiceResolver<T>`                                  | A factory: `(ioc: IoCContainer) => T \| Promise<T>`                            |
+| `IoCServiceOptions`                                      | The options shared by every registration method                                |
+| `IoCRegisterOptions<TName, T>`                           | `RegisterFactory`'s options (without `Deps`)                                   |
+| `IoCRegisterClassOptions<C, TKeys, TName, TType>`        | `RegisterClass`'s options                                                      |
+| `IoCContainerOptions`                                    | The container's [options](#container-options)                                  |
+| `IoCAsyncContext`                                        | The part of `AsyncLocalStorage` the `AsyncContext` option uses                 |
+| `IoCContainerState`                                      | `'idle' \| 'starting' \| 'started' \| 'stopping' \| 'disposed'`                |
+| `IoCDescription`, `IoCServiceDescription`                | What [`Describe()`](#describe) returns                                         |
+| `IoCEvent`, `IoCWarningCode`                             | What [`OnEvent`](#onevent-and-iocevent) receives                               |
+| `IoCHealthReport`, `IoCModuleHealth`, `IoCHealthOptions` | What [`Health()`](#healthoptions) takes and returns                            |
+| `IoCAbortSignal`                                         | The type of [`Signal`](#signal)                                                |
+| `IoCValidationIssue`                                     | One problem found by `Validate()`: `{ Kind, Service, Message }`                |
 
 ### Errors
 
@@ -1701,7 +1876,8 @@ type IoCErrorCode =
   | 'IOC_START_FAILED'
   | 'IOC_MODULE_CYCLE'
   | 'IOC_RESOLVE_TIMEOUT'
-  | 'IOC_NOT_ISOLATABLE';
+  | 'IOC_NOT_ISOLATABLE'
+  | 'IOC_ACCESS_DENIED';
 
 function isIoCError(error: unknown, code?: IoCErrorCode): error is Error & { code: IoCErrorCode };
 abstract class IoCError extends Error {
@@ -1729,6 +1905,7 @@ abstract class IoCError extends Error {
 | `IoCStartError`                 | `IOC_START_FAILED`                            | `Module`, `cause`, `Failures`, `RollbackErrors` | [Module '…' failed to start …](./errors.md#module--failed-to-start-)                               |
 | `IoCNotIsolatableError`         | `IOC_NOT_ISOLATABLE`                          | `Service`, `Reason`                             | [… can't be isolated: …](./errors.md#-cant-be-isolated-)                                           |
 | `IoCResolveTimeoutError`        | `IOC_RESOLVE_TIMEOUT`                         | `Service`, `TimeoutMs`, `Waiting`               | [… did not finish within …ms](./errors.md#-did-not-finish-within-ms)                               |
+| `IoCAccessError`                | `IOC_ACCESS_DENIED`                           | `Module`, `Service`                             | [Module '…' is encapsulated …](./errors.md#module--is-encapsulated-and-cant-resolve-)              |
 
 ```ts
 import { IoCContainer, IoCServiceNotFoundError, IoCToken, isIoCError } from '@fathym/ioc';

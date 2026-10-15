@@ -139,6 +139,11 @@ console.log(ioc.Has(IoCToken<RateTable, 'Rates'>('Rates'))); // false
 `Describe()` still lists the private registration (as `Rates`, owned by `@acme/billing`), so
 tooling can show the whole graph. Listing it doesn't give anyone the key.
 
+Private tokens hide what a package doesn't export. To also limit what a module may use among the
+keys it _can_ name (the application's exported tokens, other packages' public services), make it
+an [encapsulated module](../guides/modules-and-lifecycle.md#encapsulated-modules): it may then
+resolve only what it registers, lists in `Needs`, or gets from the modules it requires.
+
 ## Names
 
 Each key can hold several registrations, each with a **name**. The default name is `$default`.
@@ -279,7 +284,7 @@ console.log(warnings); // [ "IOC_DEFAULT_REPLACED", "IOC_MODULE_OVERRIDDEN" ]
 
 ### A guardrail, not a security boundary
 
-Sealing and private tokens protect against mistakes, and they make ownership clear: every
+Sealing, private tokens and encapsulated modules protect against mistakes, and they make ownership clear: every
 registration has one owner, and every change to it is either allowed, reported or refused with a
 message that names the fix. They are **not a security boundary**. Code running in the same process
 can reach far more than the container (the objects you hand it, globals, the runtime itself). Run
