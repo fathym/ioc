@@ -1250,6 +1250,8 @@ export class IoCContainer<TKeys = any> {
   >(...deps: TDeps): IoCContainer<TKeys | IoCExpected<TDeps>> {
     const self = this.self();
 
+    this.assertNotModuleView('Expect');
+
     for (const dep of deps) {
       const { key, name } = normalizeDependency(dep);
 
@@ -2310,6 +2312,8 @@ export class IoCContainer<TKeys = any> {
       `Module '${module.Name}' called ${method}(), which only the application can call. ` +
         (method === 'Use'
           ? `List the modules a module needs in its Requires instead.`
+          : method === 'Expect'
+          ? `Declare the keys a module needs from elsewhere in its Needs instead.`
           : `Modules receive a view of the container for registering and resolving.`),
     );
   }

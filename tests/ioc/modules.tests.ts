@@ -178,7 +178,7 @@ Deno.test('Modules - module views', async (t) => {
     assertEquals(seen, ['start:kv://local', 'stop:kv://local']);
   });
 
-  await t.step('a module view refuses Use, Start, Dispose and Override', async () => {
+  await t.step('a module view refuses Use, Start, Dispose, Override and Expect', async () => {
     const other: IoCModule = { Name: 'Other', Register: () => {} };
 
     const attempts: Record<string, (c: IoCContainer) => unknown> = {
@@ -186,6 +186,7 @@ Deno.test('Modules - module views', async (t) => {
       Start: (c) => c.Start(),
       Dispose: (c) => c.Dispose(),
       Override: (c) => c.Override($Url, 'x'),
+      Expect: (c) => c.Expect($Url),
     };
 
     for (const [method, attempt] of Object.entries(attempts)) {

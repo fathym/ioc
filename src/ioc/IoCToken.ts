@@ -41,26 +41,28 @@ export interface IoCToken<T, TId extends string = string> {
   readonly '@fathym/ioc/type': T;
 }
 
-const tokens = new WeakSet<object>();
+/**
+ * Marks token objects. It is a `Symbol.for` key so a token made by one copy of this library (two
+ * versions in one dependency tree) is still recognized by another; identity stays per object.
+ */
+const TOKEN: unique symbol = Symbol.for('@fathym/ioc/token');
 
 /**
  * Creates a new, unique token. Pass the description as a second type argument
  * (`IoCToken<string, 'DbUrl'>('DbUrl')`) to keep it in the type.
  */
 export function IoCToken<T, const TId extends string = string>(description: TId): IoCToken<T, TId> {
-  const token = Object.freeze({
+  return Object.freeze({
     Description: description,
+    [TOKEN]: true,
     toString: () => `IoCToken(${description})`,
   }) as unknown as IoCToken<T, TId>;
-
-  tokens.add(token);
-
-  return token;
 }
 
 /** True for a token created by {@link IoCToken}. */
 export function isIoCToken(value: unknown): value is IoCToken<unknown> {
-  return typeof value === 'object' && value !== null && tokens.has(value);
+  return typeof value === 'object' && value !== null &&
+    (value as { [TOKEN]?: unknown })[TOKEN] === true;
 }
 
 /** The service type carried by a token. */

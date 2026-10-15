@@ -158,6 +158,21 @@ Deno.test('IoCToken - descriptions in labels and errors', async (t) => {
   });
 });
 
+Deno.test('IoCToken - tokens from another copy of the library', async (t) => {
+  await t.step('are recognized, and still compared by reference', async () => {
+    // What IoCToken() in a second copy of @fathym/ioc (another version) produces.
+    const foreign = Object.freeze({
+      Description: 'Foreign',
+      [Symbol.for('@fathym/ioc/token')]: true,
+    }) as unknown as IoCToken<string, 'Foreign'>;
+
+    const ioc = new IoCContainer().RegisterValue(foreign, 'works');
+
+    assertEquals(await ioc.Resolve(foreign), 'works');
+    assertEquals(ioc.Has(IoCToken<string, 'Foreign'>('Foreign')), false);
+  });
+});
+
 Deno.test('IoCToken - non-token keys are rejected', async (t) => {
   const bad: [string, unknown][] = [
     ['a string', 'Db'],
