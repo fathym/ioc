@@ -11,20 +11,32 @@
   "exports": {
     ".": "./mod.ts"
   },
+  // What JSR publishes: the library and its landing docs (the full docs live on GitHub).
+  "publish": {
+    "include": ["mod.ts", "src/", "README.md", "LICENSE", "CHANGELOG.md"]
+  },
   "tasks": {
-    "build": "deno task build:fmt && deno task build:lint && deno task build:check && deno task build:mod",
+    "build": "deno task build:fmt && deno task build:lint && deno task build:check && deno task build:docs && deno task build:mod",
     "build:check": "deno check **/*.ts",
+    "build:docs": "deno task docs:check",
     "build:mod": "deno run -A mod.ts build",
     "build:fmt": "deno fmt",
     "build:lint": "deno lint",
     "deploy": "deno task build && deno task test && fathym git",
     "test": "deno test -A tests/tests.ts --parallel --coverage=cov",
+    "bench": "deno bench -A tests/ioc/resolve.bench.ts",
+    "build:npm": "deno run -A scripts/build-npm.ts",
+    "test:runtimes": "deno run -A scripts/test-runtimes.ts",
+    "docs:check": "deno run -A scripts/docs-check.ts",
+    "docs:llms": "deno run -A scripts/docs-check.ts --write",
     "version": "deno run -A jsr:@fathym/common@0.2.325/build/version"
   },
   "imports": {},
+  // Build output (the npm package) is generated, never checked, linted or formatted.
+  "exclude": ["dist/", "cov/"],
   "lint": {
-    "include": ["src/"],
-    "exclude": [],
+    "include": ["src/", "tests/", "scripts/", "examples/"],
+    "exclude": ["tests/fixtures/"],
     "rules": {
       "tags": ["recommended"],
       "include": ["ban-untagged-todo"],
@@ -32,8 +44,8 @@
     }
   },
   "fmt": {
-    "include": ["src/"],
-    "exclude": [],
+    "include": ["src/", "tests/", "scripts/", "examples/", "docs/", ".github/", "*.md"],
+    "exclude": ["tests/fixtures/"],
     "indentWidth": 2,
     "lineWidth": 100,
     "proseWrap": "preserve",
@@ -41,20 +53,9 @@
     "singleQuote": true,
     "useTabs": false
   },
+  // Deno KV types are used by the docs and examples (the pattern dependents use).
   "unstable": ["kv"],
   "compilerOptions": {
-    "emitDecoratorMetadata": true,
-    "experimentalDecorators": true,
-    "jsx": "react-jsx",
-    "jsxImportSource": "preact",
-    "lib": [
-      "dom",
-      "dom.iterable",
-      "dom.asynciterable",
-      "deno.ns",
-      "deno.window",
-      "deno.unstable"
-    ],
     "strict": true
   },
   "lock": false

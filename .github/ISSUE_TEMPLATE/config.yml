@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Documentation
+    url: https://github.com/fathym/ioc/blob/main/docs/README.md
+    about: Tutorial, guides, API reference and the error catalog.
+  - name: Report a security vulnerability
+    url: https://github.com/fathym/ioc/security/advisories/new
+    about: Please report security issues privately.
