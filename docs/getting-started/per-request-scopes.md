@@ -4,7 +4,7 @@ DocumentType: Guide
 Title: 'Step 4: Per-Request Scopes'
 Summary: Serve HTTP with Deno.serve and give every request its own scope, request value and scoped services, disposed when the response is sent.
 Created: 2026-10-13
-Updated: 2026-10-13
+Updated: 2026-10-15
 Owners:
   - fathym
 References:
@@ -41,7 +41,7 @@ class NotesHandler {
 const ioc = new IoCContainer()
   .Typed()
   .Expect($Request) // registered on each request's scope, below
-  .RegisterClass(RequestContext, { Lifetime: 'scoped', Lazy: true })
+  .RegisterClass(RequestContext, { Lifetime: 'scoped' })
   .RegisterClass(NotesHandler, { Deps: [RequestContext, $Request], Lifetime: 'transient' });
 
 const server = Deno.serve({ port: 0, onListen() {} }, async (req) => {
@@ -62,7 +62,8 @@ await server.shutdown();
 ## What just happened
 
 - **`CreateScope()` makes a cheap child container.** It can resolve everything the root can.
-  Nothing is copied, and the root keeps no reference to it.
+  Nothing is copied. The root holds it weakly: it disposes the scope if the scope is still live
+  when the root is disposed, and never keeps a forgotten scope alive.
 - **`scoped` services get one instance per scope.** Every service in this request shares the same
   `RequestContext`; the next request gets a new one.
 - **Registrations on a scope stay in that scope.** `$Request` exists only inside this request's
@@ -73,8 +74,9 @@ await server.shutdown();
   created.
 
 > **Warning:** A scope is a child container _you_ create. It is not tied to an HTTP request
-> unless you create one per request, as above. Singletons always come from the root, so a
-> singleton can never capture one request's data.
+> unless you create one per request, as above. Singletons always come from the root, and
+> resolving a `scoped` service from the root throws `IoCScopeRequiredError`, so one request's data
+> can't leak into a shared instance.
 
 ## What's Next
 

@@ -2,9 +2,9 @@
 FrontmatterVersion: 1
 DocumentType: Guide
 Title: Registering Services
-Summary: Choose the right way to register a class, factory or value - with a decision table and an example of every form.
+Summary: Choose the right way to register a class, factory or value - with a decision table, an example of every form, and every registration option.
 Created: 2026-10-13
-Updated: 2026-10-13
+Updated: 2026-10-15
 Owners:
   - fathym
 References:
@@ -20,21 +20,19 @@ References:
 
 ## Pick a method
 
-| I have…                                                  | Use                                                                         |
-| -------------------------------------------------------- | --------------------------------------------------------------------------- |
-| A class with no constructor parameters                   | `RegisterClass(Clock)`                                                      |
-| A class whose constructor needs other services           | `RegisterClass(Repo, { Deps: [Config, $Db] })`                              |
-| A class that implements an interface token               | `RegisterClass(PgDb, { Type: $Db })`                                        |
-| An interface or abstract class, and the code to build it | `RegisterFactory($Db, (c) => …)` or `RegisterFactory(Cache, (c) => …)`      |
-| Async setup (connect, fetch, load)                       | the same, with an `async` factory, often `Lazy: true`                       |
-| A value I already have (config, a function, a request)   | `RegisterValue($Port, 8080)`                                                |
-| Older code using `Register` (deprecated)                 | See [moving off `Register`](../migration/from-0.0.x.md#moving-off-register) |
+| I have…                                                  | Use                                                                    |
+| -------------------------------------------------------- | ---------------------------------------------------------------------- |
+| A class with no constructor parameters                   | `RegisterClass(Clock)`                                                 |
+| A class whose constructor needs other services           | `RegisterClass(Repo, { Deps: [Config, $Db] })`                         |
+| A class that implements an interface token               | `RegisterClass(PgDb, { Type: $Db })`                                   |
+| An interface or abstract class, and the code to build it | `RegisterFactory($Db, (c) => …)` or `RegisterFactory(Cache, (c) => …)` |
+| Async setup (connect, fetch, load)                       | the same, with an `async` factory                                      |
+| A value I already have (config, a function, a request)   | `RegisterValue($Port, 8080)`                                           |
 
-Prefer the explicit methods: `RegisterClass`, `RegisterFactory` and `RegisterValue`. They never
-guess whether you passed a class or a factory, and they return the container, so registrations
-chain and a [typed container](./declared-dependencies.md#depend-only-on-whats-registered-typed-containers)
-can check `Deps` against what's registered. `Register`, the original overloaded method, is
-deprecated and will be removed in 1.0.
+Each method does one thing: `RegisterClass` constructs, `RegisterFactory` calls, `RegisterValue`
+stores. They return the container, so registrations chain, and a
+[typed container](./declared-dependencies.md#depend-only-on-whats-registered-typed-containers)
+can check `Deps` against what's registered.
 
 ## Every form, in one program
 
@@ -62,11 +60,10 @@ const ioc = new IoCContainer()
   .RegisterValue($Port, 8080) // a value
   .RegisterFactory($Db, async (c) => { // an async factory under a token
     const { url } = await c.Resolve(Config);
-    return { query: (sql) => Promise.resolve([`${url}: ${sql}`]) };
-  }, { Lazy: true })
-  .RegisterClass(Repo, { Deps: [Config, $Db] }); // a class with declared dependencies
 
-ioc.RegisterFactory(ioc.Symbol('Legacy'), () => ({ legacy: true })); // a plain symbol key (untyped)
+    return { query: (sql) => Promise.resolve([`${url}: ${sql}`]) };
+  })
+  .RegisterClass(Repo, { Deps: [Config, $Db] }); // a class with declared dependencies
 
 const repo = await ioc.Resolve(Repo);
 
@@ -74,40 +71,42 @@ console.log(await repo.db.query('select 1'), await ioc.Resolve($Port));
 // [ "kv://local: select 1" ] 8080
 ```
 
+Nothing is built when you register it. Singletons are built on first resolve, or all at once by
+`Activate()` / `Start()`, so the order of registrations never matters at runtime.
+
 ## Options
 
-Every registration accepts these options (`RegisterValue` takes only `Name`; `Type` is for
-`RegisterClass` and `Register`):
+`RegisterClass` and `RegisterFactory` accept these options. `RegisterValue` takes `Name`,
+`Default`, `Replace` and `Dispose`; `Type` is for `RegisterClass` only.
 
-| Option     | Values                    | Default      | Effect                                                                         |
-| ---------- | ------------------------- | ------------ | ------------------------------------------------------------------------------ |
-| `Lifetime` | `'transient'`, `'scoped'` | singleton    | See [lifetimes](../concepts/lifetimes.md)                                      |
-| `Lazy`     | `true`                    | eager        | Build a singleton or scoped service on first resolve, not at registration      |
-| `Name`     | any string                | `'$default'` | Register several services under one key                                        |
-| `Type`     | a token or symbol         | the class    | The key, when keying a class differently (the class must fit the token)        |
-| `Default`  | `true`                    | —            | A default that yields to any other registration, in any order (for frameworks) |
-| `Replace`  | `true`                    | —            | Replace an existing registration on purpose (required in strict mode)          |
-| `Dispose`  | `(instance) => …`         | —            | Cleanup when the owner is disposed, for resources without `Symbol.dispose`     |
+| Option       | Values                    | Default      | Effect                                                                           |
+| ------------ | ------------------------- | ------------ | -------------------------------------------------------------------------------- |
+| `Lifetime`   | `'transient'`, `'scoped'` | singleton    | See [lifetimes](../concepts/lifetimes.md)                                        |
+| `ScopeLevel` | a declared level          | —            | One instance per scope of that level; implies `scoped`                           |
+| `Name`       | any string                | `'$default'` | Register several services under one key                                          |
+| `Deps`       | keys, `[key, name]`, …    | —            | The services passed to the constructor (or to the factory, after the container)  |
+| `Type`       | a token                   | the class    | The key, when keying a class by a token (the class must fit the token's type)    |
+| `Default`    | `true`                    | —            | A default that yields to any other registration, in any order                    |
+| `Replace`    | `true`                    | —            | Replace an existing registration on purpose (otherwise registering twice throws) |
+| `Dispose`    | `(instance) => …`         | —            | Cleanup when the owner is disposed, for resources without `Symbol.dispose`       |
 
 ## What registration returns
 
 | Call                                                | Returns                                               |
 | --------------------------------------------------- | ----------------------------------------------------- |
 | `RegisterClass`, `RegisterFactory`, `RegisterValue` | The same container, typed with the new key (to chain) |
-| `Register(…, { Lifetime: 'scoped' })` (deprecated)  | A function that removes this registration             |
-| `Register(…)` (deprecated), any other lifetime      | `undefined`                                           |
 | `Decorate(…)`                                       | A function that restores the previous registration    |
-
-Remove a registration with `Unregister(key, name?)`. The function the deprecated `Register` returns
-for a scoped registration only ever removes the registration it created. If something was
-registered again under the same key and name since, the newer registration stays.
+| `Unregister(key, name?)`                            | Whether a registration was removed                    |
 
 ## Pitfalls
 
-- **Eager singletons are built at registration.** Register dependencies first, or use `Lazy: true`
-  so order doesn't matter.
-- **A named `function` declaration passed to the deprecated `Register` is constructed,** not
-  called. `RegisterFactory` always calls it.
+- **Registering a key and name twice throws** `IoCDuplicateRegistrationError`. Say `Replace: true`
+  if you meant it, or `Default: true` for a default others may replace.
+- **A module's registrations are sealed.** Replacing one from outside the module throws
+  `IoCSealedError` unless the module registered it with `Default: true`. See
+  [sealing](../concepts/keys-and-registrations.md#sealing-modules-own-their-registrations).
+- **Keys are tokens or classes.** A string or a symbol throws `IoCRegistrationError`
+  (`IOC_INVALID_KEY`). Declare each token once and import it.
 - **A registration made as a statement doesn't change the variable's type.** To have `Deps`
   checked against what's registered, chain the calls on a typed container.
 - **Abstract classes can't be constructed,** so `RegisterClass(Cache)` is a type error. Give it a

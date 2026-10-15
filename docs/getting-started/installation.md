@@ -4,7 +4,7 @@ DocumentType: Guide
 Title: 'Step 1: Installation'
 Summary: Add @fathym/ioc to a Deno, Node.js or Bun project and import it.
 Created: 2026-10-13
-Updated: 2026-10-13
+Updated: 2026-10-15
 Owners:
   - fathym
 References:
@@ -29,7 +29,7 @@ This adds an entry to your `deno.json` import map:
 ```jsonc
 {
   "imports": {
-    "@fathym/ioc": "jsr:@fathym/ioc@^0.1.0"
+    "@fathym/ioc": "jsr:@fathym/ioc@^1.0.0"
   }
 }
 ```
@@ -72,9 +72,9 @@ no Deno, Node.js or browser APIs.
 }
 ```
 
-> **Warning:** Class keys are class **names**. If you bundle and minify, keep class names
-> (`keepNames: true` in esbuild and Vite, `keep_classnames: true` in Terser). Otherwise two
-> classes can minify to the same name and share a key. See
+> **Note:** A class key is the class itself, so minifying class names never changes which
+> service you get. Errors and `Describe()` print class names, though: keep them readable with
+> `keepNames: true` in esbuild and Vite (`keep_classnames: true` in Terser). See
 > [keys and registrations](../concepts/keys-and-registrations.md#same-named-classes).
 
 **Runtimes without explicit resource management.** `await using` needs runtime support (or a

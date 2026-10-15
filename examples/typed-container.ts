@@ -1,19 +1,19 @@
 /**
  * Typed containers: `Typed()` plus chained registrations, so `Deps` may only name what's already
- * registered. Feature modules state the keys they need, and a per-request key is declared with
- * `Expect`.
+ * registered. Feature modules made with `DefineModule` state the keys they need, `Use()` checks
+ * them, and a per-request key is declared with `Expect`.
  *
  * Run: deno run examples/typed-container.ts
  */
-import { IoCContainer, IoCToken } from '../mod.ts';
+import { DefineModule, IoCContainer, IoCToken } from '../mod.ts';
 
 interface Db {
   query(sql: string): string[];
 }
 
-const $Db = IoCToken<Db, 'Example/Db'>('Example/Db');
-const $Table = IoCToken<string, 'Example/Table'>('Example/Table');
-const $Request = IoCToken<Request, 'Example/Request'>('Example/Request');
+const $Db = IoCToken<Db, 'Db'>('Db');
+const $Table = IoCToken<string, 'Table'>('Table');
+const $Request = IoCToken<Request, 'Request'>('Request');
 
 class NotesRepo {
   constructor(public db: Db, public table: string) {}
@@ -31,22 +31,32 @@ class NotesHandler {
   }
 }
 
-// data.ts: registers the database and nothing else.
-function registerData<K>(ioc: IoCContainer<K>) {
-  return ioc.RegisterValue($Db, { query: (sql) => [`ran "${sql}"`] });
-}
+// data.ts: provides $Db and nothing else.
+const Data = DefineModule({
+  Name: 'Data',
+  Register: (ioc) => ioc.RegisterValue($Db, { query: (sql) => [`ran "${sql}"`] }),
+});
 
-// notes.ts: needs $Db, so it only accepts a container that already has it.
-function registerNotes<K>(ioc: IoCContainer<K | typeof $Db>) {
-  return ioc
-    .RegisterValue($Table, 'notes')
-    .RegisterClass(NotesRepo, { Deps: [$Db, $Table], Lazy: true })
-    .Expect($Request) // registered on each request's scope
-    .RegisterClass(NotesHandler, { Deps: [NotesRepo, $Request], Lifetime: 'transient' });
-}
+// notes.ts: needs $Db and $Request from someone else. Inside Register, Deps may name those,
+// plus what this chain registered above.
+const Notes = DefineModule({
+  Name: 'Notes',
+  Needs: [$Db, $Request],
+  Register: (ioc) =>
+    ioc
+      .RegisterValue($Table, 'notes')
+      .RegisterClass(NotesRepo, { Deps: [$Db, $Table] })
+      .RegisterClass(NotesHandler, { Deps: [NotesRepo, $Request], Lifetime: 'transient' }),
+});
 
-// main.ts: swapping the two calls below is a compile error.
-const ioc = registerNotes(registerData(new IoCContainer().Typed()));
+// main.ts: drop `.Use(Data)` or `.Expect($Request)` and the `.Use(Notes)` line won't compile.
+const ioc = new IoCContainer()
+  .Typed()
+  .Expect($Request) // registered on each request's scope
+  .Use(Data)
+  .Use(Notes);
+
+ioc.Validate();
 
 await using scope = ioc.CreateScope();
 

@@ -4,7 +4,7 @@ DocumentType: Guide
 Title: Resolver Chains
 Summary: Implement "try each handler until one matches" with named registrations and IoCAll - ordered, extensible by plugins, and overridable per tenant or request through scopes.
 Created: 2026-10-13
-Updated: 2026-10-13
+Updated: 2026-10-15
 Owners:
   - fathym
 References:
@@ -42,7 +42,7 @@ interface Handler {
   handle(path: string): string;
 }
 
-const $Handler = IoCToken<Handler, 'Chain.Handler'>('Chain.Handler');
+const $Handler = IoCToken<Handler, 'Handler'>('Handler');
 
 class Chain {
   private ordered: Handler[];
@@ -66,7 +66,7 @@ const handler = (priority: number, prefix: string, label: string): Handler => ({
   handle: (p) => `${label}:${p}`,
 });
 
-const root = IoCContainer.Create()
+const root = new IoCContainer()
   .RegisterValue($Handler, handler(10, '/api', 'api'), { Name: 'api' })
   .RegisterValue($Handler, handler(0, '/', 'static'), { Name: 'static' })
   .RegisterClass(Chain, { Deps: [IoCAll($Handler)], Lifetime: 'scoped' });
@@ -89,12 +89,14 @@ The chain is `scoped`, so each scope builds it from the handlers it can see.
 ## Rules
 
 - **Make the chain `scoped` (or `transient`)** when scopes may add handlers. A singleton chain is
-  built once, from the root's handlers.
+  built once, from the root's handlers. A scoped chain can't be resolved from the root
+  (`IoCScopeRequiredError`), so resolve it from the request's scope.
 - **Order by an explicit field,** not by registration order.
 - **Validate is satisfied by an empty chain:** `IoCAll` never reports a missing dependency. Assert
   a minimum in the chain's constructor if you need one.
-- **Expensive handlers can be lazy:** inject `IoCLazy` per handler, or register handler factories
-  with `Lazy: true` (they are built when the chain is).
+- **Expensive handlers are built on demand:** handlers registered with factories are built when
+  the chain is first built, not at registration; inject `IoCLazy` per handler to defer them
+  further.
 - **List the chain** with `ioc.Names($Handler)` (nothing is built) or `Describe()`.
 
 ## What's Next

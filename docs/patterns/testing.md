@@ -2,9 +2,9 @@
 FrontmatterVersion: 1
 DocumentType: Guide
 Title: Testing Pattern
-Summary: Test against the real wiring - one wiring function shared by the app and the tests, Validate in CI, a fresh container or scope per test, Override for the few fakes, and Describe to assert structure. No hand-written fake containers.
+Summary: Test against the real wiring - the app's modules shared by main.ts and the tests, a testing container with Override for the few fakes, a scope per test, Validate and Start in CI, and Describe to assert structure. No hand-written fake containers.
 Created: 2026-10-13
-Updated: 2026-10-13
+Updated: 2026-10-15
 Owners:
   - fathym
 References:
@@ -21,14 +21,15 @@ References:
 
 ## The shape
 
-1. **One wiring function** (or module list) builds the container. `main.ts` and every test call
-   it; nothing in tests re-creates registrations by hand.
+1. **The app's modules** are the wiring. `main.ts` uses them in `new IoCContainer()`; every test
+   uses them in `new IoCContainer({ Testing: true })`. Nothing in tests re-creates registrations
+   by hand.
 2. **A wiring test** calls `Validate()` (and `Start()` with fakes) so a missing or misordered
    registration fails CI, not production.
-3. **Each test gets a fresh container** from the wiring function, or a scope of a shared one.
-4. **Fakes replace keys,** never the container: `Override(key, fake)` or a registration on the
-   test's scope. The code under test receives a real container, so lifetimes, scopes and disposal
-   behave as in production.
+3. **Each test gets a fresh container,** or a scope of a shared one.
+4. **Fakes replace keys,** never the container: `Override(key, fake)`, which only a testing
+   container allows, and which ignores module sealing. The code under test receives a real
+   container, so lifetimes, scopes and disposal behave as in production.
 
 Hand-written objects that imitate a container (`{ Resolve: async () => fake }`) skip everything
 the container does and break when the code uses more of its API. Avoid them.
@@ -37,14 +38,14 @@ the container does and break when the code uses more of its API. Avoid them.
 
 ```ts
 import { assertEquals } from 'jsr:@std/assert@1.0.16';
-import { IoCContainer, type IoCModule, IoCToken } from '@fathym/ioc';
+import { DefineModule, IoCContainer, IoCToken } from '@fathym/ioc';
 
 interface Mailer {
   send(to: string): Promise<void>;
 }
 
-const $Mailer = IoCToken<Mailer, 'Test.Mailer'>('Test.Mailer');
-const $Now = IoCToken<() => Date, 'Test.Now'>('Test.Now');
+const $Mailer = IoCToken<Mailer, 'Mailer'>('Mailer');
+const $Now = IoCToken<() => Date, 'Now'>('Now');
 
 class Signup {
   constructor(private mailer: Mailer, private now: () => Date) {}
@@ -55,17 +56,17 @@ class Signup {
   }
 }
 
-// The app's wiring, shared by main.ts and the tests.
-const App: IoCModule = {
+// The app's wiring, shared by main.ts (`new IoCContainer().Use(App)`) and the tests.
+const App = DefineModule({
   Name: 'App',
   Register: (ioc) =>
     ioc
       .RegisterValue($Mailer, { send: () => Promise.reject(new Error('real SMTP')) })
       .RegisterValue($Now, () => new Date())
       .RegisterClass(Signup, { Deps: [$Mailer, $Now], Lifetime: 'transient' }),
-};
+});
 
-const createApp = () => IoCContainer.Create().Use(App);
+const createApp = () => new IoCContainer({ Testing: true }).Use(App);
 
 Deno.test('the wiring is complete', () => {
   createApp().Validate();
@@ -95,7 +96,9 @@ Deno.test('Signup is transient and comes from App', () => {
 - **Override before resolving** the services that use the fake. Singletons already built keep
   what they were given; a fresh container per test avoids the question entirely.
 - **Prefer a scope** when one container is shared by many tests: `await using test =
-  ioc.CreateScope()` and register fakes there, so nothing leaks between tests.
+  ioc.CreateScope()` and `test.Override(…)` there, so nothing leaks between tests.
+- **`Override` throws outside a testing container** (`IoCSealedError`), so a fake can't slip
+  into production wiring.
 - **Keep `Override`'s undo** when a container outlives the test: `const restore =
   ioc.Override(…)`, then `restore()` in `finally`.
 - **Assert structure with `Describe()`**: lifetimes, modules, levels and dependencies are plain

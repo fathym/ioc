@@ -183,6 +183,7 @@ Deno.test('IoCToken - non-token keys are rejected', async (t) => {
     ['null', null],
     ['a number', 42],
     ['an arrow function', () => 'Db'],
+    // deno-lint-ignore require-await
     ['an async function', async () => 'Db'],
   ];
 

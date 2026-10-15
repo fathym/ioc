@@ -10,7 +10,7 @@ interface Prices {
   quote(symbol: string): Promise<number>;
 }
 
-const $Prices = IoCToken<Prices>('Prices');
+const $Prices = IoCToken<Prices, 'Prices'>('Prices');
 
 let upstreamCalls = 0;
 

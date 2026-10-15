@@ -223,9 +223,12 @@ export class IoCScopeRequiredError extends IoCError {
    */
   constructor(public readonly Service: string, public readonly Level?: string) {
     super(
-      `Scoped service ${Service} was resolved outside a scope${
-        Level ? ` of level '${Level}'` : ''
-      }; resolve it from a scope created with CreateScope().`,
+      Level
+        ? `Scoped service ${Service} was resolved outside a scope of level '${Level}'; resolve ` +
+          `it from a scope created with CreateScope({ Level: '${Level}' }), or from a scope ` +
+          `inside one.`
+        : `Scoped service ${Service} was resolved outside a scope; resolve it from a scope ` +
+          `created with CreateScope().`,
     );
   }
 }

@@ -2,9 +2,9 @@
 FrontmatterVersion: 1
 DocumentType: Guide
 Title: Guidelines and Anti-Patterns
-Summary: Nine named anti-patterns - captive dependency, captured container, service locator and more - each with the symptom, the cause, WRONG and CORRECT code, and how to catch it.
+Summary: Nine named anti-patterns - captive dependency, a token per call site, captured container, service locator and more - each with the symptom, the cause, WRONG and CORRECT code, and how to catch it.
 Created: 2026-10-13
-Updated: 2026-10-13
+Updated: 2026-10-15
 Owners:
   - fathym
 References:
@@ -19,17 +19,17 @@ References:
 > **Goal:** Recognize the mistakes that cause most container bugs, by name, and know the fix for
 > each.
 
-| Anti-pattern                                                                        | Symptom                                              | Caught by       |
-| ----------------------------------------------------------------------------------- | ---------------------------------------------------- | --------------- |
-| [Captive dependency](#captive-dependency)                                           | A singleton holds one request's (or one test's) data | `Validate()`    |
-| [Captured container in a factory](#captured-container-in-a-factory)                 | Overrides ignored; cycles hang instead of throwing   | Code review     |
-| [Service locator in business code](#service-locator-in-business-code)               | Hidden dependencies; hard-to-write tests             | Code review     |
-| [Thenable service value](#thenable-service-value)                                   | You get the awaited result, not the object           | A test          |
-| [Factory returning a shared resource](#factory-returning-a-shared-resource)         | A connection you didn't create gets closed           | A disposal test |
-| [Named function declaration as a factory](#named-function-declaration-as-a-factory) | The factory is called with `new`                     | A test          |
-| [Bare class with constructor parameters](#bare-class-with-constructor-parameters)   | Constructor arguments are `undefined`                | `Validate()`    |
-| [Resolving inside constructors](#resolving-inside-constructors)                     | Half-built objects, unhandled promises               | Code review     |
-| [A global container](#a-global-container)                                           | Tests leak into each other                           | Flaky tests     |
+| Anti-pattern                                                                      | Symptom                                              | Caught by       |
+| --------------------------------------------------------------------------------- | ---------------------------------------------------- | --------------- |
+| [Captive dependency](#captive-dependency)                                         | A singleton holds one request's (or one test's) data | `Validate()`    |
+| [A token per call site](#a-token-per-call-site)                                   | "No service is registered" for a registered service  | A test          |
+| [Captured container in a factory](#captured-container-in-a-factory)               | Scope and test overrides ignored                     | Code review     |
+| [Service locator in business code](#service-locator-in-business-code)             | Hidden dependencies; hard-to-write tests             | Code review     |
+| [Thenable service value](#thenable-service-value)                                 | You get the awaited result, not the object           | A test          |
+| [Factory returning a shared resource](#factory-returning-a-shared-resource)       | A connection you didn't create gets closed           | A disposal test |
+| [Bare class with constructor parameters](#bare-class-with-constructor-parameters) | Constructor arguments are `undefined`                | `Validate()`    |
+| [Resolving inside constructors](#resolving-inside-constructors)                   | Half-built objects, unhandled promises               | Code review     |
+| [A global container](#a-global-container)                                         | Tests leak into each other                           | Flaky tests     |
 
 ## Captive dependency
 
@@ -39,7 +39,7 @@ References:
 **Why:** the singleton is built once and keeps whatever it was given.
 
 ```ts
-import { IoCContainer, IoCValidationError } from '@fathym/ioc';
+import { IoCContainer } from '@fathym/ioc';
 
 class CurrentUser {
   public name = 'ada';
@@ -49,42 +49,67 @@ class Greeter {
   constructor(public user: CurrentUser) {}
 }
 
-const ioc = new IoCContainer();
-
-ioc.RegisterClass(CurrentUser, { Lifetime: 'scoped', Lazy: true });
-
 // WRONG - a singleton declaring a scoped dependency
-ioc.RegisterClass(Greeter, { Deps: [CurrentUser], Lazy: true });
+const wrong = new IoCContainer()
+  .RegisterClass(CurrentUser, { Lifetime: 'scoped' })
+  .RegisterClass(Greeter, { Deps: [CurrentUser] });
 
-try {
-  ioc.Validate();
-} catch (err) {
-  console.log((err as IoCValidationError).Problems[0]); // Singleton Greeter depends on scoped CurrentUser; …
-}
+console.log(wrong.Validate({ Throw: false })[0].Message); // singleton Greeter depends on scoped CurrentUser; …
 
 // CORRECT - the consumer is scoped (or transient) too
-ioc.RegisterClass(Greeter, { Deps: [CurrentUser], Lifetime: 'scoped', Lazy: true });
+const correct = new IoCContainer()
+  .RegisterClass(CurrentUser, { Lifetime: 'scoped' })
+  .RegisterClass(Greeter, { Deps: [CurrentUser], Lifetime: 'scoped' });
 
-ioc.Validate();
+correct.Validate();
 ```
 
-The container never hands a child scope's instance to a singleton (singletons are built by the
-container that registered them), so the worst case can't happen silently. `Validate()` reports the
-declaration so you can fix the design.
+`Validate()` (and so `Start()`) reports the declaration, including through transients and across
+scope levels (a `tenant` service holding a `request` one). At runtime the worst case can't
+happen silently either: a singleton is built by the root, where resolving a scoped service throws
+`IoCScopeRequiredError`.
 
-## Captured container in a factory
+## A token per call site
 
-**Symptom:** a test or scope override is ignored, or a cycle waits forever instead of throwing.
+**Symptom:** `No service is registered for Config.`, although something registered `Config`.
 
-**Why:** the factory resolves through a container variable it closed over, instead of the
-container it was given. A captured container ignores scopes and loses the resolution path after
-the first `await`.
+**Why:** every `IoCToken()` call creates a new, unique key. Two calls with the same description
+are two keys, so registering with one and resolving with the other finds nothing.
 
 ```ts
 import { IoCContainer, IoCToken } from '@fathym/ioc';
 
-const $Greeting = IoCToken<string>('Greeting');
-const $Message = IoCToken<string>('Message');
+interface Config {
+  url: string;
+}
+
+// WRONG - each call site makes its own token
+const ioc = new IoCContainer().RegisterValue(IoCToken<Config, 'Config'>('Config'), { url: 'a' });
+
+console.log(await ioc.TryResolve(IoCToken<Config, 'Config'>('Config'))); // undefined
+
+// CORRECT - declare the token once, and import it wherever it is used
+export const $Config = IoCToken<Config, 'Config'>('Config');
+
+ioc.RegisterValue($Config, { url: 'kv://local' });
+
+console.log((await ioc.Resolve($Config)).url); // kv://local
+```
+
+## Captured container in a factory
+
+**Symptom:** a test or scope override is ignored.
+
+**Why:** the factory resolves through a container variable it closed over, instead of the
+container it was given. A captured container is always the root, so it ignores the scope the
+factory was resolved from. (Cycles through it are still detected, by the automatic async
+context.)
+
+```ts
+import { IoCContainer, IoCToken } from '@fathym/ioc';
+
+const $Greeting = IoCToken<string, 'Greeting'>('Greeting');
+const $Message = IoCToken<string, 'Message'>('Message');
 
 const ioc = new IoCContainer();
 
@@ -122,7 +147,7 @@ interface Mailer {
   send(to: string): void;
 }
 
-const $Mailer = IoCToken<Mailer>('Mailer');
+const $Mailer = IoCToken<Mailer, 'Mailer'>('Mailer');
 
 // WRONG - dependencies hidden behind the container
 class SignupWrong {
@@ -166,8 +191,8 @@ import { IoCContainer, IoCToken } from '@fathym/ioc';
 
 const query = { then: (resolve: (rows: string[]) => void) => resolve(['row']) };
 
-const $QueryWrong = IoCToken<unknown>('QueryWrong');
-const $Query = IoCToken<{ query: typeof query }>('Query');
+const $QueryWrong = IoCToken<unknown, 'QueryWrong'>('QueryWrong');
+const $Query = IoCToken<{ query: typeof query }, 'Query'>('Query');
 
 const ioc = new IoCContainer();
 
@@ -198,53 +223,29 @@ class Pool implements Disposable {
   }
 }
 
-const sharedPool = new Pool(); // owned by the host app
+const $Pool = IoCToken<Pool, 'Pool'>('Pool');
 
-const $PoolWrong = IoCToken<Pool>('PoolWrong');
-const $Pool = IoCToken<Pool>('Pool');
+// WRONG - a factory's result is treated as the container's own
+const hostPool = new Pool(); // owned by the host app
 
 {
-  await using ioc = new IoCContainer();
+  await using ioc = new IoCContainer().RegisterFactory($Pool, () => hostPool);
 
-  // CORRECT - values are never disposed by the container
-  ioc.RegisterValue($Pool, sharedPool);
+  await ioc.Resolve($Pool);
+}
+
+console.log(hostPool.closed); // true: closed by the container
+
+// CORRECT - values are never disposed by the container
+const sharedPool = new Pool();
+
+{
+  await using ioc = new IoCContainer().RegisterValue($Pool, sharedPool);
+
+  await ioc.Resolve($Pool);
 }
 
 console.log(sharedPool.closed); // false
-
-{
-  await using ioc = new IoCContainer();
-
-  // WRONG - a factory's result is treated as the container's own
-  ioc.RegisterFactory($PoolWrong, () => sharedPool);
-}
-
-console.log(sharedPool.closed); // true
-```
-
-## Named function declaration as a factory
-
-**Symptom:** a factory written as `function makeDb() {…}` behaves strangely, because `this` is a
-new object and its return value is used only if it's an object.
-
-**Why:** for compatibility with older versions, the deprecated `Register` treats named `function` declarations as
-classes and calls them with `new`.
-
-```ts
-import { IoCContainer, IoCToken } from '@fathym/ioc';
-
-const $Db = IoCToken<{ url: string }>('Db');
-
-function makeDb() {
-  return { url: 'kv://local' };
-}
-
-const ioc = new IoCContainer();
-
-// CORRECT - RegisterFactory always calls, never constructs (an arrow function also works)
-ioc.RegisterFactory($Db, makeDb);
-
-console.log(await ioc.Resolve($Db)); // { url: "kv://local" }
 ```
 
 ## Bare class with constructor parameters
@@ -264,12 +265,10 @@ class Repo {
   constructor(public config: Config) {}
 }
 
-const ioc = new IoCContainer();
-
-ioc.RegisterClass(Config);
+const ioc = new IoCContainer().RegisterClass(Config);
 
 // WRONG - Repo needs a Config, but none is passed
-ioc.RegisterClass(Repo, { Lazy: true });
+ioc.RegisterClass(Repo);
 
 try {
   ioc.Validate();
@@ -278,7 +277,7 @@ try {
 }
 
 // CORRECT
-ioc.RegisterClass(Repo, { Deps: [Config], Lazy: true });
+ioc.RegisterClass(Repo, { Deps: [Config], Replace: true });
 
 ioc.Validate();
 ```
@@ -293,7 +292,7 @@ dependencies that are impossible to see.
 ```ts
 import { IoCContainer, IoCToken } from '@fathym/ioc';
 
-const $Url = IoCToken<string>('Url');
+const $Url = IoCToken<string, 'Url'>('Url');
 
 // WRONG - starts an un-awaited resolve in the constructor
 class RepoWrong {
@@ -309,10 +308,9 @@ class Repo {
   constructor(public url: string) {}
 }
 
-const ioc = new IoCContainer();
-
-ioc.RegisterValue($Url, 'kv://local');
-ioc.RegisterClass(Repo, { Deps: [$Url] });
+const ioc = new IoCContainer()
+  .RegisterValue($Url, 'kv://local')
+  .RegisterClass(Repo, { Deps: [$Url] });
 
 console.log((await ioc.Resolve(Repo)).url, typeof RepoWrong); // kv://local function
 ```
@@ -325,8 +323,7 @@ another.
 **Why:** a module-level `export const ioc = new IoCContainer()` is shared state across the whole
 process.
 
-**Fix:** create containers in the composition root and in each test, from a shared
-`registerApp(ioc)` function (see
+**Fix:** create containers in the composition root and in each test, from the same modules (see
 [organizing registrations](./organizing-registrations.md) and
 [testing](./testing.md#2-fresh-container-per-test)).
 

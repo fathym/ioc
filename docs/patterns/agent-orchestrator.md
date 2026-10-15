@@ -4,7 +4,7 @@ DocumentType: Guide
 Title: Agent Orchestrator
 Summary: Run agents and sub-agents in parallel - each in its own scope with private memory, shared tools and clients, nested sub-agent scopes, and cleanup when each agent finishes.
 Created: 2026-10-13
-Updated: 2026-10-13
+Updated: 2026-10-15
 Owners:
   - fathym
 References:
@@ -22,13 +22,14 @@ References:
 
 ## The shape
 
-- **The root** registers everything once: shared clients and tools as singletons, per-agent
-  state as singletons too.
+- **The root declares the levels** (`Levels: ['agent', 'subagent']`) and registers everything
+  once: shared clients and tools as singletons, per-agent state as singletons too.
 - **Each agent runs in `CreateScope({ Level: 'agent' }).Isolate(...)`**: the scope gets its own
   copy of the per-agent services and shares the rest. The isolated services' dependencies come
   from the agent scope, so an agent's memory can read the agent's own settings.
-- **A sub-agent is a scope of its parent agent's scope.** It isolates what it must not share
-  with its parent, and inherits the rest, including anything the parent isolated.
+- **A sub-agent is a `subagent` scope of its parent agent's scope.** Levels nest in the declared
+  order, so a sub-agent can't be created at the `agent` level by mistake. It isolates what it must
+  not share with its parent, and inherits the rest, including anything the parent isolated.
 - **`await using`** disposes the agent's state when its run ends, even on failure.
 
 Without real scopes, "isolated" sub-units often share the parent's container and leak state into
@@ -43,8 +44,8 @@ interface ModelClient {
   complete(prompt: string): Promise<string>;
 }
 
-const $Model = IoCToken<ModelClient, 'Agents.Model'>('Agents.Model');
-const $Role = IoCToken<string, 'Agents.Role'>('Agents.Role');
+const $Model = IoCToken<ModelClient, 'Model'>('Model');
+const $Role = IoCToken<string, 'Role'>('Role');
 
 class Memory {
   public notes: string[] = [];
@@ -66,13 +67,13 @@ class Agent {
 
 let calls = 0;
 
-const root = IoCContainer.Create()
+const root = new IoCContainer({ Levels: ['agent', 'subagent'] })
   .RegisterValue($Model, { complete: (p) => Promise.resolve(`done(${p}) #${++calls}`) })
   .RegisterClass(Memory)
   .RegisterClass(Agent, { Deps: [$Model, Memory, $Role], Lifetime: 'transient' });
 
-async function runAgent(parent: IoCContainer, role: string, task: string) {
-  await using scope = parent.CreateScope({ Level: 'agent' })
+async function runAgent(parent: IoCContainer, role: string, task: string, level = 'agent') {
+  await using scope = parent.CreateScope({ Level: level })
     .RegisterValue($Role, role)
     .Isolate(Memory);
 
@@ -81,7 +82,7 @@ async function runAgent(parent: IoCContainer, role: string, task: string) {
   await agent.step(task);
 
   // A sub-agent: its own memory, the same model client.
-  if (role === 'planner') await runAgent(scope, 'researcher', `research ${task}`);
+  if (role === 'planner') await runAgent(scope, 'researcher', `research ${task}`, 'subagent');
 
   return (await scope.Resolve(Memory)).notes;
 }
@@ -104,7 +105,10 @@ console.log(calls); // 3: one shared client served all three agents
 - **Prefer `Isolate` over re-registering by hand:** it keeps the root's recipe (dependencies,
   `Dispose` option, decorators), so the agent's copy behaves like the original.
 - **Use `ScopeLevel: 'agent'`** for services that every sub-agent of one agent should share (a
-  run-wide scratchpad), instead of isolating them at each level.
+  run-wide scratchpad), instead of isolating them at each level. `Validate()` reports an
+  agent-level service that holds a sub-agent-level one.
+- **Disposing the root** disposes every agent scope still running, deepest first, so an
+  orchestrator that shuts down mid-run still cleans up.
 - **Bound concurrency outside the container.** Scopes are cheap, but the work they do isn't.
 
 ## What's Next

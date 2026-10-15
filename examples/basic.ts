@@ -5,7 +5,7 @@
  */
 import { IoCContainer, IoCToken } from '../mod.ts';
 
-const $AppName = IoCToken<string>('AppName');
+const $AppName = IoCToken<string, 'AppName'>('AppName');
 
 class Clock {
   public now(): Date {

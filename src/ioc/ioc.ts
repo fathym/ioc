@@ -244,6 +244,13 @@ export type IoCServiceOptions = {
   Replace?: boolean;
 
   /**
+   * For singletons: build it on first resolve only, never in `Start()` or `Activate()`. For
+   * resources only some code paths need (a CLI command's client, an optional integration), so
+   * startup doesn't open them. `Validate()` still checks its wiring.
+   */
+  OnDemand?: boolean;
+
+  /**
    * Makes the service scoped to a level declared in the `Levels` option: one instance in (and
    * disposed with) the nearest scope of that level, shared by every scope inside it. Resolving
    * it with no such scope above throws `IoCScopeRequiredError`.
@@ -961,8 +968,9 @@ export class IoCContainer<TKeys = any> {
 
     for (const bank of self.registrations.values()) {
       for (const reg of bank.values()) {
-        // Transients are built per resolve, and scoped services belong to the scopes that use them.
-        if (reg.lifetime !== 'singleton') continue;
+        // Transients are built per resolve, scoped services belong to the scopes that use them,
+        // and on-demand singletons wait for their first resolve.
+        if (reg.lifetime !== 'singleton' || reg.onDemand) continue;
 
         work.push(
           Promise.resolve()
@@ -2197,6 +2205,27 @@ export class IoCContainer<TKeys = any> {
   }
 
   /**
+   * Stops the modules of the live child scopes (deepest first, scopes side by side), then this
+   * container's own. Nothing is disposed.
+   *
+   * @ignore
+   */
+  protected async stopTree(): Promise<unknown[]> {
+    const scopes = [...this.children].map((ref) => ref.deref()).filter((s) => !!s);
+
+    const nested = await Promise.all(
+      scopes.map(async (scope) => {
+        // A scope still starting finishes its running step first (see disposeNow).
+        await scope.starting?.catch(noop);
+
+        return await scope.stopTree();
+      }),
+    );
+
+    return [...nested.flat(), ...await this.stopModules()];
+  }
+
+  /**
    * True when `module` was added to this container or a parent.
    *
    * @ignore
@@ -2224,8 +2253,9 @@ export class IoCContainer<TKeys = any> {
     // no module is left half-started.
     await self.starting?.catch(noop);
 
-    // Modules stop while their services are still alive.
-    const errors: unknown[] = await self.stopModules();
+    // Modules stop while their services are still alive: the modules of live child scopes (which
+    // may require this container's modules) first, deepest first, then this container's.
+    const errors: unknown[] = await self.stopTree();
 
     // Then the scopes created from this container, each disposing its own scopes first.
     const scopes = [...self.children].map((ref) => ref.deref()).filter((s) => !!s);
@@ -2567,6 +2597,12 @@ export class IoCContainer<TKeys = any> {
     const lifetime: IoCLifetime = spec.lifetime ??
       (scopeLevel !== undefined ? 'scoped' : options.Lifetime ?? 'singleton');
 
+    if (options.OnDemand && lifetime !== 'singleton') {
+      throw new IoCRegistrationError(
+        `${label} is ${lifetime}, so it is never built at startup; OnDemand applies to singletons.`,
+      );
+    }
+
     if (scopeLevel !== undefined && !spec.detached) self.checkLevel(scopeLevel, false);
 
     const existing = self.registrations.get(key)?.get(name);
@@ -2774,6 +2810,7 @@ export class IoCContainer<TKeys = any> {
       label,
       deps: spec.deps,
       default: options.Default || undefined,
+      onDemand: options.OnDemand || undefined,
       scopeLevel,
       observed: new Map(),
       fork(owner: object): IoCRegistration {

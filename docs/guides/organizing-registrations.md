@@ -2,9 +2,9 @@
 FrontmatterVersion: 1
 DocumentType: Guide
 Title: Organizing Registrations
-Summary: Structure a real app's registrations - a composition root, feature modules that register themselves, environment overrides, and a startup sequence that validates, activates and shuts down cleanly.
+Summary: Structure a real app's registrations - one composition root, a typed module per feature, configuration supplied through Needs, environment-specific replacements, and a startup sequence that validates, builds, starts and shuts down cleanly.
 Created: 2026-10-13
-Updated: 2026-10-13
+Updated: 2026-10-15
 Owners:
   - fathym
 References:
@@ -25,159 +25,129 @@ Create the container in exactly one place, the **composition root** (usually `ma
 resolve only at the edges: the HTTP handler, the CLI command, the job runner. Business code
 receives its dependencies through constructors; it never reaches for the container.
 
-## Feature modules register themselves
+## A module per feature
 
-Each feature exports one function that registers its services. The composition root calls them in
-any order, because lazy registrations don't care about order:
-
-```ts
-import { IoCContainer, IoCToken } from '@fathym/ioc';
-
-// notes/register.ts
-const $NotesTable = IoCToken<string>('NotesTable');
-
-class NotesService {
-  constructor(public table: string) {}
-}
-
-function registerNotes(ioc: IoCContainer) {
-  ioc.RegisterValue($NotesTable, 'notes');
-  ioc.RegisterClass(NotesService, { Deps: [$NotesTable], Lazy: true });
-}
-
-// billing/register.ts
-class BillingService {
-  constructor(public notes: NotesService) {}
-}
-
-function registerBilling(ioc: IoCContainer) {
-  ioc.RegisterClass(BillingService, { Deps: [NotesService], Lazy: true });
-}
-
-// app.ts: the whole app's wiring, shared by main.ts and tests.
-export function registerApp(ioc = new IoCContainer()): IoCContainer {
-  registerBilling(ioc); // order doesn't matter for lazy registrations
-  registerNotes(ioc);
-  return ioc;
-}
-
-const ioc = registerApp();
-
-console.log((await ioc.Resolve(BillingService)).notes.table); // notes
-```
-
-This style puts no order on the modules, and the compiler doesn't check that `NotesService` is
-registered by someone. `Validate()` checks that at startup.
-
-## Typed modules: the compiler checks the order
-
-To have the compiler check it, make each module **return** its registrations as a chain on a
-[typed container](./declared-dependencies.md#depend-only-on-whats-registered-typed-containers).
-Each module states the keys it needs in its parameter type. The type parameter `K` carries
-everything else already registered:
+Each feature exports one module that registers its services. A feature that builds on another
+lists it in `Requires`; a key the application supplies (configuration, secrets) goes in `Needs`:
 
 ```ts
-import { IoCContainer, IoCToken } from '@fathym/ioc';
+import { DefineModule, IoCContainer, IoCToken } from '@fathym/ioc';
 
-// notes/register.ts
+// notes/module.ts
 const $NotesTable = IoCToken<string, 'NotesTable'>('NotesTable');
 
-class NotesService {
+export class NotesService {
   constructor(public table: string) {}
 }
 
-function registerNotes<K>(ioc: IoCContainer<K>) {
-  return ioc
-    .RegisterValue($NotesTable, 'notes')
-    .RegisterClass(NotesService, { Deps: [$NotesTable], Lazy: true });
-}
+export const Notes = DefineModule({
+  Name: 'Notes',
+  Needs: [$NotesTable], // configuration, supplied by the app
+  Register: (ioc) => ioc.RegisterClass(NotesService, { Deps: [$NotesTable] }),
+});
 
-// billing/register.ts: needs NotesService
-class BillingService {
+// billing/module.ts
+export class BillingService {
   constructor(public notes: NotesService) {}
 }
 
-function registerBilling<K>(ioc: IoCContainer<K | typeof NotesService>) {
-  return ioc.RegisterClass(BillingService, { Deps: [NotesService], Lazy: true });
+export const Billing = DefineModule({
+  Name: 'Billing',
+  Requires: [Notes], // NotesService is typed in, and Notes is added (and started) first
+  Register: (ioc) => ioc.RegisterClass(BillingService, { Deps: [NotesService] }),
+});
+
+// app.ts: the whole app's wiring, shared by main.ts and tests.
+export function createApp(options: { testing?: boolean } = {}) {
+  return new IoCContainer({ Testing: options.testing })
+    .Typed()
+    .RegisterValue($NotesTable, 'notes')
+    .Use(Billing); // adds Notes, then Billing
 }
 
-// app.ts
-export function registerApp() {
-  return registerBilling(registerNotes(new IoCContainer().Typed()));
-}
+await using ioc = createApp();
 
-const ioc = registerApp();
+await ioc.Start();
 
 console.log((await ioc.Resolve(BillingService)).notes.table); // notes
 ```
 
-Swap the order (`registerNotes(registerBilling(…))`) and `registerBilling` no longer compiles: the
-container passed to it has no `NotesService` yet.
-
-| Style                        | Order of modules   | Missing registration caught by |
-| ---------------------------- | ------------------ | ------------------------------ |
-| Statements (`register(ioc)`) | any, with `Lazy`   | `Validate()`, at startup       |
-| Typed chains (`return ioc…`) | dependencies first | the compiler, and `Validate()` |
-
-The two mix: a plain `IoCContainer` is accepted by any typed module, and a typed container can be
-passed to any function that takes an `IoCContainer`. If a module needs keys registered outside the
-chain, declare them with `Expect`.
+- **Order is checked by the compiler.** `Billing` can only name `NotesService` because it
+  requires `Notes`; `createApp` can only `Use` them after registering `$NotesTable`.
+- **Order doesn't matter at runtime.** Nothing is built at registration, and `Start()` starts
+  modules after what they require.
+- **Each module's chain stays short,** so type-checking stays fast as features are added
+  ([scale](../concepts/scale.md#type-checking-stays-linear-with-typed-modules)).
+- **Unshared tokens stay private.** `$NotesTable` isn't exported from `notes/module.ts` in a real
+  app unless the app's configuration code needs it.
 
 ## Environment-specific registrations
 
-Register the defaults, then let the environment override them. Later registrations replace
-earlier ones:
+Register the app's default, then replace it on purpose for an environment with `Replace: true`.
+Registering a key twice without it throws, so an accidental second registration never wins
+silently:
 
 ```ts
 import { IoCContainer, IoCToken } from '@fathym/ioc';
 
-const $Storage = IoCToken<{ kind: string }>('Storage');
+interface Storage {
+  kind: string;
+}
 
-function registerApp(ioc: IoCContainer, env: 'dev' | 'prod') {
-  ioc.RegisterFactory($Storage, () => ({ kind: 'memory' }), { Lazy: true });
+const $Storage = IoCToken<Storage, 'Storage'>('Storage');
+
+function createApp(env: 'dev' | 'prod') {
+  const ioc = new IoCContainer().RegisterFactory($Storage, () => ({ kind: 'memory' }));
 
   if (env === 'prod') {
-    ioc.RegisterFactory($Storage, () => ({ kind: 'kv' }), { Lazy: true });
+    ioc.RegisterFactory($Storage, () => ({ kind: 'kv' }), { Replace: true });
   }
 
   return ioc;
 }
 
-console.log((await registerApp(new IoCContainer(), 'prod').Resolve($Storage)).kind); // kv
+console.log((await createApp('prod').Resolve($Storage)).kind); // kv
 ```
+
+When the default comes from a module, the module registers it with `Default: true`, and the app
+simply registers its own: no `Replace` needed. A module's other registrations are sealed; see
+[modules and lifecycle](./modules-and-lifecycle.md#sealing-and-defaults).
 
 ## The startup sequence
 
-Register, validate, activate, serve, and dispose on shutdown:
+Register, start, serve, and dispose on shutdown:
 
 ```ts
-import { IoCContainer, IoCToken } from '@fathym/ioc';
+import { IoCContainer, type IoCModule, IoCToken } from '@fathym/ioc';
 
-const $Config = IoCToken<{ port: number }, 'Config'>('Config');
-
-class Server {
-  constructor(public config: { port: number }) {}
+interface Config {
+  port: number;
 }
 
-// 1. Register everything (a typed container also checks the order at compile time).
+const $Config = IoCToken<Config, 'Config'>('Config');
+
+class Server {
+  constructor(public config: Config) {}
+}
+
+const Http: IoCModule = {
+  Name: 'Http',
+  Register: (ioc) => ioc.RegisterClass(Server, { Deps: [$Config] }),
+  OnStart: async (ioc) => console.log(`listening on ${(await ioc.Resolve(Server)).config.port}`),
+  OnStop: () => console.log('closed'),
+};
+
+// 1. Register everything.
 const ioc = new IoCContainer()
-  .Typed()
-  .RegisterFactory($Config, () => Promise.resolve({ port: 0 }), { Lazy: true })
-  .RegisterClass(Server, { Deps: [$Config], Lazy: true });
+  .RegisterFactory($Config, () => Promise.resolve({ port: 0 }))
+  .Use(Http);
 
-// 2. Validate the declared graph (fast, builds nothing).
-ioc.Validate();
+// 2. Validate the wiring, build every singleton, start the modules (in layers).
+await ioc.Start(); // listening on 0
 
-// 3. Build every singleton now, so broken config fails at startup, not on the first request.
-await ioc.Activate();
-
-// 4. Serve.
-const server = await ioc.Resolve(Server);
-console.log(`listening on ${server.config.port}`);
-
-// 5. On shutdown, dispose what the container created (connections, pools, …).
+// 3. On shutdown: OnStop, then live scopes, then every instance the container created.
 async function shutdown() {
-  await ioc.Dispose();
+  await ioc.Dispose(); // closed
 }
 
 await shutdown();
@@ -190,19 +160,23 @@ being run:
 Deno.addSignalListener('SIGTERM', () => shutdown().finally(() => Deno.exit(0)));
 ```
 
+`Dispose()` is safe to call while `Start()` is still running: it waits for the module that is
+starting, then stops and disposes everything.
+
 ## Checklist
 
 - [ ] One composition root; business code never resolves from the container.
-- [ ] Each feature exports a `register…(ioc)` function (returning a typed chain if you want the
-      compiler to check the order).
-- [ ] Expensive or async services are `Lazy`.
-- [ ] `Validate()` runs at startup _and_ in a test.
-- [ ] `Activate()` runs at startup.
+- [ ] Each feature exports a module (`DefineModule`), with `Requires` for the features it builds
+      on and `Needs` for what the app supplies.
+- [ ] Tokens are exported only where another package needs them.
+- [ ] `Start()` runs at boot, and `Validate()` in a test.
 - [ ] `Dispose()` runs on shutdown.
 
 ## What's Next
 
 - Test against the same wiring: [testing.md](./testing.md#9-share-wiring-between-the-app-and-tests)
+  _[How-to]_
+- Modules, layers and failure recovery: [modules-and-lifecycle.md](./modules-and-lifecycle.md)
   _[How-to]_
 - Avoid the common structural mistakes: [guidelines.md](./guidelines.md) _[How-to]_
 - A runnable validation example: [examples/startup-validation.ts](../../examples/startup-validation.ts)

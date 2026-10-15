@@ -99,6 +99,8 @@ export interface IoCRegistration {
   readonly label: string;
   /** Declared constructor dependencies (`RegisterClass(…, { Deps })`), used by `Validate()`. */
   readonly deps?: readonly IoCDependencyRecord[];
+  /** Built on first resolve only, never by `Start()`/`Activate()` (`OnDemand: true`). */
+  readonly onDemand?: boolean;
   /** A framework default (`Default: true`): it yields to any other registration of its key. */
   readonly default?: boolean;
   /**

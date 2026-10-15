@@ -2,9 +2,9 @@
 FrontmatterVersion: 1
 DocumentType: Guide
 Title: Plugin Host
-Summary: Build a framework or runtime that loads plugins - framework defaults the app can override, plugins as modules with requirements and lifecycle, legacy plugin containers wrapped, and one Start/Dispose for everything.
+Summary: Build a framework or runtime that loads plugins - the host as a module with Default services and sealed internals, each plugin as a module with requirements and lifecycle, plugins loaded after startup in a scope, and one Start/Dispose for everything.
 Created: 2026-10-13
-Updated: 2026-10-13
+Updated: 2026-10-15
 Owners:
   - fathym
 References:
@@ -17,22 +17,24 @@ References:
 # Plugin Host
 
 > **Goal:** A host (a web runtime, a bot framework, a build tool) that plugins extend. The host
-> provides overridable services; each plugin adds its own, may require other plugins, and may
-> need to start and stop; the application can replace anything.
+> provides services, some of which the app may replace; each plugin adds its own, may require
+> other plugins, and may need to start and stop.
 
 ## The shape
 
-1. **The host is a module** that registers its services with `Default: true`, so an application
-   or plugin can replace any of them, before or after.
-2. **Each plugin is a module.** It lists the plugins it needs in `Requires`, registers its
-   services in `Register`, and opens and closes resources in `OnStart` / `OnStop`.
+1. **The host is a module.** It registers its extension points with `Default: true`, so an
+   application can replace them, before or after. Everything else it registers is sealed.
+2. **Each plugin is a module,** exported by its package. It lists the modules it builds on in
+   `Requires`, keys it expects from the app in `Needs`, registers its services in `Register`, and
+   opens and closes resources in `OnStart` / `OnStop`.
 3. **The application** creates the container, adds its own registrations and the plugins, and
-   calls `Start()`. `await using` (or `Dispose()`) shuts everything down in reverse.
+   calls `Start()`. Plugins start in layers, after the host; `await using` (or `Dispose()`) stops
+   them in reverse.
 
 ## Example
 
 ```ts
-import { IoCContainer, type IoCModule, IoCToken } from '@fathym/ioc';
+import { DefineModule, IoCContainer, IoCToken } from '@fathym/ioc';
 
 interface Logger {
   log(message: string): void;
@@ -43,39 +45,39 @@ interface Route {
   handle(): string;
 }
 
-const $Logger = IoCToken<Logger, 'Host.Logger'>('Host.Logger');
-const $Route = IoCToken<Route, 'Host.Route'>('Host.Route');
+// ---- the host package: exports its tokens and its module ----
+export const $Logger = IoCToken<Logger, 'Logger'>('Logger');
+export const $Route = IoCToken<Route, 'Route'>('Route');
 
 const events: string[] = [];
 
-// 1. The host: overridable defaults.
-const Host: IoCModule = {
+export const Host = DefineModule({
   Name: 'Host',
   Register: (ioc) =>
     ioc.RegisterValue($Logger, { log: (m) => events.push(`[host] ${m}`) }, { Default: true }),
-};
+});
 
-// 2. Plugins: services under their own names, plus lifecycle.
-const Health: IoCModule = {
+// ---- plugin packages: each exports a module ----
+export const Health = DefineModule({
   Name: 'Health',
   Requires: [Host],
   Register: (ioc) =>
     ioc.RegisterValue($Route, { path: '/health', handle: () => 'ok' }, { Name: 'health' }),
   OnStart: async (ioc) => (await ioc.Resolve($Logger)).log('health ready'),
   OnStop: async (ioc) => (await ioc.Resolve($Logger)).log('health stopped'),
-};
+});
 
-const Users: IoCModule = {
+export const Users = DefineModule({
   Name: 'Users',
   Requires: [Host],
   Register: (ioc) =>
     ioc.RegisterValue($Route, { path: '/users', handle: () => '[]' }, { Name: 'users' }),
-};
+});
 
-// 3. The application: its own logger wins over the host's default, in any order.
+// ---- the application: its logger replaces the host's default ----
 {
-  await using app = IoCContainer.Create()
-    .Use(Health, Users)
+  await using app = new IoCContainer()
+    .Use(Health, Users) // Host is added once, first
     .RegisterValue($Logger, { log: (m) => events.push(`[app] ${m}`) });
 
   await app.Start();
@@ -83,45 +85,74 @@ const Users: IoCModule = {
   const routes = await app.ResolveAll($Route);
 
   console.log(routes.map((r) => r.path)); // [ "/health", "/users" ]
+
+  console.log(app.Describe().Modules.map((m) => `${m.Name}: layer ${m.Layer}`));
+  // [ "Host: layer 0", "Health: layer 1", "Users: layer 1" ]
 }
 
 console.log(events); // [ "[app] health ready", "[app] health stopped" ]
 ```
 
-## Plugins that return a container
+`Health` and `Users` don't require each other, so they start together, after `Host`.
 
-Plugins written before modules existed often build their own container and hand it back. Wrap
-them with `ModuleFromContainer`. With `Defaults: true`, the host's registrations always win over
-the plugin's, whatever order the code runs in; the plugin's container may come from any version
-of the library:
+## Plugins loaded later
+
+Plugins discovered after `Start()` (installed at runtime, enabled per workspace) go in a scope.
+The scope reads the host's registrations, `Use`s the plugin (requirements already added to the
+host are skipped), and starts it on its own. Disposing the scope stops and unloads it:
 
 ```ts
-import { IoCContainer, IoCToken, ModuleFromContainer } from '@fathym/ioc';
+import { DefineModule, IoCContainer, IoCToken } from '@fathym/ioc';
 
-const $Theme = IoCToken<string, 'Host.Theme'>('Host.Theme');
+const $Route = IoCToken<string, 'Route'>('Route');
 
-async function legacyPluginSetup(): Promise<IoCContainer> {
-  return new IoCContainer().RegisterValue($Theme, 'plugin theme');
-}
+const Host = DefineModule({
+  Name: 'Host',
+  Register: (ioc) => ioc.RegisterValue($Route, '/health', { Name: 'health' }),
+});
 
-const app = new IoCContainer()
-  .RegisterValue($Theme, 'app theme')
-  .Use(ModuleFromContainer('LegacyTheme', await legacyPluginSetup(), { Defaults: true }));
+const Reports = DefineModule({
+  Name: 'Reports',
+  Requires: [Host],
+  Register: (ioc) => ioc.RegisterValue($Route, '/reports', { Name: 'reports' }),
+  OnStart: () => console.log('reports loaded'),
+  OnStop: () => console.log('reports unloaded'),
+});
 
-console.log(await app.Resolve($Theme)); // app theme
+await using host = new IoCContainer().Use(Host);
+
+await host.Start();
+
+{
+  await using workspace = host.CreateScope().Use(Reports);
+
+  await workspace.Start(); // reports loaded
+
+  console.log(await workspace.ResolveAll($Route)); // [ "/reports", "/health" ]
+} // reports unloaded
+
+console.log(await host.ResolveAll($Route)); // [ "/health" ]
 ```
 
 ## Rules
 
-- **Never `new IoCContainer()` inside a plugin's services.** Take the host's container in
-  `Register`; a private container loses the app's overrides and is never disposed.
+- **A plugin is a module, never a container.** Its package exports a module; the host's
+  container is the only container. A plugin that builds a private container loses the app's
+  registrations, isn't validated, and is never disposed.
+- **Export the tokens plugins and apps use; keep the rest private.** A plugin can't reach what
+  the host doesn't export.
+- **`Default: true` marks every extension point.** The rest of what the host registers is
+  sealed, so a plugin can't replace the host's router by accident: it gets `IoCSealedError`
+  naming the host.
 - **Name every contribution** (`{ Name: 'health' }`) when several plugins add to one key, and
-  collect them with `ResolveAll`, `ResolveNamed` or `IoCAll`.
-- **Use `Default: true` for everything the host registers** that an app might replace. Under
-  `IoCContainer.Create()` (strict), an accidental second registration then throws instead of
-  silently winning.
-- **Async setup belongs in `OnStart`** or in async factories; `Register` is synchronous.
-- **Inspect the result** with `app.Describe()`: every registration lists the module that made it.
+  collect them with `ResolveAll`, `ResolveNamed` or `IoCAll`. A plugin can't overwrite another
+  plugin's name: that registration is sealed too.
+- **Plugins declare what the app must supply** in `Needs`; on a typed container, `Use(plugin)`
+  doesn't compile until the app has registered it.
+- **Async setup belongs in `OnStart`** or in async factories; `Register` is synchronous. If one
+  plugin fails to start, every started plugin is stopped again, and `Start()` can be retried.
+- **Inspect the result** with `app.Describe()`: every registration lists the module that made it,
+  and every module its layer and start time.
 
 ## What's Next
 

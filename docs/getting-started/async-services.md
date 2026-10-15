@@ -2,9 +2,9 @@
 FrontmatterVersion: 1
 DocumentType: Guide
 Title: 'Step 3: Async Services'
-Summary: Open Deno KV lazily with an async factory, check startup with Activate(), and close everything with Dispose().
+Summary: Open Deno KV with an async factory, check startup with Start(), and close everything when the container is disposed.
 Created: 2026-10-13
-Updated: 2026-10-13
+Updated: 2026-10-15
 Owners:
   - fathym
 References:
@@ -42,37 +42,38 @@ class NotesStore {
   }
 }
 
-const ioc = new IoCContainer()
+await using ioc = new IoCContainer() // disposed (KV closed) at the end of the program
   .Typed()
   // Deno.Kv is a class, so it works as a key. The factory is async; that's fine.
-  .RegisterFactory(Deno.Kv, () => Deno.openKv(':memory:'), { Lazy: true })
-  .RegisterClass(NotesStore, { Deps: [Deno.Kv], Lazy: true });
+  .RegisterFactory(Deno.Kv, () => Deno.openKv(':memory:'))
+  .RegisterClass(NotesStore, { Deps: [Deno.Kv] });
 
-await ioc.Activate(); // open KV now, so a bad connection fails at startup
+await ioc.Start(); // check the wiring and open KV now, so a bad connection fails at startup
 
 const store = await ioc.Resolve(NotesStore);
 
 await store.add('Buy milk');
 
 console.log(await store.list()); // [ "Buy milk" ]
-
-await ioc.Dispose(); // closes the KV connection the container opened
 ```
 
 Run it with `deno run --unstable-kv main.ts`.
 
 ## What just happened
 
-- **`Lazy: true` defers creation** until something first resolves the service. Without it, a
-  singleton is built at registration time.
-- **`Activate()` builds every lazy singleton now** and reports all failures at once. That's how
-  you get lazy registration _and_ fail-fast startup.
+- **Nothing is built at registration.** A singleton is built the first time something needs it.
+- **`Start()` checks the wiring, then builds every singleton now,** and reports all failures at
+  once. That's how you get lazy registration _and_ fail-fast startup. (`Activate()` does just the
+  building part.)
 - **Concurrent resolves share one creation.** If ten requests resolve `NotesStore` at the same
   moment, KV is still opened once.
 - **A failed creation is retried, not cached.** If KV isn't reachable on the first try, the next
   resolve tries again.
-- **`Dispose()` cleans up what the container created.** `Deno.Kv` implements `Symbol.dispose`, so
-  the container closes it. Things are disposed last created, first disposed.
+- **Disposing the container cleans up what it created.** `await using` calls `Dispose()` when
+  `ioc` goes out of scope. `Deno.Kv` implements `Symbol.dispose`, so the container closes it.
+  Things are disposed last created, first disposed.
+- **Nothing waits forever.** A factory that is still pending after 30 seconds fails with an error
+  that lists what it was waiting on (`PendingTimeoutMs` changes the limit).
 
 > **Note:** `Resolve` is always `async`, even for services that aren't. One rule, everywhere: you
 > never have to know whether a dependency's setup is async.

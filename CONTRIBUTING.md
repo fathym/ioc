@@ -4,7 +4,7 @@ DocumentType: Guide
 Title: Contributing
 Summary: How to set up, test, document and propose changes to @fathym/ioc.
 Created: 2026-10-13
-Updated: 2026-10-13
+Updated: 2026-10-15
 Owners:
   - fathym
 References:
@@ -44,30 +44,26 @@ deno task test
 | `deno task build`         | Format, lint, type-check, then the docs check and `deno doc --lint` (what CI runs)                             |
 | `deno task docs:check`    | Frontmatter, links and anchors, orphans, footers, error catalog and `llms.txt`; runs every Markdown code block |
 | `deno task docs:llms`     | Regenerate `llms.txt` from the docs' frontmatter                                                               |
-| `deno task bench`         | Hot-path benchmarks against the frozen 0.0.36 implementation                                                   |
+| `deno task bench`         | Hot-path benchmarks (`tests/ioc/resolve.bench.ts`)                                                             |
 | `deno task build:npm`     | Build the npm package into `dist/npm` (ESM + `.d.ts`, compiled by TypeScript)                                  |
 | `deno task test:runtimes` | Build the npm package, run the smoke test on Node.js and Bun, and type-check a consumer with TypeScript 5.4    |
 
 ## Test suites
 
-| Suite                                         | Protects                                                                                                                       |
-| --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| `tests/ioc/bench.ts`                          | The original behavior tests (kept unchanged)                                                                                   |
-| `tests/ioc/characterization.tests.ts`         | Behavior dependents rely on, run against both the frozen 0.0.36 container (`tests/fixtures/legacy-ioc.ts`) and the current one |
-| `tests/ioc/interop.tests.ts`                  | `CopyTo` in both directions between versions (several versions run in one process)                                             |
-| `tests/ioc/consumer-patterns.tests.ts`        | Code shapes taken from published dependents                                                                                    |
-| `tests/ioc/matrix.tests.ts`, `model.tests.ts` | Generated combinations, and seeded random operation sequences against a reference model                                        |
-| `tests/ioc/types.tests.ts`                    | Compile-time types (`@ts-expect-error` checks)                                                                                 |
-| `tests/docs/*`                                | The docs checker, and every program in `examples/`                                                                             |
-| `tests/runtimes/*`                            | A plain-JavaScript smoke test for Node.js and Bun, and a TypeScript consumer for the oldest supported compiler                 |
+| Suite                                         | Protects                                                                                                                                                    |
+| --------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `tests/ioc/*.tests.ts`                        | The container, one file per area: registration, resolution, scopes and levels, modules and lifecycle, sealing, validation, cycles, concurrency, error codes |
+| `tests/ioc/matrix.tests.ts`, `model.tests.ts` | Generated combinations, and seeded random operation sequences against a reference model                                                                     |
+| `tests/ioc/types.tests.ts`, `typed.tests.ts`  | Compile-time types (`@ts-expect-error` checks), typed containers and typed modules                                                                          |
+| `tests/docs/*`                                | The docs checker, and every program in `examples/`                                                                                                          |
+| `tests/runtimes/*`                            | A plain-JavaScript smoke test for Node.js and Bun, and a TypeScript consumer for the oldest supported compiler                                              |
 
 Rules:
 
-- **Don't edit `tests/fixtures/legacy-ioc.ts`.** It is the frozen reference.
-- **Don't change `tests/ioc/bench.ts` assertions.** If one has to change, it's a behavior change:
-  document it in the [changelog](./CHANGELOG.md) and the migration guide.
-- **Never use `#private` fields or `instanceof IoCContainer` across containers.** Containers from
-  different versions call each other.
+- **Every behavior change comes with a test.** If an existing assertion has to change, it's a
+  behavior change: document it in the [changelog](./CHANGELOG.md), and in a migration guide when
+  it is breaking.
+- **Never weaken or skip a test to make it pass.** Fix the cause, or open an issue.
 
 ## Documentation
 
@@ -108,8 +104,9 @@ still checked.
 ## Proposing a change
 
 1. **Open an issue first for anything beyond a small fix,** so the design can be discussed.
-2. **Keep the API additive.** A behavior change needs a [changelog](./CHANGELOG.md) entry under
-   `[Unreleased]`, an entry in the migration guide, and tests.
+2. **Follow the [versioning policy](./docs/policy.md).** Within 1.x the API only grows; a breaking
+   change waits for the next major release. Every change needs a [changelog](./CHANGELOG.md)
+   entry under `[Unreleased]` and tests; a breaking change also needs a migration guide.
 3. **Make sure `deno task build` and `deno task test` pass.**
 4. **Fill in the pull-request checklist.**
 
@@ -130,4 +127,5 @@ release:
 ## What's Next
 
 - The documentation hub: [docs/README.md](./docs/README.md)
-- The design and its decisions: [ioc-next.md](./docs/design/ioc-next.md)
+- The design and its decisions: [ioc-1.0.md](./docs/design/ioc-1.0.md)
+- Versioning and releases: [policy.md](./docs/policy.md)

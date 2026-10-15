@@ -4,7 +4,7 @@ DocumentType: Guide
 Title: 'Step 2: Your First Container'
 Summary: Register a class, a factory and a value, use a typed token, and see how lifetimes change what you get back.
 Created: 2026-10-13
-Updated: 2026-10-13
+Updated: 2026-10-15
 Owners:
   - fathym
 References:
@@ -30,7 +30,7 @@ plain value.
 import { IoCContainer, IoCToken } from '@fathym/ioc';
 
 // A typed token: a key that carries the type of what's registered under it.
-const $AppName = IoCToken<string>('AppName');
+const $AppName = IoCToken<string, 'AppName'>('AppName');
 
 class Clock {
   public now(): Date {
@@ -76,6 +76,9 @@ Three things to notice:
    not through a captured `ioc`. It's what makes scopes, overrides and cycle detection work
    later.
 3. **You never called `new Clock()`.** The container did.
+
+> **Note:** Every `IoCToken()` call creates a new, unique key; the name is only a label for
+> errors. Declare each token once, in a module of its own, and import it wherever you need it.
 
 ## Let the container call the constructor
 
@@ -170,6 +173,6 @@ There's a third lifetime, `scoped`, which you'll use in [step 4](./per-request-s
 
 - Start an async service (Deno KV) and check startup:
   [async-services.md](./async-services.md) _[Tutorial]_
-- Why tokens, classes and symbols all work as keys:
+- Why tokens and classes are keys, and how to keep a service private:
   [keys-and-registrations.md](../concepts/keys-and-registrations.md) _[Explanation]_
 - All the lifetimes in one table: [lifetimes.md](../concepts/lifetimes.md) _[Explanation]_

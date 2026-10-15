@@ -2,9 +2,9 @@
 FrontmatterVersion: 1
 DocumentType: Guide
 Title: Multi-Tenant Runtime
-Summary: Serve many tenants from one process - a scope per tenant holding its resources, a scope per request inside it, level-bound services that live at the right level, and tenant eviction that closes everything the tenant opened.
+Summary: Serve many tenants from one process - declared tenant and request levels, a scope per tenant holding its resources, a scope per request inside it, level-bound services that live at the right level, and tenant eviction that closes everything the tenant opened.
 Created: 2026-10-13
-Updated: 2026-10-13
+Updated: 2026-10-15
 Owners:
   - fathym
 References:
@@ -28,12 +28,13 @@ Three levels of container:
 | --------- | ---------------------------- | ---------------------------------------------------------- |
 | root      | at startup                   | stateless services and registrations for everything        |
 | `tenant`  | on a tenant's first request  | the tenant's config (a value) and its level-bound services |
-| `request` | per request, inside a tenant | the request (a value) and plain `scoped` services          |
+| `request` | per request, inside a tenant | the request (a value) and its level-bound services         |
 
-Register tenant-wide services once, at the root, with `Lifetime: 'scoped', ScopeLevel: 'tenant'`.
-Each tenant scope then builds its own instance, every request scope inside it shares it, and it
-is disposed with the tenant scope. Resolving it outside any tenant throws
-`IoCScopeRequiredError` instead of silently creating a shared one.
+Declare the levels once, on the root: `new IoCContainer({ Levels: ['tenant', 'request'] })`.
+Register tenant-wide services once, at the root, with `ScopeLevel: 'tenant'`. Each tenant scope
+then builds its own instance, every request scope inside it shares it, and it is disposed with
+the tenant scope. Resolving it outside any tenant throws `IoCScopeRequiredError` instead of
+silently creating a shared one, and a misspelled or misnested level throws `IoCLevelError`.
 
 ## Example
 
@@ -45,8 +46,8 @@ interface TenantConfig {
   dbUrl: string;
 }
 
-const $Tenant = IoCToken<TenantConfig, 'Mt.Tenant'>('Mt.Tenant');
-const $Request = IoCToken<Request, 'Mt.Request'>('Mt.Request');
+const $Tenant = IoCToken<TenantConfig, 'Tenant'>('Tenant');
+const $Request = IoCToken<Request, 'Request'>('Request');
 
 class TenantDb {
   public closed = false;
@@ -63,12 +64,15 @@ class Handler {
   }
 }
 
-const root = IoCContainer.Create()
-  .RegisterFactory(TenantDb, async (c) => new TenantDb((await c.Resolve($Tenant)).dbUrl), {
-    Lifetime: 'scoped',
+const root = new IoCContainer({ Levels: ['tenant', 'request'] })
+  .Expect($Tenant, $Request) // registered on each tenant and request scope
+  .RegisterFactory(TenantDb, (_c, tenant) => new TenantDb(tenant.dbUrl), {
+    Deps: [$Tenant],
     ScopeLevel: 'tenant',
   })
-  .RegisterClass(Handler, { Deps: [TenantDb, $Request], Lifetime: 'scoped' });
+  .RegisterClass(Handler, { Deps: [TenantDb, $Request], ScopeLevel: 'request' });
+
+root.Validate(); // passes: the per-scope keys are expected, and no level holds a shorter one
 
 const tenants = new Map<string, IoCContainer>();
 
@@ -106,17 +110,23 @@ console.log(db.closed); // true
 
 ## Rules
 
+- **Declare the levels once,** outermost first. Every `CreateScope({ Level })` and `ScopeLevel`
+  is checked against them.
 - **Register once, at the root.** Tenant and request scopes only hold values (`$Tenant`,
   `$Request`) and the instances they build. That keeps per-tenant cost to a few objects.
 - **Pick the level by who shares the instance:** `ScopeLevel: 'tenant'` for connections and
-  caches; plain `scoped` for per-request state; singletons only for what is truly global and
-  tenant-agnostic.
-- **A singleton must never depend on tenant or request services.** `Validate()` reports a
-  singleton that declares a scoped dependency (a captive dependency).
+  caches; `ScopeLevel: 'request'` (or plain `scoped`) for per-request state; singletons only for
+  what is truly global and tenant-agnostic.
+- **A longer-lived service must never hold a shorter-lived one.** `Validate()` reports a
+  singleton depending on a tenant service, or a tenant service depending on a request service,
+  directly or through transients, as `captive`.
 - **Evict deliberately.** Dispose a tenant scope when it goes idle; requests already running in
   it should finish first.
-- **Declare per-tenant values with `Expect`** on a typed container, so `Validate()` at the root
-  accepts them. See [declared dependencies](../guides/declared-dependencies.md#keys-registered-elsewhere-expect).
+- **Declare per-scope values with `Expect`** on the root, so `Validate()` there accepts them. A
+  module that needs them lists them in its `Needs` instead. See
+  [declared dependencies](../guides/declared-dependencies.md#keys-registered-elsewhere-expect).
+- **Disposing the root disposes every live tenant scope** (and their request scopes) first, so a
+  shutdown closes every tenant's connections.
 
 ## What's Next
 

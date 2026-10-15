@@ -2,9 +2,9 @@
 FrontmatterVersion: 1
 DocumentType: Guide
 Title: API Reference
-Summary: Every public method, option and type of @fathym/ioc - signature, behavior, return value, errors and a runnable example for each.
+Summary: Every public method, option, type and error of @fathym/ioc 1.0 - signature, behavior, return value, errors and a runnable example for each.
 Created: 2026-10-13
-Updated: 2026-10-13
+Updated: 2026-10-15
 Owners:
   - fathym
 References:
@@ -19,22 +19,34 @@ References:
 # API Reference
 
 Everything is exported from `@fathym/ioc`. The generated docs on
-[JSR](https://jsr.io/@fathym/ioc/doc) come from the same JSDoc and are always in sync with a
-release. This page groups the API by task and adds behavior notes and examples.
+[JSR](https://jsr.io/@fathym/ioc/doc) come from the same JSDoc and always match a release. This
+page groups the API by task and adds behavior notes and examples.
 
-Signature blocks are declarations, shown for reading. Every other code block is a complete,
-runnable example, checked in CI.
+Signature blocks are declarations, shown for reading (they are marked `ts ignore`). Every other
+code block is a complete, runnable example, checked in CI.
 
 **Contents:**
 
-- **Creating:** [new IoCContainer](#new-ioccontaineroptions), [IoCContainer.Create](#ioccontainercreateoptions)
-- **Registration:** [Register](#registerkey-factory-options), [RegisterClass](#registerclassclass-options), [RegisterFactory](#registerfactorykey-factory-options), [RegisterValue](#registervaluekey-value-options), [Decorate](#decoratekey-decorator-options), [Unregister](#unregisterkey-name)
+- **Creating:** [new IoCContainer](#new-ioccontaineroptions), [options](#container-options),
+  [State](#state)
+- **Registration:** [RegisterClass](#registerclassclass-options),
+  [RegisterFactory](#registerfactorykey-factory-options),
+  [RegisterValue](#registervaluekey-value-options), [registration options](#registration-options),
+  [Decorate](#decoratekey-decorator-options), [Unregister](#unregisterkey-name)
 - **Typed containers:** [Typed](#typed), [Expect](#expectkeys)
-- **Testing and tooling:** [Override](#overridekey-value-options), [Describe](#describe)
-- **Resolution:** [Resolve](#resolvekey-name), [TryResolve](#tryresolvekey-name), [ResolveAll](#resolveallkey), [ResolveNamed](#resolvenamedkey), [ResolveRecord](#resolverecordrecord), [Has](#haskey-name)
-- **Lifecycle:** [Validate](#validate), [Activate](#activate), [Use](#usemodules), [ModuleFromContainer](#modulefromcontainername-container-options), [Start](#startoptions), [CreateScope](#createscopeoptions), [Isolate](#isolatekeys), [Dispose](#dispose)
-- **Copying and low level:** [CopyTo](#copytotarget), [Symbol](#symbolid), [RegisterDirect / ResolveDirect](#registerdirect-and-resolvedirect), [services / symbols](#services-and-symbols)
-- **Types:** [IoCToken](#ioctokenid), [options](#options), [dependency types](#dependency-types), [registry types](#registry-types), [other types](#other-types), [errors](#error-classes)
+- **Resolution:** [Resolve](#resolvekey-name), [TryResolve](#tryresolvekey-name),
+  [ResolveAll](#resolveallkey), [ResolveNamed](#resolvenamedkey),
+  [ResolveRecord](#resolverecordrecord), [Names](#nameskey), [Has](#haskey-name)
+- **Modules:** [Use](#usemodules), [IoCModule](#iocmodule), [the module view](#the-module-view),
+  [DefineModule](#definemoduledefinition)
+- **Lifecycle:** [Validate](#validateoptions), [Activate](#activate), [Start](#startoptions),
+  [Dispose](#dispose)
+- **Scopes:** [CreateScope](#createscopeoptions), [Isolate](#isolatekeys)
+- **Testing and tooling:** [Override](#overridekey-value-options), [Describe](#describe),
+  [OnEvent and IoCEvent](#onevent-and-iocevent)
+- **Types:** [IoCToken](#ioctokendescription), [derived dependencies](#derived-dependencies-ioclazy-and-iocall),
+  [dependency types](#dependency-types), [registry types](#registry-types),
+  [module types](#module-types), [other types](#other-types), [errors](#errors)
 
 ---
 
@@ -46,241 +58,302 @@ runnable example, checked in CI.
 new IoCContainer(options?: IoCContainerOptions)
 ```
 
-With no options the container behaves exactly like earlier versions. Scopes inherit their
-parent's options.
+Creates a root container. Every option is optional. With none, the container is already:
 
-| Option             | Default | Meaning                                                                                                                                                                          |
-| ------------------ | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `Strict`           | `false` | Duplicate registrations, `scoped` services resolved outside a scope, and class/token key collisions throw; a class never resolves a different same-named one                     |
-| `LazyByDefault`    | `false` | Singletons and scoped services are built on first resolve unless a registration says `Lazy: false`                                                                               |
-| `Diagnostics`      | —       | `(d: IoCDiagnostic) => void`: notices about allowed-but-suspicious things (`IOC_REGISTRATION_REPLACED`, `IOC_CLASS_NAME_FALLBACK`, …)                                            |
-| `AsyncContext`     | —       | An `AsyncLocalStorage` that lets cycle detection follow resolves made through a captured container after an `await`                                                              |
-| `PendingTimeoutMs` | —       | A `Resolve`, a `Start()`/`Activate()` build or an `OnStart` still pending after this long fails with [`IoCResolveTimeoutError`](./errors.md#resolving--did-not-finish-within-ms) |
+- **strict:** registering a key and name twice throws, and a `scoped` service resolved from the
+  root throws;
+- **lazy:** nothing is built at registration; `Start()` or `Activate()` builds every singleton;
+- **protected against hangs:** anything still pending after 30 seconds fails with
+  `IoCResolveTimeoutError`;
+- **able to follow resolution chains across `await`** where the runtime has `AsyncLocalStorage`.
+
+Scopes share their root's options.
+
+**Throws:** `IoCRegistrationError` (`IOC_INVALID_REGISTRATION`) for
+[invalid `Levels`](./errors.md#levels-must-be-distinct-non-empty-names) or an
+[invalid `PendingTimeoutMs`](./errors.md#pendingtimeoutms-must-be-a-finite-number-of-milliseconds-0-turns-it-off).
+
+```ts
+import { IoCContainer, type IoCEvent } from '@fathym/ioc';
+
+const events: IoCEvent[] = [];
+
+const ioc = new IoCContainer({
+  Levels: ['tenant', 'request'],
+  PendingTimeoutMs: 10_000,
+  OnEvent: (e) => events.push(e),
+});
+
+console.log(ioc.State); // idle
+```
+
+### Container options
+
+`IoCContainerOptions`:
+
+| Option             | Default                           | Meaning                                                                                                                                                                                                                                                                  |
+| ------------------ | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `Levels`           | none                              | The scope levels the application uses, outermost first (`['tenant', 'request']`). `CreateScope({ Level })` and `ScopeLevel` must name one of them, and scopes nest in this order. Names must be distinct and non-empty.                                                  |
+| `PendingTimeoutMs` | `30000`                           | A resolve, a build during `Start()`/`Activate()`, or a module's `OnStart`/`OnStop` still pending after this many milliseconds fails with [`IoCResolveTimeoutError`](./errors.md#-did-not-finish-within-ms). `0` turns it off. Must be finite, ≥ 0.                       |
+| `AsyncContext`     | the runtime's `AsyncLocalStorage` | How the container follows resolution chains across `await` when a factory resolves through a captured container. Found through `process.getBuiltinModule('node:async_hooks')` (Node.js, Deno, Bun). `false` turns it off; an `IoCAsyncContext` you pass is used instead. |
+| `OnEvent`          | none                              | `(event: IoCEvent) => void`: build, resolve, start and stop timings, and warnings. See [OnEvent and IoCEvent](#onevent-and-iocevent). A listener that throws never breaks the container.                                                                                 |
+| `Testing`          | `false`                           | For tests: lifts [module sealing](#the-module-view) (any registration may be replaced, decorated or unregistered) and enables [`Override`](#overridekey-value-options). Scopes of a testing container are testing too.                                                   |
+
+The container never imports `node:async_hooks` itself, so browser bundles are unaffected; where
+there is no `AsyncLocalStorage`, cycles are still detected through the factory's parameter.
+
+`IoCAsyncContext` is the part of `AsyncLocalStorage` the option uses:
+
+```ts ignore
+interface IoCAsyncContext {
+  getStore(): unknown;
+  run<R>(store: any, fn: () => R): R;
+}
+```
 
 ```ts
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { IoCContainer, type IoCDiagnostic } from '@fathym/ioc';
+import { IoCContainer } from '@fathym/ioc';
 
-const notices: IoCDiagnostic[] = [];
+const withOwnStorage = new IoCContainer({ AsyncContext: new AsyncLocalStorage() });
+const withoutContext = new IoCContainer({ AsyncContext: false, PendingTimeoutMs: 0 });
 
-const ioc = new IoCContainer({
-  Diagnostics: (d) => notices.push(d),
-  AsyncContext: new AsyncLocalStorage(),
-  PendingTimeoutMs: 30_000,
-});
-
-console.log(ioc.Has(Symbol.for('Nothing'))); // false
+console.log(withOwnStorage.State, withoutContext.State); // idle idle
 ```
 
-### IoCContainer.Create(options?)
+### State
 
 ```ts ignore
-static Create(options?: IoCContainerOptions): IoCContainer
+get State(): IoCContainerState   // 'idle' | 'starting' | 'started' | 'stopping' | 'disposed'
 ```
 
-A container with the settings recommended for new code: `Strict` and `LazyByDefault`, plus any
-options you pass. Call `Start()` (or `Activate()`) at startup to build everything and fail fast.
+Where the container is in its lifecycle:
+
+| State      | Means                                                  |
+| ---------- | ------------------------------------------------------ |
+| `idle`     | Created, or a `Start()` failed and was rolled back     |
+| `starting` | `Start()` is running                                   |
+| `started`  | `Start()` succeeded                                    |
+| `stopping` | `Dispose()` is running                                 |
+| `disposed` | Done; every call except `Dispose()` and `State` throws |
+
+A scope has its own state: it never starts on its parent's `Start()`, and it becomes `disposed`
+when it, or its parent, is disposed.
 
 ```ts
 import { IoCContainer } from '@fathym/ioc';
 
-class Clock {}
+const ioc = new IoCContainer();
 
-const ioc = IoCContainer.Create().RegisterClass(Clock);
+console.log(ioc.State); // idle
 
 await ioc.Start();
+
+console.log(ioc.State); // started
+
+await ioc.Dispose();
+
+console.log(ioc.State); // disposed
 ```
 
 ---
 
 ## Registration
 
-### Register(key, factory, options?)
+Every registration method checks its key. A key is an [`IoCToken`](#ioctokendescription) or a
+class; anything else (a string, a symbol, a plain object, an arrow or async function) throws
+[`IoCRegistrationError` with `IOC_INVALID_KEY`](./errors.md#keys-must-be-tokens-or-classes-but-a--was-given).
+Nothing is built at registration.
 
-> **Warning:** Deprecated; it will be removed in 1.0. Use [`RegisterClass`](#registerclassclass-options),
-> [`RegisterFactory`](#registerfactorykey-factory-options) or
-> [`RegisterValue`](#registervaluekey-value-options). They never guess whether you passed a class
-> or a factory, and they chain on a [typed container](#typed). See
-> [moving off `Register`](../migration/from-0.0.x.md#moving-off-register).
-
-The flexible, original registration method. It accepts several forms:
-
-```ts ignore
-Register(token: IoCToken<T> | symbol, factory: (ioc) => T | Promise<T>, options?: IoCRegisterOptions)
-Register(clazz: Class<T>, factory: (ioc) => T | Promise<T>, options?: IoCServiceOptions)
-Register(clazz: Class<T>, options?: IoCServiceOptions)          // the container constructs it
-Register(factory: (ioc) => T | Promise<T>, options: IoCServiceOptions & { Type: symbol })
-```
-
-**Returns:** a removal function when `options.Lifetime` is `'scoped'`, otherwise `undefined`.
-
-**Throws:**
-
-- [`The Type was missing for the registration.`](./errors.md#the-type-was-missing-for-the-registration)
-  when there's no key;
-- [`A factory is required when registering by symbol.`](./errors.md#a-factory-is-required-when-registering-by-symbol);
-- any synchronous error from an eager singleton's factory. In that case any earlier registration
-  stays.
-
-**Notes:**
-
-- **Eager singletons are built during `Register`.** See
-  [lifetimes](../concepts/lifetimes.md#singleton).
-- **Class or factory?** When the first argument is a function, `Register` decides which it is
-  (see [the rule](../concepts/keys-and-registrations.md#class-or-factory)).
-  `RegisterClass` / `RegisterFactory` never guess.
-- **Registering the same key and name again replaces** the earlier registration.
-- **It doesn't chain or add to a [typed container](#typed)'s keys.** Use the explicit methods for
-  that.
-
-```ts
-import { IoCContainer, IoCToken } from '@fathym/ioc';
-
-const $Db = IoCToken<{ url: string }>('Db');
-
-const ioc = new IoCContainer();
-
-ioc.Register($Db, () => ({ url: 'kv://local' }), { Lazy: true });
-
-const remove = ioc.Register($Db, () => ({ url: 'kv://tmp' }), { Name: 'tmp', Lifetime: 'scoped' });
-
-remove(); // scoped registrations return a removal function
-
-console.log((await ioc.Resolve($Db)).url, ioc.Has($Db, 'tmp')); // kv://local false
-```
+Registering the same key and name twice in one container throws
+[`IoCDuplicateRegistrationError`](./errors.md#-is-already-registered), unless the new registration
+says `Replace: true` or the existing one is a `Default`. A registration made by a module is
+[sealed](#the-module-view): replacing it from outside that module throws
+[`IoCSealedError`](./errors.md#-belongs-to-module--so-only-that-module-can--it).
 
 ### RegisterClass(class, options?)
 
 ```ts ignore
-RegisterClass<C, TName = '$default', TType = never>(clazz: C, options?: IoCRegisterClassOptions<C, TKeys, TName, TType>): IoCContainer<TKeys | IoCRegistered<C or TType, TName>>
+RegisterClass<C, TName = '$default', TType = never>(
+  clazz: C,
+  options?: IoCRegisterClassOptions<C, TKeys, TName, TType>,
+): IoCContainer<TKeys | IoCRegistered<C or TType, TName>>
 ```
 
-Registers a class the container constructs. With `Deps`, the listed services are resolved (in the
-resolving container or scope) and passed to the constructor in order.
+Registers a class the container constructs: `new clazz(...deps)`. The key is the class itself,
+or `options.Type`.
 
-- **`Deps` is type-checked against `ConstructorParameters<C>`,** and on a [typed container](#typed)
-  against the keys registered so far.
-- **`Type` registers the class under a token instead** (`{ Type: $Db }`). The class's instances
+- **`Deps`** lists the services passed to the constructor, in parameter order. It is type-checked
+  against `ConstructorParameters<C>`, and on a [typed container](#typed) against the keys
+  registered so far. The services are resolved in the resolving container or scope.
+- **`Type`** registers the class under a token instead (`{ Type: $Db }`). The class's instances
   must satisfy the token's type.
+- **Without `Deps`,** the class is constructed with no arguments; `Validate()` reports a class
+  whose constructor declares parameters.
 
-**Returns:** the same container, typed with the new key, so calls chain. Remove the registration
-with [`Unregister`](#unregisterkey-name). **Throws:**
-[`RegisterClass expects a class.`](./errors.md#registerclass-expects-a-class), and
-[`The Type was missing …`](./errors.md#the-type-was-missing-for-the-registration) for an anonymous
-class without `Type`.
+**Returns:** the same container, typed with the new key, so calls chain.
+
+**Throws:** [`RegisterClass expects a class`](./errors.md#registerclass-expects-a-class) for
+anything that can't be constructed; plus the [registration errors](#registration) above,
+[`IoCLevelError`](./errors.md#scope-level--is-not-declared) for an undeclared `ScopeLevel`, and
+[`IoCRegistrationError`](./errors.md#-cant-be-transient-and-bound-to-the--level) for `ScopeLevel`
+with `Lifetime: 'transient'`.
 
 ```ts
 import { IoCContainer, IoCToken } from '@fathym/ioc';
 
-const $Url = IoCToken<string>('Url');
+interface Db {
+  url: string;
+}
 
-class Repo {
+const $Url = IoCToken<string, 'Url'>('Url');
+const $Db = IoCToken<Db, 'Db'>('Db');
+
+class KvDb implements Db {
   constructor(public url: string) {}
 }
 
-const ioc = new IoCContainer();
+const ioc = new IoCContainer()
+  .RegisterValue($Url, 'kv://local')
+  .RegisterClass(KvDb, { Deps: [$Url], Type: $Db });
 
-ioc.RegisterValue($Url, 'kv://local');
-ioc.RegisterClass(Repo, { Deps: [$Url], Lifetime: 'transient' });
-
-console.log((await ioc.Resolve(Repo)).url); // kv://local
+console.log((await ioc.Resolve($Db)).url); // kv://local
 ```
 
 ### RegisterFactory(key, factory, options?)
 
 ```ts ignore
-RegisterFactory<K, TName = '$default', TDeps = []>(key: K, factory: (ioc: IoCContainer, ...deps: values of TDeps) => IoCServiceOf<K> | Promise<IoCServiceOf<K>>, options?: IoCRegisterOptions<TName> & { Deps?: TDeps }): IoCContainer<TKeys | IoCRegistered<K, TName>>
+RegisterFactory<K, TName = '$default', TDeps = []>(
+  key: K,
+  factory: (ioc: IoCContainer, ...deps: IoCDependencyValues<TDeps>) => IoCServiceOf<K> | Promise<IoCServiceOf<K>>,
+  options?: IoCRegisterOptions<TName, IoCServiceOf<K>> & { Deps?: TDeps },
+): IoCContainer<TKeys | IoCRegistered<K, TName>>
 ```
 
-Registers a factory under a token, class or symbol key. Unlike `Register`, it never treats the
-function as a class, so named `function` declarations are safe. The factory's return type is
-checked against the key.
+Registers a function that builds the service, under a token or a class (abstract classes
+included). The function is always called, never constructed. Its return type is checked against
+the key, and it may be async.
 
-With `Deps`, the listed services are resolved and passed to the factory after the container,
-each parameter typed from its key, and `Validate()` checks them like a class's `Deps` (on a typed
-container, they must already be registered):
+- **The first parameter is the container** (a view of it that carries the resolution path).
+  Resolve through it rather than through a container captured in a closure, so scopes and cycle
+  detection work.
+- **`Deps`** lists services to resolve and pass after the container, each parameter typed from its
+  key. `Validate()` checks them like a class's `Deps`.
+
+**Returns:** the same container, typed with the new key. **Throws:**
+[`RegisterFactory expects a factory function.`](./errors.md#registerfactory-expects-a-factory-function),
+plus the [registration errors](#registration) above.
 
 ```ts
 import { IoCContainer, IoCToken } from '@fathym/ioc';
 
-const $Url = IoCToken<string, 'ApiFactoryUrl'>('ApiFactoryUrl');
-const $Endpoint = IoCToken<string, 'ApiEndpoint'>('ApiEndpoint');
+const $Host = IoCToken<string, 'Host'>('Host');
+const $Endpoint = IoCToken<string, 'Endpoint'>('Endpoint');
 
 const ioc = new IoCContainer()
-  .RegisterValue($Url, 'localhost')
-  .RegisterFactory($Endpoint, (_ioc, url) => `${url}:8080`, { Deps: [$Url] });
+  .RegisterValue($Host, 'localhost')
+  .RegisterFactory($Endpoint, (_ioc, host) => `${host}:8080`, { Deps: [$Host] });
 
 console.log(await ioc.Resolve($Endpoint)); // localhost:8080
-```
-
-**Returns:** the same container, typed with the new key. **Throws:**
-[`RegisterFactory expects a factory function.`](./errors.md#registerfactory-expects-a-factory-function)
-
-```ts
-import { IoCContainer } from '@fathym/ioc';
-
-class Clock {
-  constructor(public start: number) {}
-}
-
-function makeClock() {
-  return new Clock(0);
-}
-
-const ioc = new IoCContainer();
-
-ioc.RegisterFactory(Clock, makeClock);
-
-console.log((await ioc.Resolve(Clock)).start); // 0
 ```
 
 ### RegisterValue(key, value, options?)
 
 ```ts ignore
-RegisterValue<K, TName = '$default'>(key: K, value: IoCServiceOf<K>, options?: { Name?: TName }): IoCContainer<TKeys | IoCRegistered<K, TName>>
+RegisterValue<K, TName = '$default'>(
+  key: K,
+  value: IoCServiceOf<K>,
+  options?: { Name?: TName; Dispose?: (value) => unknown; Default?: boolean; Replace?: boolean },
+): IoCContainer<TKeys | IoCRegistered<K, TName>>
 ```
 
-Registers an existing value as a singleton. Functions are stored as-is, never called. A thenable
-is stored as-is too, but `Resolve` awaits it, so you get its result (see
-[the caveat](../concepts/async-resolution.md#caveat-thenables-are-unwrapped)). The container never
-disposes values. **Returns:** the same container, typed with the new key.
+Registers an existing value as a singleton. The value counts as built at once (`Describe()`
+reports it `ready`).
+
+- **Functions are stored as they are,** never called.
+- **A thenable is stored as it is too,** but `Resolve` awaits it, so you get its result (see
+  [the caveat](../concepts/async-resolution.md#caveat-thenables-are-unwrapped)).
+- **The container never disposes a value** unless you pass `Dispose`, which hands it to the
+  container.
+
+**Returns:** the same container, typed with the new key.
 
 ```ts
 import { IoCContainer, IoCToken } from '@fathym/ioc';
 
-const $Handler = IoCToken<(path: string) => string>('Handler');
+const $Handler = IoCToken<(path: string) => string, 'Handler'>('Handler');
 
-const ioc = new IoCContainer();
-
-ioc.RegisterValue($Handler, (path) => `handled ${path}`);
+const ioc = new IoCContainer().RegisterValue($Handler, (path) => `handled ${path}`);
 
 console.log((await ioc.Resolve($Handler))('/notes')); // handled /notes
+```
+
+### Registration options
+
+`IoCServiceOptions`, plus the per-method fields of `IoCRegisterClassOptions` and
+`IoCRegisterOptions`:
+
+| Option       | On                                 | Default      | Meaning                                                                                                                                                                                                                    |
+| ------------ | ---------------------------------- | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Lifetime`   | `RegisterClass`, `RegisterFactory` | singleton    | `'transient'`: a new instance per resolve. `'scoped'`: one instance per scope. Omitted: one shared instance. See [lifetimes](../concepts/lifetimes.md).                                                                    |
+| `Name`       | all three                          | `'$default'` | Registers under a name, so several services share one key                                                                                                                                                                  |
+| `OnDemand`   | `RegisterClass`, `RegisterFactory` | `false`      | For singletons: built on first resolve only, never by `Start()` or `Activate()`, for resources only some code paths need. `Validate()` still checks it. Other lifetimes throw `IOC_INVALID_REGISTRATION`                   |
+| `Default`    | all three                          | `false`      | A default that yields to any other registration of the key and name, in any order: when one exists (here or in a parent) the call does nothing, and a later registration replaces it. Defaults of a module are not sealed. |
+| `Replace`    | all three                          | `false`      | Replaces an existing registration on purpose. Without it, registering a key and name again throws                                                                                                                          |
+| `ScopeLevel` | `RegisterClass`, `RegisterFactory` | none         | Binds the service to a declared level: one instance in (and disposed with) the nearest scope of that level, shared by the scopes inside it. Implies `Lifetime: 'scoped'`; can't be combined with `'transient'`             |
+| `Dispose`    | all three                          | none         | `(instance) => …`: cleanup run when the owning container is disposed, for resources without `Symbol.asyncDispose` / `Symbol.dispose` (`kv => kv.close()`)                                                                  |
+| `Deps`       | `RegisterClass`, `RegisterFactory` | none         | The services to inject, in order: keys, `[key, name]`, `IoCLazy(…)` or `IoCAll(…)`                                                                                                                                         |
+| `Type`       | `RegisterClass`                    | the class    | The token to register the class under; the class must satisfy its type                                                                                                                                                     |
+
+```ts
+import { IoCContainer } from '@fathym/ioc';
+
+class Tenant {
+  public id = crypto.randomUUID();
+}
+
+const ioc = new IoCContainer({ Levels: ['tenant', 'request'] })
+  .RegisterClass(Tenant, { ScopeLevel: 'tenant' });
+
+await using tenant = ioc.CreateScope({ Level: 'tenant' });
+await using a = tenant.CreateScope({ Level: 'request' });
+await using b = tenant.CreateScope({ Level: 'request' });
+
+console.log((await a.Resolve(Tenant)) === (await b.Resolve(Tenant))); // true: one per tenant
 ```
 
 ### Decorate(key, decorator, options?)
 
 ```ts ignore
-Decorate<T>(key: IoCToken<T> | Class<T> | symbol, decorator: (inner: T, ioc: IoCContainer) => T | Promise<T>, options?: { Name?: string }): () => void
+Decorate<K>(
+  key: K,
+  decorator: (inner: IoCServiceOf<K>, ioc: IoCContainer) => IoCServiceOf<K> | Promise<IoCServiceOf<K>>,
+  options?: { Name?: string },
+): () => void
 ```
 
-Replaces the current registration with one that wraps it.
+Wraps the current registration for a key and name (logging, caching, retries).
 
-- **Lifetime:** the decorated service keeps the original's lifetime.
-- **Composition:** decorators compose in the order they are added.
-- **Scope:** on a scope, decorating affects only that scope.
+- **Lifetime:** the decorated service keeps the original's lifetime and level.
+- **Composition:** decorators wrap each other in the order they are added.
+- **Scopes:** in a scope, decorating a parent's registration affects only that scope.
+- **Sealing:** a registration a module made can only be decorated by that module, unless it is a
+  `Default` or the container has `Testing: true`.
 
-**Returns:** a function that restores the previous registration. **Throws:**
-[`IoCServiceNotFoundError`](./errors.md#no-service-for-symbol--with-name--has-been-registered)
-when nothing is registered.
+**Returns:** a function that restores the previous registration (it does nothing if something
+else replaced the decorator since).
+
+**Throws:** [`IoCServiceNotFoundError`](./errors.md#no-service-is-registered-for-) when nothing is
+registered; [`IoCSealedError`](./errors.md#-belongs-to-module--so-only-that-module-can--it) for a
+sealed registration; `IoCContainerDisposedError`.
 
 ```ts
 import { IoCContainer, IoCToken } from '@fathym/ioc';
 
-const $Greeter = IoCToken<{ greet(name: string): string }>('Greeter');
+const $Greeter = IoCToken<{ greet(name: string): string }, 'Greeter'>('Greeter');
 
-const ioc = new IoCContainer();
-
-ioc.RegisterFactory($Greeter, () => ({ greet: (name) => `hi ${name}` }));
+const ioc = new IoCContainer()
+  .RegisterFactory($Greeter, () => ({ greet: (name) => `hi ${name}` }));
 
 const undo = ioc.Decorate(
   $Greeter,
@@ -294,28 +367,34 @@ undo();
 console.log((await ioc.Resolve($Greeter)).greet('ada')); // hi ada
 ```
 
+> **Note:** a service that was built from the decorated registration and holds on to it keeps the
+> decorated instance. Decorate before resolving the services that use it.
+
 ### Unregister(key, name?)
 
 ```ts ignore
-Unregister(key: IoCToken<unknown> | Class<unknown> | symbol, name?: string): boolean
+Unregister(key: IoCServiceKey<unknown>, name?: string): boolean
 ```
 
-Removes a registration from **this** container (never from a parent). By class, it removes only
-that class's registration; by symbol, it removes everything under the symbol and name.
+Removes a registration from **this** container (never from a parent). A registration a module
+made can only be removed by that module (unless `Testing: true`).
 
-**Returns:** whether something was removed.
+**Returns:** whether a registration existed. **Throws:**
+[`IoCSealedError`](./errors.md#-belongs-to-module--so-only-that-module-can--it).
 
 ```ts
 import { IoCContainer, IoCToken } from '@fathym/ioc';
 
-const $Flag = IoCToken<boolean>('Flag');
+const $Flag = IoCToken<boolean, 'Flag'>('Flag');
 
-const ioc = new IoCContainer();
-
-ioc.RegisterValue($Flag, true);
+const ioc = new IoCContainer().RegisterValue($Flag, true);
 
 console.log(ioc.Unregister($Flag), ioc.Unregister($Flag), ioc.Has($Flag)); // true false false
 ```
+
+---
+
+## Typed containers
 
 ### Typed()
 
@@ -323,16 +402,18 @@ console.log(ioc.Unregister($Flag), ioc.Unregister($Flag), ioc.Has($Flag)); // tr
 Typed(): IoCContainer<IoCNoKeys>
 ```
 
-Starts tracking registrations in the container's **type**. It returns the same container, typed as
-having no keys. Each chained `RegisterClass`, `RegisterFactory`, `RegisterValue` or `Expect` then
-adds its key, and `Deps` may only name keys already added. A key registered later in the chain
-doesn't compile, so registration order is checked.
+Starts tracking registrations in the container's **type**. It returns the same container, typed
+as having no keys. Each chained `RegisterClass`, `RegisterFactory`, `RegisterValue`, `Expect` or
+`Use` then adds its keys, and `Deps` may only name keys already added. A key registered later in
+the chain doesn't compile, so registration order is checked.
 
 - **Chain the calls.** A registration made as a statement still works at runtime but doesn't
   change a variable's type.
 - **Nothing changes at runtime.** A typed container behaves exactly like any other, and is
   assignable to a plain `IoCContainer`.
 - **Scopes keep the type:** `CreateScope()` returns `IoCContainer<TKeys>`.
+- **Modules:** `Use(module)` adds what a [`DefineModule`](#definemoduledefinition) module provides,
+  and doesn't compile unless the registry covers what it `Needs`.
 
 See [typed containers](../guides/declared-dependencies.md#depend-only-on-whats-registered-typed-containers).
 
@@ -348,7 +429,7 @@ class Repo {
 const ioc = new IoCContainer()
   .Typed()
   .RegisterValue($Url, 'kv://local')
-  .RegisterClass(Repo, { Deps: [$Url] });
+  .RegisterClass(Repo, { Deps: [$Url] }); // $Url is registered above, so this compiles
 
 console.log((await ioc.Resolve(Repo)).url); // kv://local
 ```
@@ -356,16 +437,21 @@ console.log((await ioc.Resolve(Repo)).url); // kv://local
 ### Expect(...keys)
 
 ```ts ignore
-Expect<const TDeps extends readonly (IoCDependencyKey<any> | [IoCDependencyKey<any>, string])[]>(...keys: TDeps): IoCContainer<TKeys | IoCExpected<TDeps>>
+Expect<const TDeps extends readonly (IoCDependencyKey<any> | readonly [IoCDependencyKey<any>, string])[]>(
+  ...keys: TDeps
+): IoCContainer<TKeys | IoCExpected<TDeps>>
 ```
 
-Declares keys registered somewhere else (by another module, a parent, or each scope), so a typed
-container's `Deps` may name them and `Validate()` counts them as provided. Pass `[key, name]` for
-a named registration.
+Declares keys registered somewhere else (each scope, a parent), so a typed container's `Deps`
+may name them and `Validate()` counts them as provided. Pass `[key, name]` for a named
+registration.
 
 **Nothing is registered:** resolving an expected key where nobody registered it still throws
-`IoCServiceNotFoundError`, with the hint "It is declared with Expect(); register it on the container
-or scope that provides it." **Returns:** the same container.
+`IoCServiceNotFoundError`, with the hint "It is declared with Expect(); register it on the
+container or scope that provides it." **Returns:** the same container. **Throws:**
+[`IoCRegistrationError`](./errors.md#module--called--which-only-the-application-can-call) when
+called from a [module view](#the-module-view): a module declares the keys it expects from
+elsewhere in its `Needs`.
 
 ```ts
 import { IoCContainer, IoCToken } from '@fathym/ioc';
@@ -378,8 +464,8 @@ class Handler {
 
 const ioc = new IoCContainer()
   .Typed()
-  .Expect($Request)
-  .RegisterClass(Handler, { Deps: [$Request], Lifetime: 'scoped', Lazy: true });
+  .Expect($Request) // registered on each request scope
+  .RegisterClass(Handler, { Deps: [$Request], Lifetime: 'scoped' });
 
 await using scope = ioc.CreateScope();
 
@@ -392,26 +478,30 @@ console.log((await scope.Resolve(Handler)).req.url); // http://localhost/
 
 ## Resolution
 
+Resolution methods infer the service type from the key: `Resolve($Db)` is a `Promise<Db>`.
+There is no explicit type argument to pass.
+
 ### Resolve(key, name?)
 
 ```ts ignore
-Resolve<T>(token: IoCToken<T>, name?: string): Promise<T>
-Resolve<T>(clazz: abstract new (...args: any[]) => T, name?: string): Promise<T>
-Resolve<T>(symbol: symbol, name?: string): Promise<T>   // T is yours to state: Resolve<Db>(sym)
+Resolve<K extends IoCServiceKey<unknown>>(key: K, name?: string): Promise<IoCServiceOf<K>>
 ```
 
 Resolves a service from this container, or from its parents for a scope, building it if needed.
 
 - **Always async.**
-- **Concurrent resolves of a singleton** share one creation.
-- **Failed creations** are retried on the next resolve.
+- **Concurrent resolves of a singleton** share one build.
+- **A failed build isn't cached:** the next resolve tries again.
+- **A `scoped` service** gets one instance per scope; resolving it from the root throws.
 
 **Throws:**
 
-- [`IoCServiceNotFoundError`](./errors.md#no-service-for-symbol--with-name--has-been-registered);
+- [`IoCServiceNotFoundError`](./errors.md#no-service-is-registered-for-);
 - [`IoCCircularDependencyError`](./errors.md#circular-dependency-detected-a---b---a);
+- [`IoCScopeRequiredError`](./errors.md#scoped-service--was-resolved-outside-a-scope);
+- [`IoCResolveTimeoutError`](./errors.md#-did-not-finish-within-ms) after `PendingTimeoutMs`;
 - [`IoCContainerDisposedError`](./errors.md#the-ioc-container-has-been-disposed);
-- any error from the factory.
+- any error from the factory or constructor.
 
 ```ts
 import { IoCContainer } from '@fathym/ioc';
@@ -420,9 +510,7 @@ class Config {
   public env = 'dev';
 }
 
-const ioc = new IoCContainer();
-
-ioc.RegisterClass(Config);
+const ioc = new IoCContainer().RegisterClass(Config);
 
 console.log((await ioc.Resolve(Config)).env); // dev
 ```
@@ -430,16 +518,16 @@ console.log((await ioc.Resolve(Config)).env); // dev
 ### TryResolve(key, name?)
 
 ```ts ignore
-TryResolve<T>(key: IoCToken<T> | Class<T> | symbol, name?: string): Promise<T | undefined>
+TryResolve<K extends IoCServiceKey<unknown>>(key: K, name?: string): Promise<IoCServiceOf<K> | undefined>
 ```
 
-Like `Resolve`, but returns `undefined` when nothing is registered. Errors from building the
-service (including missing _dependencies_) still reject.
+Like `Resolve`, but returns `undefined` when nothing is registered for the key and name. Errors
+from building the service (a missing _dependency_ included) still reject.
 
 ```ts
 import { IoCContainer, IoCToken } from '@fathym/ioc';
 
-const $Analytics = IoCToken<{ track(event: string): void }>('Analytics');
+const $Analytics = IoCToken<{ track(event: string): void }, 'Analytics'>('Analytics');
 
 const ioc = new IoCContainer();
 
@@ -453,22 +541,21 @@ console.log(analytics); // undefined
 ### ResolveAll(key)
 
 ```ts ignore
-ResolveAll<T>(key: IoCToken<T> | Class<T> | symbol): Promise<T[]>
+ResolveAll<K extends IoCServiceKey<unknown>>(key: K): Promise<IoCServiceOf<K>[]>
 ```
 
-Resolves every named registration of a key, including `$default`, in registration order. For a
-scope, its registrations come first, then its parents'; when a name exists at several levels, the
-nearest one wins.
+Resolves every named registration of a key, `$default` included, in the order of
+[`Names`](#nameskey): a scope's names first, then its parents'. When a name exists at several
+levels, the nearest wins. An empty array when nothing is registered.
 
 ```ts
 import { IoCContainer, IoCToken } from '@fathym/ioc';
 
-const $Plugin = IoCToken<string>('Plugin');
+const $Plugin = IoCToken<string, 'Plugin'>('Plugin');
 
-const ioc = new IoCContainer();
-
-ioc.RegisterValue($Plugin, 'metrics', { Name: 'metrics' });
-ioc.RegisterValue($Plugin, 'audit', { Name: 'audit' });
+const ioc = new IoCContainer()
+  .RegisterValue($Plugin, 'metrics', { Name: 'metrics' })
+  .RegisterValue($Plugin, 'audit', { Name: 'audit' });
 
 console.log(await ioc.ResolveAll($Plugin)); // [ "metrics", "audit" ]
 ```
@@ -476,7 +563,7 @@ console.log(await ioc.ResolveAll($Plugin)); // [ "metrics", "audit" ]
 ### ResolveNamed(key)
 
 ```ts ignore
-ResolveNamed<T>(key: IoCToken<T> | Class<T> | symbol): Promise<Map<string, T>>
+ResolveNamed<K extends IoCServiceKey<unknown>>(key: K): Promise<Map<string, IoCServiceOf<K>>>
 ```
 
 Resolves every registration of a key into a `Map` from name to service (`$default` included),
@@ -485,7 +572,7 @@ nearest scope first. The container-backed replacement for a hand-built string-ke
 ```ts
 import { IoCContainer, IoCToken } from '@fathym/ioc';
 
-const $Profile = IoCToken<{ model: string }, 'ApiProfile'>('ApiProfile');
+const $Profile = IoCToken<{ model: string }, 'Profile'>('Profile');
 
 const ioc = new IoCContainer()
   .RegisterValue($Profile, { model: 'small' }, { Name: 'fast' })
@@ -497,7 +584,9 @@ console.log((await ioc.ResolveNamed($Profile)).get('smart')?.model); // large
 ### ResolveRecord(record)
 
 ```ts ignore
-ResolveRecord<R extends Record<string, Dependency>>(record: R): Promise<{ [K in keyof R]: value of R[K] }>
+ResolveRecord<const R extends Record<string, IoCDependency<any> | IoCDerivedDependency<any>>>(
+  record: R,
+): Promise<{ -readonly [K in keyof R]: IoCDependencyValue<R[K]> }>
 ```
 
 Resolves several services at once, concurrently, into an object with the same keys, each typed
@@ -506,8 +595,8 @@ from its dependency. Values may be a key, `[key, name]`, `IoCLazy(…)` or `IoCA
 ```ts
 import { IoCContainer, IoCToken } from '@fathym/ioc';
 
-const $Url = IoCToken<string, 'ApiRecordUrl'>('ApiRecordUrl');
-const $Port = IoCToken<number, 'ApiRecordPort'>('ApiRecordPort');
+const $Url = IoCToken<string, 'Url'>('Url');
+const $Port = IoCToken<number, 'Port'>('Port');
 
 const ioc = new IoCContainer()
   .RegisterValue($Url, 'localhost')
@@ -521,16 +610,16 @@ console.log(`${url}:${port}`); // localhost:8080
 ### Names(key)
 
 ```ts ignore
-Names(key: IoCToken<unknown> | Class<unknown> | symbol): string[]
+Names(key: IoCServiceKey<unknown>): string[]
 ```
 
-The names registered for a key (including `$default`), nearest scope first, **without building
+The names registered for a key (`$default` included), nearest scope first, **without building
 anything**. Use it for plugin registries keyed by name.
 
 ```ts
 import { IoCContainer, IoCToken } from '@fathym/ioc';
 
-const $Exporter = IoCToken<(data: string) => string>('Exporter');
+const $Exporter = IoCToken<(data: string) => string, 'Exporter'>('Exporter');
 
 const ioc = new IoCContainer()
   .RegisterValue($Exporter, (d) => `csv:${d}`, { Name: 'csv' })
@@ -542,63 +631,259 @@ console.log(ioc.Names($Exporter)); // [ "csv", "json" ]
 ### Has(key, name?)
 
 ```ts ignore
-Has(key: IoCToken<unknown> | Class<unknown> | symbol, name?: string): boolean
+Has(key: IoCServiceKey<unknown>, name?: string): boolean
 ```
 
-Whether a registration exists here or in a parent. It never builds anything.
+Whether a registration exists for the key and name, here or in a parent. It never builds
+anything.
 
 ```ts
 import { IoCContainer, IoCToken } from '@fathym/ioc';
 
-const $Cache = IoCToken<Map<string, string>>('Cache');
+const $Cache = IoCToken<Map<string, string>, 'Cache'>('Cache');
 
-const ioc = new IoCContainer();
-
-ioc.RegisterFactory($Cache, () => new Map(), { Lazy: true });
+const ioc = new IoCContainer().RegisterFactory($Cache, () => new Map());
 
 console.log(ioc.Has($Cache), ioc.Has($Cache, 'other')); // true false
 ```
 
 ---
 
+## Modules
+
+### Use(...modules)
+
+```ts ignore
+Use<const TModules extends readonly IoCModule<any, any>[]>(
+  ...modules: TModules & IoCCheckNeeds<TKeys, TModules>
+): IoCContainer<TKeys | IoCModulesProvide<TModules>>
+```
+
+Adds [modules](../guides/modules-and-lifecycle.md). Each module's `Requires` are added first,
+depth-first, then its `Register` runs against a [module view](#the-module-view) of this
+container. A module already added here or in a parent is skipped, so a shared requirement is
+registered once. Modules must be added before `Start()`; a scope can add its own
+(`ioc.CreateScope().Use(plugin)`).
+
+On a [typed container](#typed), the modules' provided keys are added to the registry, and the
+call doesn't compile unless the registry already covers what the modules need.
+
+**Returns:** the same container (typed with the provided keys).
+
+**Throws:**
+
+- [`IoCModuleCycleError`](./errors.md#module-dependency-cycle-a---b---a) for a `Requires` loop;
+- [`IoCRegistrationError`](./errors.md#a-module-needs-a-name-and-a-registerioc-function) for an
+  object that isn't a module;
+- [`IoCRegistrationError`](./errors.md#module--was-added-after-start-add-modules-before-starting-the-container)
+  for a module added after `Start()`;
+- [`IoCRegistrationError`](./errors.md#module--called--which-only-the-application-can-call) when
+  called from a module view;
+- whatever the module's `Register` throws.
+
+Two different modules with the same `Name` are both added, and an `IOC_MODULE_DUPLICATE`
+[warning](#onevent-and-iocevent) is emitted.
+
+```ts
+import { IoCContainer, type IoCModule, IoCToken } from '@fathym/ioc';
+
+const $Url = IoCToken<string, 'Url'>('Url');
+const $Client = IoCToken<{ url: string }, 'Client'>('Client');
+
+const Config: IoCModule = {
+  Name: 'Config',
+  Register: (ioc) => ioc.RegisterValue($Url, 'kv://local', { Default: true }),
+};
+
+const Client: IoCModule = {
+  Name: 'Client',
+  Requires: [Config],
+  Register: (ioc) => ioc.RegisterFactory($Client, (_c, url) => ({ url }), { Deps: [$Url] }),
+};
+
+const ioc = new IoCContainer().Use(Client); // registers Config, then Client
+
+console.log((await ioc.Resolve($Client)).url); // kv://local
+```
+
+### IoCModule
+
+```ts ignore
+interface IoCModule<TNeeds = never, TProvides = never> {
+  readonly Name: string;
+  readonly Requires?: readonly IoCModule<any, any>[];
+  readonly Needs?: readonly (IoCDependencyKey<any> | readonly [IoCDependencyKey<any>, string])[];
+  Register(ioc: IoCContainer<any>): unknown;
+  OnStart?(ioc: IoCContainer<any>): unknown;
+  OnStop?(ioc: IoCContainer<any>): unknown;
+}
+```
+
+| Member          | Meaning                                                                                                                                             |
+| --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Name`          | A unique, readable name, used in errors, `Describe()` and events                                                                                    |
+| `Requires?`     | Modules that must be added, and started, before this one                                                                                            |
+| `Needs?`        | Keys (or `[key, name]`) the module expects someone else to register: the app, or a module it doesn't require. `Validate()` treats them as declared  |
+| `Register(ioc)` | Adds the module's registrations. Synchronous: async setup belongs in factories or `OnStart`. Runs once per container, after the modules it requires |
+| `OnStart?(ioc)` | Runs from `Start()`, after every singleton was built, after the modules it requires; modules that don't require each other start at the same time   |
+| `OnStop?(ioc)`  | Runs from `Dispose()`, in reverse layer order, before any instance is disposed, if the module started                                               |
+
+The two type parameters are type-only: what the module needs and provides. A module written as a
+plain object literal needs and provides nothing as far as types go; use
+[`DefineModule`](#definemoduledefinition) to type it.
+
+### The module view
+
+`Register`, `OnStart` and `OnStop` receive a **module view** of the container, not the container
+itself. It shares all the container's state, and:
+
+- **It registers as the module.** `Describe()` reports the module as the registration's origin,
+  and the registration is **sealed**: in that container, only the same module may replace,
+  decorate or unregister it. Anyone else gets
+  [`IoCSealedError`](./errors.md#-belongs-to-module--so-only-that-module-can--it), naming the
+  module.
+- **Defaults stay open.** A registration made with `Default: true` exists to be replaced, so it
+  isn't sealed.
+- **Scopes stay open.** A registration made on a scope shadows the module's for that scope only,
+  and never changes the parent.
+- **Tests stay open.** A container created with `{ Testing: true }` (and its scopes) ignores
+  sealing.
+- **It can register and resolve, nothing else.** Calling `Use`, `Expect`, `Start`, `Dispose` or
+  `Override` on it throws
+  [`IoCRegistrationError`](./errors.md#module--called--which-only-the-application-can-call).
+
+```ts
+import { IoCContainer, type IoCModule, IoCToken, isIoCError } from '@fathym/ioc';
+
+const $Clock = IoCToken<() => number, 'Clock'>('Clock');
+const $Region = IoCToken<string, 'Region'>('Region');
+
+const Platform: IoCModule = {
+  Name: 'Platform',
+  Register: (ioc) => {
+    ioc.RegisterValue($Clock, () => Date.now()); // sealed
+    ioc.RegisterValue($Region, 'eu', { Default: true }); // replaceable
+  },
+};
+
+const ioc = new IoCContainer().Use(Platform);
+
+ioc.RegisterValue($Region, 'us'); // replaces the default
+
+try {
+  ioc.RegisterValue($Clock, () => 0, { Replace: true });
+} catch (err) {
+  console.log(isIoCError(err, 'IOC_SEALED')); // true
+}
+
+console.log(await ioc.Resolve($Region)); // us
+```
+
+### DefineModule(definition)
+
+```ts ignore
+DefineModule<const TRequires, const TNeeds, TResult>(
+  definition: IoCModuleDefinition<TRequires, TNeeds, TResult>,
+): IoCModule<IoCExpected<TNeeds>, provided keys>
+```
+
+Defines a typed module. At runtime it returns the definition unchanged; the work is in the types:
+
+- **Inside `Register`,** the container is typed with the keys the module `Needs` and the keys its
+  `Requires` provide, so `Deps` can only name those and the module's own earlier registrations.
+- **What `Register` returns** (a chain of registrations) is what the module provides.
+- **What the module needs** is its own `Needs`, plus whatever the modules it requires need and
+  don't get from their own requirements.
+- **`ioc.Use(module)` on a typed container** adds those keys, and doesn't compile unless the
+  container already has what the module needs. The compile error names the missing keys under
+  `'@fathym/ioc/unmet-needs'`.
+
+Each module type-checks its own short chain, so large applications stay fast to compile.
+
+`IoCModuleDefinition` has the same members as `IoCModule`, with `Requires` and `Needs` captured
+as tuples and `Register`, `OnStart` and `OnStop` typed with the module's keys.
+
+```ts
+import { DefineModule, IoCContainer, IoCToken } from '@fathym/ioc';
+
+const $Url = IoCToken<string, 'Url'>('Url');
+
+class Repo {
+  constructor(public url: string) {}
+}
+
+class Notes {
+  constructor(public repo: Repo) {}
+}
+
+const RepoModule = DefineModule({
+  Name: 'Repo',
+  Needs: [$Url],
+  Register: (ioc) => ioc.RegisterClass(Repo, { Deps: [$Url] }),
+});
+
+const NotesModule = DefineModule({
+  Name: 'Notes',
+  Requires: [RepoModule],
+  Register: (ioc) => ioc.RegisterClass(Notes, { Deps: [Repo] }), // Repo is typed in
+});
+
+const ioc = new IoCContainer()
+  .Typed()
+  .RegisterValue($Url, 'kv://local') // without this line, Use() doesn't compile
+  .Use(NotesModule);
+
+console.log((await ioc.Resolve(Notes)).repo.url); // kv://local
+```
+
+---
+
 ## Lifecycle
 
-### Validate()
+### Validate(options?)
 
 ```ts ignore
 Validate(options?: { Throw?: boolean }): IoCValidationIssue[]
 ```
 
-Checks the dependencies declared with `Deps`, in this container and its parents, without building
-anything. Keys declared with [`Expect`](#expectkeys) count as provided. It throws one
-[`IoCValidationError`](./errors.md#ioc-validation-failed) listing every problem; with
-`{ Throw: false }` it returns the problems instead (`{ Kind, Service, Message }`, where `Kind` is
-`'missing' | 'cycle' | 'captive' | 'arguments'`), and an empty array when there are none:
+Checks the registrations visible from this container without building anything, and throws one
+[`IoCValidationError`](./errors.md#ioc-validation-failed) listing every problem. With
+`{ Throw: false }` it returns the problems instead, and an empty array when there are none. Each
+issue is `{ Kind, Service, Message }`:
 
-- missing dependencies;
-- cycles;
-- singletons that depend on scoped services;
-- bare classes whose constructors take parameters.
+| `Kind`       | Problem                                                                                                                                                        |
+| ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `missing`    | A declared dependency (`Deps`) that isn't registered                                                                                                           |
+| `cycle`      | A cycle between declared dependencies (`IoCLazy` dependencies don't count)                                                                                     |
+| `captive`    | A service that depends, directly or through transients, on a shorter-lived one: a singleton on a scoped service, a tenant-level service on a request-level one |
+| `arguments`  | A class registered without `Deps` whose constructor declares parameters                                                                                        |
+| `undeclared` | A module's service depends on a service from another module that the module neither `Requires` (directly or transitively) nor lists in `Needs`                 |
 
-Dependencies resolved inside factories aren't visible to it; `Activate()` covers those.
+Lifetimes rank from longest to shortest: singleton, then each declared level in order, then
+`scoped` without a level. Transients have no rank of their own; `Validate()` looks through them.
+
+Keys declared with [`Expect`](#expectkeys) count as provided. Factories without `Deps` are opaque,
+so what they resolve isn't checked; `Activate()` covers those by building everything. `Start()`
+calls `Validate()` for you.
 
 ```ts
 import { IoCContainer } from '@fathym/ioc';
 
-class Config {}
-
-class Repo {
-  constructor(public config: Config) {}
+class Session {
+  public id = crypto.randomUUID();
 }
 
-const ioc = new IoCContainer();
+class Cache {
+  constructor(public session: Session) {}
+}
 
-ioc.RegisterClass(Config);
-ioc.RegisterClass(Repo, { Deps: [Config], Lazy: true });
+const ioc = new IoCContainer()
+  .RegisterClass(Session, { Lifetime: 'scoped' })
+  .RegisterClass(Cache, { Deps: [Session] }); // a singleton holding a scoped service
 
-ioc.Validate(); // passes
-
-console.log('valid');
+for (const issue of ioc.Validate({ Throw: false })) {
+  console.log(issue.Kind, issue.Service); // captive Cache
+}
 ```
 
 ### Activate()
@@ -607,84 +892,29 @@ console.log('valid');
 Activate(): Promise<void>
 ```
 
-Builds every **singleton** registered in this container that isn't built yet: lazy ones, and eager
-ones whose first attempt failed. Rejects with
-[`AggregateError: IoC activation failed for: …`](./errors.md#ioc-activation-failed-for-) naming
-every failure. Transient and scoped services aren't built.
+Builds every **singleton** registered in this container that isn't built yet, concurrently, so
+configuration errors surface at startup rather than on first use. Transient and scoped services
+aren't built: they belong to each resolve and to each scope. Each build is bounded by
+`PendingTimeoutMs`. `Start()` calls it for you.
+
+**Throws:** [`IoCActivationError`](./errors.md#ioc-activation-failed-for-) (an `AggregateError`)
+naming every service that failed. Failures aren't cached, so calling it again retries only what
+failed.
 
 ```ts
 import { IoCContainer, IoCToken } from '@fathym/ioc';
 
 let built = false;
 
-const ioc = new IoCContainer();
+const $Search = IoCToken<boolean, 'Search'>('Search');
 
-ioc.RegisterFactory(IoCToken('Search'), () => (built = true), { Lazy: true });
+const ioc = new IoCContainer().RegisterFactory($Search, () => (built = true));
+
+console.log(built); // false: nothing is built at registration
 
 await ioc.Activate();
 
 console.log(built); // true
-```
-
-### Use(...modules)
-
-```ts ignore
-Use(...modules: IoCModule[]): this
-```
-
-Adds [modules](../guides/modules-and-lifecycle.md). Each module's `Requires` are added first,
-depth-first, then its `Register(ioc)` runs. A module already added here or in a parent is skipped.
-Registrations a module makes are recorded as its own.
-
-**Throws:** [`IoCModuleCycleError`](./errors.md#module-dependency-cycle-a---b---a) for a
-requirement loop; `IoCRegistrationError` for an object that isn't a module, or for a module added
-after `Start()`. Two different modules with one `Name` are reported to `Diagnostics`
-(`IOC_MODULE_DUPLICATE`).
-
-```ts
-import { IoCContainer, type IoCModule, IoCToken } from '@fathym/ioc';
-
-const $Port = IoCToken<number, 'Port'>('Port');
-
-const Http: IoCModule = { Name: 'Http', Register: (ioc) => ioc.RegisterValue($Port, 8080) };
-
-const ioc = new IoCContainer().Use(Http);
-
-console.log(await ioc.Resolve($Port)); // 8080
-```
-
-| `IoCModule` member | Meaning                                                                        |
-| ------------------ | ------------------------------------------------------------------------------ |
-| `Name`             | A readable name, used in errors and introspection                              |
-| `Requires?`        | Modules to add (and start) before this one                                     |
-| `Register(ioc)`    | Adds the module's registrations; synchronous                                   |
-| `OnStart?(ioc)`    | Runs from `Start()`, after every singleton was built, in module order          |
-| `OnStop?(ioc)`     | Runs from `Dispose()`, in reverse, before any instance is disposed, if started |
-
-### ModuleFromContainer(name, container, options?)
-
-```ts ignore
-ModuleFromContainer(name: string, container: { CopyTo(ioc): void }, options?: {
-  Defaults?: boolean; Requires?: IoCModule[]; OnStart?(ioc): unknown; OnStop?(ioc): unknown;
-}): IoCModule
-```
-
-Wraps a container someone else built (of any version) as a module: `Register` copies its
-registrations in with `CopyTo`. With `Defaults: true`, only registrations the host doesn't
-already have are copied, so the host always wins.
-
-```ts
-import { IoCContainer, IoCToken, ModuleFromContainer } from '@fathym/ioc';
-
-const $Theme = IoCToken<string, 'ApiTheme'>('ApiTheme');
-
-const plugin = new IoCContainer().RegisterValue($Theme, 'plugin');
-
-const host = new IoCContainer()
-  .RegisterValue($Theme, 'host')
-  .Use(ModuleFromContainer('Plugin', plugin, { Defaults: true }));
-
-console.log(await host.Resolve($Theme)); // host
 ```
 
 ### Start(options?)
@@ -693,46 +923,156 @@ console.log(await host.Resolve($Theme)); // host
 Start(options?: { Validate?: boolean }): Promise<void>
 ```
 
-Runs `Validate()` (unless `Validate: false`), then `Activate()`, then each module's `OnStart` in
-the order the modules were added. Repeat and concurrent calls share one start.
+Starts the container:
 
-**Throws:** whatever `Validate()` or `Activate()` throws, or
-[`IoCStartError`](./errors.md#module--failed-to-start-) when an `OnStart` fails. The modules
-already started are stopped first. After any failure, `Start()` can be called again once the
-cause is fixed. If `Dispose()` is called while `Start()` runs, the module that was starting is
-stopped too, and `Start()` throws
-[`IoCContainerDisposedError`](./errors.md#the-ioc-container-has-been-disposed).
+1. checks the wiring with `Validate()` (skip it with `{ Validate: false }`);
+2. builds every singleton (`Activate()`), except those registered with `OnDemand: true`;
+3. runs the modules' `OnStart`, **layer by layer**. A module's layer is one more than the deepest
+   layer among the modules it requires. Modules in one layer start concurrently; layers start in
+   order. `Describe()` reports each module's `Layer` and `StartMs`.
+
+`State` is `starting` while it runs and `started` after. Repeat and concurrent calls share one
+start; calling it after it succeeded does nothing.
+
+**If anything fails,** the started modules are stopped, everything built during this `Start()` is
+disposed and forgotten, `State` goes back to `idle`, and `Start()` throws one error. Fix the
+cause and call `Start()` again. If cleaning up after a failed validation or build fails, an
+`IOC_ROLLBACK_FAILED` [warning](#onevent-and-iocevent) is emitted.
+
+**If `Dispose()` is called while `Start()` runs,** `Dispose()` waits for the running step, then
+stops and disposes everything, and `Start()` throws `IoCContainerDisposedError`.
+
+**Throws:**
+
+- [`IoCValidationError`](./errors.md#ioc-validation-failed);
+- [`IoCActivationError`](./errors.md#ioc-activation-failed-for-);
+- [`IoCStartError`](./errors.md#module--failed-to-start-) when an `OnStart` fails (its `Failures`
+  lists every module of the layer that failed);
+- [`IoCContainerDisposedError`](./errors.md#the-ioc-container-has-been-disposed);
+- [`IoCRegistrationError`](./errors.md#module--called--which-only-the-application-can-call) when
+  called from a module view.
+
+```ts
+import { IoCContainer, type IoCModule } from '@fathym/ioc';
+
+const events: string[] = [];
+
+const module = (Name: string, Requires: IoCModule[] = []): IoCModule => ({
+  Name,
+  Requires,
+  Register: () => {},
+  OnStart: () => {
+    events.push(`start ${Name}`);
+  },
+  OnStop: () => {
+    events.push(`stop ${Name}`);
+  },
+});
+
+const Db = module('Db');
+const Cache = module('Cache'); // independent of Db: starts in the same layer
+const Api = module('Api', [Db, Cache]);
+
+{
+  await using ioc = new IoCContainer().Use(Api);
+
+  await ioc.Start();
+
+  console.log(ioc.Describe().Modules.map((m) => `${m.Name}:${m.Layer}`)); // Db:0, Cache:0, Api:1
+}
+
+console.log(events); // start Db, start Cache, start Api, stop Api, stop Db, stop Cache
+```
+
+### Dispose()
+
+```ts ignore
+Dispose(): Promise<void>
+[Symbol.asyncDispose](): Promise<void>   // enables `await using`
+```
+
+Shuts the container down, in this order:
+
+1. **waits** for a running `Start()` to finish its current step;
+2. **stops the modules:** `OnStop` of each started module, layers in reverse, each layer
+   concurrently;
+3. **disposes the live scopes** created from it, deepest first;
+4. **disposes its own instances,** in reverse creation order: those that implement
+   `Symbol.asyncDispose` or `Symbol.dispose`, and those registered with a `Dispose` option.
+
+Then it clears its registrations, and `State` is `disposed`.
+
+- **Never disposed:** transient instances (they belong to whoever resolved them) and values from
+  `RegisterValue` without a `Dispose` option.
+- **Scopes are held weakly,** so a scope dropped without being disposed can still be
+  garbage-collected.
+- **Repeat calls** do nothing; a call made while one is running waits for it.
+- **Afterwards,** every other call throws `IoCContainerDisposedError`, on the container and on
+  every scope created from it.
+
+**Throws:** [`IoCDisposeError`](./errors.md#errors-occurred-while-disposing-the-ioc-container) (an
+`AggregateError`) collecting every `OnStop` and disposer error; everything is still disposed.
+[`IoCRegistrationError`](./errors.md#module--called--which-only-the-application-can-call) when
+called from a module view.
 
 ```ts
 import { IoCContainer } from '@fathym/ioc';
 
-const ioc = new IoCContainer().Use({
-  Name: 'Banner',
-  Register: () => {},
-  OnStart: () => console.log('started'),
-});
+const closed: string[] = [];
 
-await ioc.Start(); // started
+class Connection implements Disposable {
+  public [Symbol.dispose]() {
+    closed.push('root connection');
+  }
+}
+
+class RequestLog implements Disposable {
+  public [Symbol.dispose]() {
+    closed.push('request log');
+  }
+}
+
+const ioc = new IoCContainer()
+  .RegisterClass(Connection)
+  .RegisterClass(RequestLog, { Lifetime: 'scoped' });
+
+await ioc.Resolve(Connection);
+
+const scope = ioc.CreateScope(); // never disposed by hand
+
+await scope.Resolve(RequestLog);
+
+await ioc.Dispose();
+
+console.log(closed); // [ "request log", "root connection" ]
 ```
+
+---
+
+## Scopes
 
 ### CreateScope(options?)
 
 ```ts ignore
-CreateScope(options?: { Level?: string }): IoCContainer<TKeys>   // a typed container's scope keeps its keys
+CreateScope(options?: { Level?: string }): IoCContainer<TKeys>
 ```
 
-Creates a child scope. A `Level` (`'tenant'`, `'request'`, `'agent'`, …) makes it the home of
-`scoped` registrations with a matching `ScopeLevel`; see [scope levels](../concepts/scopes.md#scope-levels).
+Creates a child scope.
 
-- **It resolves everything its parent can,** and its own registrations override the parent's for
-  the scope only.
-- **`scoped` services** get one instance per scope.
+- **It resolves everything its parent can,** and registrations made on it shadow the parent's for
+  this scope only.
+- **`scoped` services** get one instance per scope, built against and disposed by that scope.
 - **Singletons stay shared,** and are always built by the container that registered them.
-- **Transients built in the scope** receive the scope.
-- **It is cheap:** nothing is copied, and the parent keeps no reference to the scope.
+- **It is cheap:** nothing is copied. The parent holds it weakly, and disposes it if it is still
+  alive when the parent is disposed.
+- **`Level`** must be a level declared in the root's `Levels` option, deeper than every level
+  above it. Services registered with a matching `ScopeLevel` live in the nearest scope of that
+  level, shared by the scopes inside it. See [scope levels](../concepts/scopes.md#scope-levels).
 
-**Throws:** [`IoCContainerDisposedError`](./errors.md#the-ioc-container-has-been-disposed) when the
-parent is disposed.
+**Throws:** [`IoCLevelError`](./errors.md#scope-level--is-not-declared) for an undeclared level or
+[a level nested in the wrong order](./errors.md#a--scope-cant-be-created-inside-a--scope);
+[`IoCContainerDisposedError`](./errors.md#the-ioc-container-has-been-disposed) when the parent is
+disposed.
 
 ```ts
 import { IoCContainer } from '@fathym/ioc';
@@ -741,9 +1081,7 @@ class RequestId {
   public value = crypto.randomUUID();
 }
 
-const ioc = new IoCContainer();
-
-ioc.RegisterClass(RequestId, { Lifetime: 'scoped', Lazy: true });
+const ioc = new IoCContainer().RegisterClass(RequestId, { Lifetime: 'scoped' });
 
 await using a = ioc.CreateScope();
 await using b = ioc.CreateScope();
@@ -754,16 +1092,19 @@ console.log((await a.Resolve(RequestId)) !== (await b.Resolve(RequestId))); // t
 ### Isolate(...keys)
 
 ```ts ignore
-Isolate(...keys: (key | [key, name])[]): this
+Isolate(...keys: (IoCServiceKey<unknown> | readonly [IoCServiceKey<unknown>, string])[]): this
 ```
 
-Registers each key again in this scope with the parent's recipe (factory, lifetime, `Deps`,
-`Dispose` option, decorators), so the scope builds, caches and disposes its own instance while
-everything else stays shared. Dependencies are resolved from the scope.
+Gives this scope its own instances of services registered in a parent. Each key (or
+`[key, name]`) is registered again here with the parent's recipe (factory, lifetime, `Deps`,
+`Dispose` option, decorators), so the scope builds, caches and disposes a fresh one while
+everything else stays shared. Its dependencies are resolved from this scope, so isolate those
+too when they must be separate.
 
-**Throws:** [`IoCNotIsolatableError`](./errors.md#-cant-be-isolated-) for values and for
-registrations made by an older version; `IoCRegistrationError` on a root container;
-`IoCServiceNotFoundError` for an unregistered key.
+**Returns:** the same scope. **Throws:**
+[`IoCNotIsolatableError`](./errors.md#-cant-be-isolated-) for a value;
+[`IoCRegistrationError`](./errors.md#isolate-works-on-scopes-call-it-on-a-container-created-with-createscope)
+on a root container; `IoCServiceNotFoundError` for an unregistered key.
 
 ```ts
 import { IoCContainer } from '@fathym/ioc';
@@ -772,52 +1113,13 @@ class Memory {
   public notes: string[] = [];
 }
 
-const ioc = new IoCContainer().RegisterClass(Memory, { Lazy: true });
+const ioc = new IoCContainer({ Levels: ['agent'] }).RegisterClass(Memory);
 
 await using agent = ioc.CreateScope({ Level: 'agent' }).Isolate(Memory);
 
 (await agent.Resolve(Memory)).notes.push('mine');
 
 console.log((await ioc.Resolve(Memory)).notes); // []
-```
-
-### Dispose()
-
-```ts ignore
-Dispose(): Promise<void>
-[Symbol.asyncDispose](): Promise<void>   // enables `await using`
-```
-
-Disposes the instances this container created that implement `Symbol.asyncDispose` or
-`Symbol.dispose`. It runs in reverse creation order, then clears the registrations.
-
-- **Modules first:** if `Start()` ran, each started module's `OnStop` runs, in reverse, before any
-  instance is disposed.
-- **Never disposed:** transients and values (unless registered with a `Dispose` option).
-- **Scopes:** disposing a container doesn't dispose its scopes.
-- **Repeat calls** do nothing; a call made while one is running waits for it.
-- **Afterwards,** using the container throws `IoCContainerDisposedError`.
-- **Errors:** if disposers throw, the method rejects with
-  [`AggregateError: Errors occurred while disposing …`](./errors.md#errors-occurred-while-disposing-the-ioc-container).
-
-```ts
-import { IoCContainer } from '@fathym/ioc';
-
-class Connection implements Disposable {
-  public static closed = 0;
-
-  public [Symbol.dispose]() {
-    Connection.closed++;
-  }
-}
-
-const ioc = new IoCContainer();
-
-ioc.RegisterClass(Connection);
-
-await ioc.Dispose();
-
-console.log(Connection.closed); // 1
 ```
 
 ---
@@ -827,20 +1129,28 @@ console.log(Connection.closed); // 1
 ### Override(key, value, options?)
 
 ```ts ignore
-Override<K>(key: K, value: IoCServiceOf<K>, options?: { Name?: string }): () => void
+Override<K extends IoCServiceKey<unknown>>(key: K, value: IoCServiceOf<K>, options?: { Name?: string }): () => void
 ```
 
-Replaces a registration with a value until the returned function is called, which restores
-exactly what was there (or removes the override). It never throws in strict mode. Instances
-already built keep what they were given, so override before resolving the services that use it,
-or override in a scope.
+For tests: replaces a registration with a value until the returned function is called, which puts
+back exactly what was there before (or removes the override when nothing was). It ignores module
+sealing.
+
+- **Only a container created with `{ Testing: true }`,** or a scope of one, allows it. Elsewhere it
+  throws [`IoCSealedError`](./errors.md#override-is-for-tests-create-the-container-with--testing-true--to-use-it-on-).
+- **Instances already built keep what they were given,** so override before resolving the
+  services that use it, or override in a scope and resolve from there.
+
+**Returns:** a restore function. **Throws:** `IoCSealedError` (`IOC_SEALED`);
+[`IoCRegistrationError`](./errors.md#module--called--which-only-the-application-can-call) when
+called from a module view.
 
 ```ts
 import { IoCContainer, IoCToken } from '@fathym/ioc';
 
-const $Now = IoCToken<() => number, 'ApiNow'>('ApiNow');
+const $Now = IoCToken<() => number, 'Now'>('Now');
 
-const ioc = IoCContainer.Create().RegisterValue($Now, () => Date.now());
+const ioc = new IoCContainer({ Testing: true }).RegisterValue($Now, () => Date.now());
 
 const restore = ioc.Override($Now, () => 0);
 
@@ -855,21 +1165,45 @@ restore();
 Describe(): IoCDescription
 ```
 
-Everything visible from the container as plain, serializable data, without building anything:
+Everything visible from the container as plain, serializable data, without building anything.
+Use it for debugging, diagrams, health pages and tooling.
 
-- **`Services`:** one `IoCServiceDescription` per registration in this container and its parents,
-  nearest first: `Key`, `Name`, `Label`, `Kind` (`class`, `factory`, `value`, or `external` for
-  entries from older versions), `Lifetime`, `ScopeLevel`, `Default`, `Module`, `Depth` (0 is this
-  container), `Shadowed` (a nearer registration hides it), `Deps` (declared; `lazy:`/`all:`
-  prefixes), `Observed` (what the factory resolved while building) and `State`
-  (`empty`/`pending`/`ready`).
-- **`Modules`:** `Name`, `Requires`, `Started`, `Depth`.
-- **`Level`** and **`Scope`** for the container itself.
+`IoCDescription`:
+
+| Field      | Meaning                                                                          |
+| ---------- | -------------------------------------------------------------------------------- |
+| `State`    | The container's [state](#state)                                                  |
+| `Level`    | This scope's level, if it was created with one                                   |
+| `Scope`    | `true` for a scope (a container with a parent)                                   |
+| `Services` | One `IoCServiceDescription` per registration, here and in parents, nearest first |
+| `Modules`  | The modules added here and in parents, in the order they were added              |
+
+`IoCServiceDescription`:
+
+| Field        | Meaning                                                                                  |
+| ------------ | ---------------------------------------------------------------------------------------- |
+| `Key`        | The key's description: the token's description, or the class name                        |
+| `Name`       | The registration name (`$default` when unnamed)                                          |
+| `Label`      | `Key` or `Key[name]`, as used in error messages                                          |
+| `Kind`       | `'class'`, `'factory'` or `'value'`                                                      |
+| `Lifetime`   | `'singleton'`, `'transient'` or `'scoped'`                                               |
+| `ScopeLevel` | The level, for a level-bound scoped service                                              |
+| `Default`    | Registered with `Default: true`                                                          |
+| `Module`     | The name of the module that registered it, if any                                        |
+| `Depth`      | `0` for this container, `1` for its parent, and so on                                    |
+| `Shadowed`   | A nearer container registers the same key and name, so this one isn't used here          |
+| `Deps`       | Declared dependencies as labels; `IoCLazy` / `IoCAll` ones are prefixed `lazy:` / `all:` |
+| `Observed`   | What the factory resolved while building, for factories without `Deps`                   |
+| `State`      | For singletons, and scoped services in this scope: `'empty'`, `'pending'` or `'ready'`   |
+| `BuildMs`    | For built singletons and scoped services: how long the last build took, in milliseconds  |
+
+Each module entry has `Name`, `Requires` (names), `Layer` (its start layer), `Started`, `StartMs`
+(how long `OnStart` took, once started) and `Depth`.
 
 ```ts
 import { IoCContainer, IoCToken } from '@fathym/ioc';
 
-const $Url = IoCToken<string, 'ApiDescribeUrl'>('ApiDescribeUrl');
+const $Url = IoCToken<string, 'Url'>('Url');
 
 class Repo {
   constructor(public url: string) {}
@@ -877,133 +1211,101 @@ class Repo {
 
 const ioc = new IoCContainer()
   .RegisterValue($Url, 'kv://local')
-  .RegisterClass(Repo, { Deps: [$Url], Lazy: true });
+  .RegisterClass(Repo, { Deps: [$Url] });
+
+await ioc.Start();
 
 for (const s of ioc.Describe().Services) {
-  console.log(s.Label, s.Kind, s.Deps); // IoC wiring as data
+  console.log(s.Label, s.Kind, s.State, s.Deps); // Url value ready [] / Repo class ready [ "Url" ]
 }
 ```
 
----
-
-## Copying and low level
-
-### CopyTo(target)
+### OnEvent and IoCEvent
 
 ```ts ignore
-CopyTo(target: IoCContainer): void
+type IoCEvent =
+  | { Type: 'build'; Service: string; Ms: number; Error?: unknown }
+  | { Type: 'resolve'; Service: string; Ms: number; Error?: unknown }
+  | { Type: 'start'; Module: string; Ms: number; Error?: unknown }
+  | { Type: 'stop'; Module: string; Ms: number; Error?: unknown }
+  | { Type: 'warning'; Code: IoCWarningCode; Message: string; Service?: string };
 ```
 
-Copies registrations into `target`, replacing what it has under the same key and name.
+What the `OnEvent` option receives:
 
-- **Singletons, scoped services and values are shared.**
-- **Transient factories** receive `target` when resolved from it.
-- **For a scope,** the whole chain is copied, nearest registration winning.
-- **Older versions:** works in both directions with containers from older versions of this package.
+- **`build`:** a service was built, or failed to build (`Error` is set), with how long it took;
+- **`resolve`:** a `Resolve` call finished, or failed;
+- **`start` / `stop`:** a module's `OnStart` / `OnStop` finished, or failed;
+- **`warning`:** something failed where no caller could be told.
 
-See [copying containers](../guides/copying-containers.md).
+| `IoCWarningCode`          | When                                                                            |
+| ------------------------- | ------------------------------------------------------------------------------- |
+| `IOC_LATE_DISPOSE_FAILED` | An instance that finished building after `Dispose()` failed to dispose          |
+| `IOC_MODULE_DUPLICATE`    | Two different modules with the same `Name` were added                           |
+| `IOC_ROLLBACK_FAILED`     | Cleaning up after a `Start()` that failed in `Validate()` or `Activate()` threw |
+
+A listener that throws is ignored. Events are emitted synchronously, so keep the listener cheap.
 
 ```ts
-import { IoCContainer } from '@fathym/ioc';
+import { IoCContainer, type IoCEvent, IoCToken } from '@fathym/ioc';
 
-class Settings {}
+const $Db = IoCToken<{ ok: boolean }, 'Db'>('Db');
 
-const source = new IoCContainer();
-const target = new IoCContainer();
+const slow: string[] = [];
 
-source.RegisterClass(Settings);
-source.CopyTo(target);
+const onEvent = (e: IoCEvent) => {
+  if (e.Type === 'build' && e.Ms > 100) slow.push(e.Service);
+  if (e.Type === 'warning') console.warn(e.Code, e.Message);
+};
 
-console.log((await target.Resolve(Settings)) === (await source.Resolve(Settings))); // true
+const ioc = new IoCContainer({ OnEvent: onEvent }).RegisterFactory($Db, () => ({ ok: true }));
+
+await ioc.Start();
+
+console.log(slow); // []
 ```
-
-### Symbol(id)
-
-```ts ignore
-Symbol(id: string): symbol
-```
-
-Returns `Symbol.for(id)`, the same symbol as `IoCToken(id)`. It exists for older code;
-prefer typed tokens.
-
-```ts
-import { IoCContainer, IoCToken } from '@fathym/ioc';
-
-const ioc = new IoCContainer();
-
-console.log(ioc.Symbol('Db') === IoCToken('Db')); // true
-```
-
-### RegisterDirect and ResolveDirect
-
-```ts ignore
-RegisterDirect(symbol: symbol, name: string, instance: IoCServiceConstructed): void
-ResolveDirect<T>(key: Class<T> | symbol, name?: string): IoCServiceResolutions
-```
-
-Low-level access to stored entries, used for copying between containers (including older
-versions). `ResolveDirect` returns the stored entry without building anything. Prefer the
-registration and resolution methods above.
-
-### services and symbols
-
-```ts ignore
-services: Map<symbol, Map<string, IoCServiceResolutions>>;
-symbols: Map<string, symbol>;
-```
-
-The container's own registrations by symbol and name, and the symbols handed out by `Symbol()`.
-They are public for compatibility. Treat them as read-only, and note that a scope's `services`
-holds only the scope's own registrations.
 
 ---
 
 ## Types
 
-### IoCToken(id)
+### IoCToken(description)
 
 ```ts ignore
-type IoCToken<T, TId extends string = string> = symbol & { readonly '@fathym/ioc/type': T; readonly '@fathym/ioc/id': TId }
-function IoCToken<T, TId extends string = string>(id: TId): IoCToken<T, TId>   // Symbol.for(id)
+interface IoCToken<T, TId extends string = string> {
+  readonly Description: TId;
+  readonly '@fathym/ioc/type': T;   // type-only
+}
+function IoCToken<T, const TId extends string = string>(description: TId): IoCToken<T, TId>
+function isIoCToken(value: unknown): value is IoCToken<unknown>
 type IoCTokenOf<TToken> = /* the T of an IoCToken<T> */
 ```
 
-A symbol that carries the type of the service registered under it, so `Resolve($Db)` is typed
-without a generic. The markers exist only in the type; at runtime a token is `Symbol.for(id)`.
+A key for a service that isn't a class: an interface, a function type, a string, a config object.
+It carries the service's type, so `Resolve($Db)` is typed without a type argument.
 
-- **The optional `TId`** puts the id in the type: `IoCToken<string, 'Url'>('Url')`. A
-  [typed container](#typed) can then tell two `string` tokens apart.
-- **A plain symbol is not a token.** It finds the same registration, and every method that takes a
-  key accepts one, but it carries no type. `Deps` doesn't accept plain symbols.
+- **Every call creates a new, unique key.** The token is a frozen object; its `Description` is
+  only a label for errors and `Describe()`. Two tokens with the same description are two keys.
+- **Share a service by sharing its token:** declare it once and import it. **Keep a service
+  private by not exporting its token:** nobody else can then resolve, replace or decorate it.
+- **The optional `TId`** puts the description in the type: `IoCToken<string, 'Url'>('Url')`. A
+  [typed container](#typed) can then tell two `string` tokens apart. Write tokens this way.
+- **`isIoCToken(value)`** is true only for objects created by `IoCToken`.
+- **Tokens work across copies of the library.** When two copies of `@fathym/ioc` are installed in
+  one dependency tree, a token made by one is accepted by a container from the other. Identity
+  is still per object: only the same token object finds the registration.
 
 ```ts
-import { IoCToken, type IoCTokenOf } from '@fathym/ioc';
+import { IoCToken, type IoCTokenOf, isIoCToken } from '@fathym/ioc';
 
-const $Port = IoCToken<number>('Port');
+const $Port = IoCToken<number, 'Port'>('Port');
 
 const port: IoCTokenOf<typeof $Port> = 8080;
 
-console.log(typeof $Port, port); // symbol 8080
+console.log($Port.Description, port); // Port 8080
+console.log($Port === IoCToken<number, 'Port'>('Port')); // false: every call is a new key
+console.log(isIoCToken($Port), isIoCToken({ Description: 'Port' })); // true false
 ```
-
-### Options
-
-| Type                                   | Fields                                                                                                                    | Used by                                   |
-| -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------- |
-| `IoCServiceOptions`                    | `Lifetime?: 'transient' \| 'scoped'`, `Lazy?: boolean`, `Name?: string`, `Type?: symbol`                                  | `Register(class/factory, …)` (deprecated) |
-| `IoCRegisterOptions<TName>`            | `IoCServiceOptions` without `Type`; `Name` typed as `TName`                                                               | `Register(token, …)`, `RegisterFactory`   |
-| `IoCRegisterClassOptions<C, TKeys, …>` | `Lifetime`, `Lazy`, `Name`, `Deps?: IoCDependenciesFor<ConstructorParameters<C>, TKeys>`, `Type?` (a token `C` satisfies) | `RegisterClass`                           |
-
-| Option       | Default      | Meaning                                                                                                                                                                                    |
-| ------------ | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `Lifetime`   | singleton    | `'transient'`: new per resolve; `'scoped'`: one per scope                                                                                                                                  |
-| `Lazy`       | `false`      | Build a singleton or scoped service on first resolve instead of at registration                                                                                                            |
-| `Name`       | `'$default'` | Register several services under one key                                                                                                                                                    |
-| `Type`       | the class    | The key, as a symbol or token                                                                                                                                                              |
-| `Default`    | —            | A default that yields to any other registration of the key and name, in any order; never built if overridden; a merged plugin's default never replaces a host registration                 |
-| `Replace`    | —            | Replace an existing registration on purpose (required in strict mode)                                                                                                                      |
-| `ScopeLevel` | —            | For `Lifetime: 'scoped'`: live in the nearest scope created with `CreateScope({ Level })` of this level, shared by the scopes inside it; throws `IoCScopeRequiredError` with no such scope |
-| `Dispose`    | —            | `(instance) => …`: cleanup run when the owner is disposed, for resources without `Symbol.dispose` (`kv => kv.close()`). On `RegisterClass`, `RegisterFactory` and `RegisterValue`          |
 
 ### Derived dependencies: IoCLazy and IoCAll
 
@@ -1015,8 +1317,8 @@ IoCAll(key): IoCDerivedDependency<T[]>
 Use them in `Deps` (of `RegisterClass` and `RegisterFactory`) and in `ResolveRecord`:
 
 - **`IoCLazy`** injects a function that resolves the service when called: for optional or
-  expensive services, and to break a construction cycle. `Validate()` checks that it is
-  registered but doesn't count it in cycles.
+  expensive services, to depend on a shorter-lived service safely, and to break a construction
+  cycle. `Validate()` checks that it is registered but doesn't count it in cycles.
 - **`IoCAll`** injects every registration of the key (all names, nearest scope first); an empty
   array when there are none.
 
@@ -1026,8 +1328,8 @@ the compiler checks it.
 ```ts
 import { IoCAll, IoCContainer, IoCLazy, IoCToken } from '@fathym/ioc';
 
-const $Rule = IoCToken<(n: number) => boolean, 'ApiRule'>('ApiRule');
-const $Limit = IoCToken<number, 'ApiLimit'>('ApiLimit');
+const $Rule = IoCToken<(n: number) => boolean, 'Rule'>('Rule');
+const $Limit = IoCToken<number, 'Limit'>('Limit');
 
 class Checker {
   constructor(public rules: ((n: number) => boolean)[], public limit: () => Promise<number>) {}
@@ -1046,66 +1348,134 @@ console.log(checker.rules.every((rule) => rule(4)), await checker.limit()); // t
 
 ### Dependency types
 
-| Type                           | Definition                                                                                          |
-| ------------------------------ | --------------------------------------------------------------------------------------------------- |
-| `IoCDependencyKey<T>`          | `IoCToken<T>` or an (abstract) class producing `T`                                                  |
-| `IoCDependency<T>`             | `IoCDependencyKey<T>` or `[IoCDependencyKey<T>, name]`                                              |
-| `IoCDependenciesFor<P, TKeys>` | One `IoCDependency` per element of the parameter tuple `P`, limited to `TKeys` on a typed container |
+| Type                           | Definition                                                                                       |
+| ------------------------------ | ------------------------------------------------------------------------------------------------ |
+| `IoCDependencyKey<T>`          | `IoCToken<T>`, or an (abstract) class producing `T`                                              |
+| `IoCDependency<T>`             | `IoCDependencyKey<T>` or `readonly [IoCDependencyKey<T>, name]`                                  |
+| `IoCDerivedDependency<T>`      | What `IoCLazy` / `IoCAll` return; injects a `T`                                                  |
+| `IoCDependencyValue<D>`        | The value a dependency injects                                                                   |
+| `IoCDependencyValues<TDeps>`   | The values a list of dependencies injects, in order (a factory's parameters after the container) |
+| `IoCDependenciesFor<P, TKeys>` | One dependency per element of the parameter tuple `P`, limited to `TKeys` on a typed container   |
+| `IoCFactoryDependency<TKeys>`  | A dependency a factory may declare in `Deps`                                                     |
 
 ### Registry types
 
 The type parameter of `IoCContainer<TKeys>` is the container's **registry**: the keys a
 [typed container](#typed) has registered so far. It's `any` (untyped) unless you call `Typed()`.
 
-| Type                                        | Meaning                                                                                               |
-| ------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| `IoCContainer<TKeys = any>`                 | `any`: untyped, `Deps` accepts any key of the right type. Otherwise the registered keys               |
-| `IoCNoKeys`                                 | The registry of a typed container with nothing registered yet                                         |
-| `IoCRegistered<K, TName>`                   | What a registration adds: `K` for the default name, `[K, TName]` otherwise; plain symbols add nothing |
-| `IoCExpected<TDeps>`                        | What `Expect(...keys)` adds                                                                           |
-| `IoCAllowedKeys<TKeys>`                     | `unknown` for an untyped container, otherwise `TKeys`                                                 |
-| `IoCServiceOf<K>`                           | The service type a key resolves to (`unknown` for a plain symbol)                                     |
-| `IoCTypeFor<I, K>`, `IoCTypeMismatch<I, T>` | The checked `Type` option of `RegisterClass`, and the error type it reports                           |
+| Type                                        | Meaning                                                                                 |
+| ------------------------------------------- | --------------------------------------------------------------------------------------- |
+| `IoCContainer<TKeys = any>`                 | `any`: untyped, `Deps` accepts any key of the right type. Otherwise the registered keys |
+| `IoCNoKeys`                                 | The registry of a typed container with nothing registered yet                           |
+| `IoCRegistered<K, TName>`                   | What a registration adds: `K` for the default name, `[K, TName]` otherwise              |
+| `IoCExpected<TDeps>`                        | What `Expect(...keys)` (and a module's `Needs`) adds                                    |
+| `IoCAllowedKeys<TKeys>`                     | `unknown` for an untyped container, otherwise `TKeys`                                   |
+| `IoCServiceOf<K>`                           | The service type a key resolves to                                                      |
+| `IoCTypeFor<I, K>`, `IoCTypeMismatch<I, T>` | The checked `Type` option of `RegisterClass`, and the error type it reports             |
+| `IoCCheckNeeds<TKeys, M>`                   | Makes `Use()` fail to compile, naming the missing keys, when modules' needs are unmet   |
+| `IoCUnmetNeeds<TKeys, M>`                   | The keys the modules `M` need that the registry `TKeys` lacks                           |
 
-A typed container is still an `IoCContainer`: pass it anywhere an `IoCContainer` is expected. A
-module can require keys with a type parameter for the rest:
-`function registerNotes<K>(ioc: IoCContainer<K | typeof Config | typeof $Db>)`. See
-[modules](../guides/declared-dependencies.md#modules).
+A typed container is still an `IoCContainer`: pass it anywhere an `IoCContainer` is expected.
+
+### Module types
+
+All type-only:
+
+| Type                                              | Meaning                                                                            |
+| ------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| `IoCModule<TNeeds, TProvides>`                    | A module; see [IoCModule](#iocmodule)                                              |
+| `IoCModuleDefinition<TRequires, TNeeds, TResult>` | What `DefineModule` takes                                                          |
+| `IoCModuleNeeds<M>`, `IoCModuleProvides<M>`       | What a module needs, and provides (including what the modules it requires provide) |
+| `IoCModulesNeed<Ms>`, `IoCModulesProvide<Ms>`     | The same for a list of modules                                                     |
+| `IoCModuleKeys<TRequires, TNeeds>`                | The registry a typed module's `Register`, `OnStart` and `OnStop` see               |
+| `IoCKeysOf<TContainer>`                           | The registry of a container, read from its type                                    |
+| `IoCModuleTypes<TNeeds, TProvides>`               | The type-only marker carried by a module                                           |
 
 ### Other types
 
-| Type                                             | Meaning                                                       |
-| ------------------------------------------------ | ------------------------------------------------------------- |
-| `IoCServiceResolver<T>`                          | A factory: `(ioc: IoCContainer) => T \| Promise<T>`           |
-| `IoCServiceConstructor<T>`                       | A constructible class producing `T`                           |
-| `IoCServiceKeyConstructor<T>`                    | A class (abstract allowed) used as a key                      |
-| `IoCServiceKey<T>`                               | `IoCToken<T>` or `IoCServiceKeyConstructor<T>`                |
-| `IoCServices`                                    | The type of `services`                                        |
-| `IoCServiceResolutions`, `IoCServiceConstructed` | Stored-entry types used by `RegisterDirect` / `ResolveDirect` |
+| Type                                              | Meaning                                                                        |
+| ------------------------------------------------- | ------------------------------------------------------------------------------ |
+| `IoCServiceKey<T>`                                | `IoCToken<T>` or `IoCServiceKeyConstructor<T>`: anything a service is keyed by |
+| `IoCServiceConstructor<T>`                        | A constructible class producing `T`                                            |
+| `IoCServiceKeyConstructor<T>`                     | A class (abstract allowed) used as a key                                       |
+| `IoCServiceResolver<T>`                           | A factory: `(ioc: IoCContainer) => T \| Promise<T>`                            |
+| `IoCServiceOptions`                               | The options shared by every registration method                                |
+| `IoCRegisterOptions<TName, T>`                    | `RegisterFactory`'s options (without `Deps`)                                   |
+| `IoCRegisterClassOptions<C, TKeys, TName, TType>` | `RegisterClass`'s options                                                      |
+| `IoCContainerOptions`                             | The container's [options](#container-options)                                  |
+| `IoCAsyncContext`                                 | The part of `AsyncLocalStorage` the `AsyncContext` option uses                 |
+| `IoCContainerState`                               | `'idle' \| 'starting' \| 'started' \| 'stopping' \| 'disposed'`                |
+| `IoCDescription`, `IoCServiceDescription`         | What [`Describe()`](#describe) returns                                         |
+| `IoCEvent`, `IoCWarningCode`                      | What [`OnEvent`](#onevent-and-iocevent) receives                               |
+| `IoCValidationIssue`                              | One problem found by `Validate()`: `{ Kind, Service, Message }`                |
 
-### Error classes
+### Errors
 
-Every class has a stable `code`; check it with `isIoCError(err, code?)`.
+Every error the container throws has a stable `code`. Match on the code rather than the message:
+messages are written for people and may gain detail.
 
-| Class                           | Properties                                         | Catalog entry                                                                                      |
-| ------------------------------- | -------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
-| `IoCServiceNotFoundError`       | `Symbol`, `ServiceName`, `RegisteredNames`, `Path` | [No Service for symbol …](./errors.md#no-service-for-symbol--with-name--has-been-registered)       |
-| `IoCCircularDependencyError`    | `Path`                                             | [Circular dependency detected …](./errors.md#circular-dependency-detected-a---b---a)               |
-| `IoCValidationError`            | `Problems`, `Issues`                               | [IoC validation failed](./errors.md#ioc-validation-failed)                                         |
-| `IoCContainerDisposedError`     | none                                               | [The IoC container has been disposed.](./errors.md#the-ioc-container-has-been-disposed)            |
-| `IoCActivationError`            | `errors`, `Services`                               | [IoC activation failed for …](./errors.md#ioc-activation-failed-for-)                              |
-| `IoCDisposeError`               | `errors`                                           | [Errors occurred while disposing …](./errors.md#errors-occurred-while-disposing-the-ioc-container) |
-| `IoCRegistrationError`          | none                                               | [Registration errors](./errors.md#registration-errors)                                             |
-| `IoCScopeRequiredError`         | `Service`, `Level`                                 | [Scoped service … outside a scope](./errors.md#scoped-service--was-resolved-outside-a-scope)       |
-| `IoCDuplicateRegistrationError` | `Service`                                          | [… is already registered](./errors.md#-is-already-registered)                                      |
-| `IoCKeyCollisionError`          | `Key`                                              | [The key '…' is used by both …](./errors.md#the-key--is-used-by-both-a-class-and-a-token)          |
-| `IoCModuleCycleError`           | `Path`                                             | [Module dependency cycle …](./errors.md#module-dependency-cycle-a---b---a)                         |
-| `IoCStartError`                 | `Module`, `cause`, `RollbackErrors`                | [Module '…' failed to start …](./errors.md#module--failed-to-start-)                               |
-| `IoCNotIsolatableError`         | `Service`, `Reason`                                | [… can't be isolated: …](./errors.md#-cant-be-isolated-)                                           |
-| `IoCResolveTimeoutError`        | `Service`, `TimeoutMs`, `Waiting`                  | [Resolving … did not finish …](./errors.md#resolving--did-not-finish-within-ms)                    |
+```ts ignore
+type IoCErrorCode =
+  | 'IOC_SERVICE_NOT_FOUND'
+  | 'IOC_CONTAINER_DISPOSED'
+  | 'IOC_CIRCULAR_DEPENDENCY'
+  | 'IOC_VALIDATION_FAILED'
+  | 'IOC_ACTIVATION_FAILED'
+  | 'IOC_DISPOSE_FAILED'
+  | 'IOC_INVALID_REGISTRATION'
+  | 'IOC_INVALID_KEY'
+  | 'IOC_SCOPE_REQUIRED'
+  | 'IOC_DUPLICATE_REGISTRATION'
+  | 'IOC_SEALED'
+  | 'IOC_INVALID_LEVEL'
+  | 'IOC_START_FAILED'
+  | 'IOC_MODULE_CYCLE'
+  | 'IOC_RESOLVE_TIMEOUT'
+  | 'IOC_NOT_ISOLATABLE';
+
+function isIoCError(error: unknown, code?: IoCErrorCode): error is Error & { code: IoCErrorCode };
+abstract class IoCError extends Error {
+  readonly code: IoCErrorCode;
+}
+```
+
+`isIoCError(err, code?)` checks the code without `instanceof`, so it also covers
+`IoCActivationError` and `IoCDisposeError`, which extend `AggregateError` rather than `IoCError`.
+
+| Class                           | Code                                          | Properties                                      | Catalog entry                                                                                      |
+| ------------------------------- | --------------------------------------------- | ----------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| `IoCServiceNotFoundError`       | `IOC_SERVICE_NOT_FOUND`                       | `Key`, `ServiceName`, `RegisteredNames`, `Path` | [No service is registered for …](./errors.md#no-service-is-registered-for-)                        |
+| `IoCCircularDependencyError`    | `IOC_CIRCULAR_DEPENDENCY`                     | `Path`                                          | [Circular dependency detected …](./errors.md#circular-dependency-detected-a---b---a)               |
+| `IoCValidationError`            | `IOC_VALIDATION_FAILED`                       | `Problems`, `Issues`                            | [IoC validation failed](./errors.md#ioc-validation-failed)                                         |
+| `IoCContainerDisposedError`     | `IOC_CONTAINER_DISPOSED`                      | none                                            | [The IoC container has been disposed.](./errors.md#the-ioc-container-has-been-disposed)            |
+| `IoCActivationError`            | `IOC_ACTIVATION_FAILED`                       | `errors`, `Services`                            | [IoC activation failed for …](./errors.md#ioc-activation-failed-for-)                              |
+| `IoCDisposeError`               | `IOC_DISPOSE_FAILED`                          | `errors`                                        | [Errors occurred while disposing …](./errors.md#errors-occurred-while-disposing-the-ioc-container) |
+| `IoCRegistrationError`          | `IOC_INVALID_REGISTRATION`, `IOC_INVALID_KEY` | `code`                                          | [Registration errors](./errors.md#registration-errors)                                             |
+| `IoCScopeRequiredError`         | `IOC_SCOPE_REQUIRED`                          | `Service`, `Level`                              | [Scoped service … outside a scope](./errors.md#scoped-service--was-resolved-outside-a-scope)       |
+| `IoCDuplicateRegistrationError` | `IOC_DUPLICATE_REGISTRATION`                  | `Service`                                       | [… is already registered](./errors.md#-is-already-registered)                                      |
+| `IoCSealedError`                | `IOC_SEALED`                                  | `Service`, `Module`, `Action`                   | [… belongs to module …](./errors.md#-belongs-to-module--so-only-that-module-can--it)               |
+| `IoCLevelError`                 | `IOC_INVALID_LEVEL`                           | `Level`                                         | [Scope level errors](./errors.md#scope-level-errors)                                               |
+| `IoCModuleCycleError`           | `IOC_MODULE_CYCLE`                            | `Path`                                          | [Module dependency cycle …](./errors.md#module-dependency-cycle-a---b---a)                         |
+| `IoCStartError`                 | `IOC_START_FAILED`                            | `Module`, `cause`, `Failures`, `RollbackErrors` | [Module '…' failed to start …](./errors.md#module--failed-to-start-)                               |
+| `IoCNotIsolatableError`         | `IOC_NOT_ISOLATABLE`                          | `Service`, `Reason`                             | [… can't be isolated: …](./errors.md#-cant-be-isolated-)                                           |
+| `IoCResolveTimeoutError`        | `IOC_RESOLVE_TIMEOUT`                         | `Service`, `TimeoutMs`, `Waiting`               | [… did not finish within …ms](./errors.md#-did-not-finish-within-ms)                               |
+
+```ts
+import { IoCContainer, IoCServiceNotFoundError, IoCToken, isIoCError } from '@fathym/ioc';
+
+const $Missing = IoCToken<string, 'Missing'>('Missing');
+
+try {
+  await new IoCContainer().Resolve($Missing);
+} catch (err) {
+  console.log(isIoCError(err, 'IOC_SERVICE_NOT_FOUND')); // true
+  console.log((err as IoCServiceNotFoundError).Key); // Missing
+}
+```
 
 ## What's Next
 
 - Every error message, explained: [errors.md](./errors.md) _[Reference]_
 - The terms used here: [glossary.md](./glossary.md) _[Reference]_
 - Task-focused recipes: [guides](../guides/README.md) _[How-to]_
+- Versioning and support: [policy.md](../policy.md) _[Reference]_

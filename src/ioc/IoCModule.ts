@@ -95,7 +95,10 @@ export type IoCModuleProvides<M> = M extends {
 } ? P
   : never;
 
-/** The keys a module needs from elsewhere (type-only). */
+/**
+ * The keys a module needs from elsewhere, including what the modules it requires need and don't
+ * get from their own requirements (type-only).
+ */
 export type IoCModuleNeeds<M> = M extends {
   readonly '@fathym/ioc/module'?: (types: { needs: infer N; provides: infer _P }) => void;
 } ? N
@@ -193,11 +196,11 @@ export function DefineModule<
 >(
   definition: IoCModuleDefinition<TRequires, TNeeds, TResult>,
 ): IoCModule<
-  IoCExpected<TNeeds>,
+  IoCExpected<TNeeds> | Exclude<IoCModulesNeed<TRequires>, IoCModulesProvide<TRequires>>,
   Exclude<IoCKeysOf<TResult>, IoCModuleKeys<TRequires, TNeeds>> | IoCModulesProvide<TRequires>
 > {
   return definition as unknown as IoCModule<
-    IoCExpected<TNeeds>,
+    IoCExpected<TNeeds> | Exclude<IoCModulesNeed<TRequires>, IoCModulesProvide<TRequires>>,
     Exclude<IoCKeysOf<TResult>, IoCModuleKeys<TRequires, TNeeds>> | IoCModulesProvide<TRequires>
   >;
 }

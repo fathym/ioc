@@ -4,7 +4,7 @@ DocumentType: Guide
 Title: CLI App
 Summary: Structure a command-line tool - one root container with framework services, a scope per command (or command group) with its own isolated settings, and a clean Dispose on exit.
 Created: 2026-10-13
-Updated: 2026-10-13
+Updated: 2026-10-15
 Owners:
   - fathym
 References:
@@ -23,14 +23,14 @@ References:
 
 - **One root container** holds the framework's services, registered with `Default: true` so a
   CLI built on the framework can replace them.
+- **The root declares the `command` level** (`Levels: ['command']`).
 - **Each command runs in a scope** created with `CreateScope({ Level: 'command' })`. The command
   registers its parsed flags there, and `Isolate()` gives it its own copy of any stateful
   service. Nothing is copied: the scope reads the root's registrations.
 - **The process ends with `Dispose()`,** which closes what the commands opened. `await using`
   does it even when a command throws.
 
-Before scopes, CLIs often imitated child containers by copying the root with `CopyTo`. A scope
-replaces that: it is cheaper, overrides stay local, and it disposes what it built.
+A scope copies nothing, keeps overrides local, and disposes what it built.
 
 ## Example
 
@@ -45,8 +45,8 @@ interface Flags {
   verbose: boolean;
 }
 
-const $Output = IoCToken<Output, 'Cli.Output'>('Cli.Output');
-const $Flags = IoCToken<Flags, 'Cli.Flags'>('Cli.Flags');
+const $Output = IoCToken<Output, 'Output'>('Output');
+const $Flags = IoCToken<Flags, 'Flags'>('Flags');
 
 const lines: string[] = [];
 
@@ -65,7 +65,7 @@ class DeployCommand {
   }
 }
 
-const root = IoCContainer.Create()
+const root = new IoCContainer({ Levels: ['command'] })
   .RegisterValue($Output, { write: (l) => lines.push(l) }, { Default: true })
   .RegisterClass(Progress)
   .RegisterClass(DeployCommand, { Deps: [$Output, $Flags, Progress], Lifetime: 'transient' });
@@ -95,12 +95,13 @@ Each run starts with a fresh `Progress`, because the scope isolates it; `Output`
   then sees the scope's flags.
 - **Give per-command state to `Isolate`**, not to module-level variables.
 - **Dispose on exit.** Register signal handlers (`Deno.addSignalListener('SIGINT', …)`) that
-  call `root.Dispose()`, or run the whole CLI inside `await using`.
+  call `root.Dispose()`, or run the whole CLI inside `await using`. Disposing the root also
+  disposes the scope of a command that was interrupted mid-run.
 - **Test commands** by creating the same scope in a test and overriding what you need; see the
   [testing pattern](./testing.md).
 
 ## What's Next
 
 - Scope levels and `Isolate` in detail: [scopes.md](../concepts/scopes.md) _[Explanation]_
-- Moving from `CopyTo` children to scopes: [copying-containers.md](../guides/copying-containers.md) _[How-to]_
+- Framework services as modules: [modules-and-lifecycle.md](../guides/modules-and-lifecycle.md) _[How-to]_
 - Framework defaults: [building-frameworks.md](../guides/building-frameworks.md) _[How-to]_

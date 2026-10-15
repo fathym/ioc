@@ -4,7 +4,7 @@ DocumentType: Design
 Title: IoC Next
 Summary: Design, decisions and migration notes for the 2026-10 iteration of @fathym/ioc (correctness fixes, typed tokens, scopes, disposal, declared dependencies).
 Created: 2026-10-13
-Updated: 2026-10-13
+Updated: 2026-10-15
 Owners:
   - fathym
 References:
@@ -14,9 +14,18 @@ References:
     Path: ../../GUIDE.md
   - Label: DI Ecosystem Feedback (research)
     Path: ../research/di-ecosystem-feedback.md
+  - Label: IoC 1.0 (supersedes parts of this design)
+    Path: ./ioc-1.0.md
 ---
 
 # IoC Next: design and migration
+
+> **Note:** This is the design of 0.1, kept as a record. [IoC 1.0](./ioc-1.0.md) superseded parts
+> of it: 1.0 dropped 0.0.x compatibility, so the global `Symbol.for` keys, the overloaded
+> `Register`, `CopyTo`, the cross-version protocol, and the opt-in `Strict`, `Lazy` and
+> `Diagnostics` options described here no longer exist, and module registrations are now sealed.
+> The reasoning below is unchanged; where it conflicts with the 1.0 design, 1.0 wins. To upgrade,
+> see [migrating from 0.x](../migration/from-0.x.md).
 
 ## Why
 
@@ -213,7 +222,7 @@ building after its owner was disposed is disposed on arrival.
 
 ## Behavior changes (migration)
 
-See [Migrating from 0.0.x](../migration/from-0.0.x.md) for the full list, with old and new code for each change.
+See Migrating from 0.0.x (since replaced by [migrating from 0.x](../migration/from-0.x.md)) for the full list, with old and new code for each change.
 The changes most likely to be noticed:
 
 - **`Lazy` factories now really defer.** `Deno.Kv` opens on first use.
@@ -225,8 +234,8 @@ The changes most likely to be noticed:
 - **Each instance is disposed once, by the container that created it.**
 - **String keys throw `IOC_INVALID_KEY`.**
 
-The cross-version contract these changes keep is written down in the
-[protocol reference](../reference/protocol.md).
+The cross-version contract these changes keep was written down in the protocol reference
+(removed in 1.0, along with the contract).
 
 Recommended release: **0.1.0**. These are behavior fixes in a pre-1.0 package that 28 packages
 depend on.
@@ -291,5 +300,6 @@ The per-repository adoption list is in [dependent-follow-ups.md](./dependent-fol
 ## What's Next
 
 - The principles in short: [design-principles.md](../concepts/design-principles.md) _[Explanation]_
-- Upgrade notes: [from-0.0.x.md](../migration/from-0.0.x.md) _[How-to]_
+- Upgrade notes: [from-0.x.md](../migration/from-0.x.md) _[How-to]_
+- The design that superseded parts of this one: [ioc-1.0.md](./ioc-1.0.md) _[Explanation]_
 - The research behind the decisions: [di-ecosystem-feedback.md](../research/di-ecosystem-feedback.md) _[Explanation]_

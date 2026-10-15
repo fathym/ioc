@@ -2,9 +2,9 @@
 FrontmatterVersion: 1
 DocumentType: Guide
 Title: Upstream and Provenance
-Summary: Where @fathym/ioc comes from, where it is published, the versions pinned in the wild, and the frozen copies the tests run against.
+Summary: Where @fathym/ioc comes from, where it is published, its versions and the versions pinned by dependents.
 Created: 2026-10-13
-Updated: 2026-10-13
+Updated: 2026-10-15
 Owners:
   - fathym
 References:
@@ -34,29 +34,16 @@ References:
 
 ## Versions
 
-| Version | Status                 | Notes                                                                                                                            |
-| ------- | ---------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| 0.0.36  | Latest published       | The original container; 0.0.12–0.0.36 share one API                                                                              |
-| 0.1.0   | Releasing (minor bump) | Typed tokens, scopes, disposal, `Validate`, error codes, `Default`, strict mode, modules and lifecycle, scope levels, `Describe` |
+| Version | Status                 | Notes                                                                                                                                                   |
+| ------- | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0.0.36  | Latest published       | The original container; 0.0.12–0.0.36 share one API                                                                                                     |
+| 0.1.0   | Superseded by 1.0      | Typed tokens, scopes, disposal, `Validate`, error codes, `Default`, strict mode, modules and lifecycle, scope levels, `Describe`                        |
+| 1.0.0   | Releasing (major bump) | Reference keys, sealed module registrations, typed modules, safe defaults, layered lifecycle; no 0.x compatibility ([design](./docs/design/ioc-1.0.md)) |
 
 **Versions pinned by dependents** (from the dependent survey in
 [ioc-next.md](./docs/design/ioc-next.md)): 0.0.12 (`eac-runtime`), 0.0.35 (`eac-applications`)
-and 0.0.36 (`cli`, `eac`). These load side by side with the current version in one process, which
-is what the [cross-version protocol](./docs/reference/protocol.md) exists for.
-
-## Frozen copies used by the tests
-
-| Fixture                        | Frozen from         | Used by                               |
-| ------------------------------ | ------------------- | ------------------------------------- |
-| `tests/fixtures/legacy-ioc.ts` | 0.0.36              | Characterization and interop tests    |
-| `tests/fixtures/ioc-0.1/`      | The 0.1.0 candidate | Interop tests for every later version |
-
-A fixture is never edited after its version is published (formatting and linting skip
-`tests/fixtures/`). The 0.1.0 candidate fixture received two fixes found before release: a
-linear wait-for graph (concurrent cycle detection was quadratic in chain depth) and abandoned
-builds starting no new work.
-When 0.1.0 is published, check that the frozen copy matches the published `src/` and record the
-commit here.
+and 0.0.36 (`cli`, `eac`). 1.0 does not interoperate with 0.x containers; each dependent moves to
+1.0 with the [migration guide](./docs/migration/from-0.x.md).
 
 ## Publishing checklist
 
@@ -64,6 +51,8 @@ commit here.
 2. Run the dependents' suites (`cli`, `eac-runtime`, `steward`) against the candidate through a
    local JSR override (`patch` / `links`).
 3. Update the version table above with the published version and its commit.
+
+The [versioning policy](./docs/policy.md) says what each kind of release may change.
 
 **How the version is chosen.** The `fathym/build-n-publish` workflow computes it on every push
 with `paulhatch/semantic-version`: each commit bumps the patch, a commit whose message contains
@@ -74,4 +63,4 @@ version into `deno.jsonc`, publishes to JSR and tags the commit.
 ## What's Next
 
 - Contributing and the release steps: [CONTRIBUTING.md](./CONTRIBUTING.md)
-- The design and its decisions: [ioc-next.md](./docs/design/ioc-next.md)
+- The design and its decisions: [ioc-1.0.md](./docs/design/ioc-1.0.md)

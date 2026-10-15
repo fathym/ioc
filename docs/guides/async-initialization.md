@@ -2,9 +2,9 @@
 FrontmatterVersion: 1
 DocumentType: Guide
 Title: Async Initialization
-Summary: Recipes for async services - lazy connections, retries with backoff, timeouts, startup ordering without priority numbers, and fail-fast startup with Activate().
+Summary: Recipes for async services - connections opened on first use, retries with backoff, timeouts, startup ordering without priority numbers, and fail-fast startup with Start() and Activate().
 Created: 2026-10-13
-Updated: 2026-10-13
+Updated: 2026-10-15
 Owners:
   - fathym
 References:
@@ -27,9 +27,11 @@ build on four guarantees:
 - concurrent resolves share one creation;
 - failures are retried, not cached;
 - dependencies resolved through the factory's parameter are awaited in order;
-- `Activate()` reports every failure at once.
+- `Activate()` (and `Start()`, which calls it) reports every failure at once.
 
-## Recipe 1: a lazy connection
+Nothing is built at registration: a service starts on its first resolve, or at `Start()`.
+
+## Recipe 1: a connection opened on first use
 
 ```ts
 import { IoCContainer } from '@fathym/ioc';
@@ -37,7 +39,7 @@ import { IoCContainer } from '@fathym/ioc';
 const ioc = new IoCContainer();
 
 // Opened the first time something resolves it. Concurrent resolves share one connection.
-ioc.RegisterFactory(Deno.Kv, () => Deno.openKv(':memory:'), { Lazy: true, Name: 'cache' });
+ioc.RegisterFactory(Deno.Kv, () => Deno.openKv(':memory:'), { Name: 'cache' });
 
 const [a, b] = await Promise.all([ioc.Resolve(Deno.Kv, 'cache'), ioc.Resolve(Deno.Kv, 'cache')]);
 
@@ -56,8 +58,8 @@ import { IoCContainer, IoCToken } from '@fathym/ioc';
 
 type Settings = { region: string };
 
-const $Settings = IoCToken<Settings>('Settings');
-const $Client = IoCToken<{ endpoint: string }>('Client');
+const $Settings = IoCToken<Settings, 'Settings'>('Settings');
+const $Client = IoCToken<{ endpoint: string }, 'Client'>('Client');
 
 const order: string[] = [];
 
@@ -67,20 +69,19 @@ ioc.RegisterFactory($Client, async (c) => {
   const { region } = await c.Resolve($Settings); // waits for settings first
   order.push('client');
   return { endpoint: `https://${region}.api.example` };
-}, { Lazy: true });
+});
 
 ioc.RegisterFactory($Settings, async () => {
   await new Promise((resolve) => setTimeout(resolve, 5)); // e.g. fetch remote config
   order.push('settings');
   return { region: 'eu' };
-}, { Lazy: true });
+});
 
 console.log((await ioc.Resolve($Client)).endpoint, order);
 // https://eu.api.example [ "settings", "client" ]
 ```
 
-Registration order doesn't matter for lazy services, and there are no priority numbers to keep in
-sync.
+Registration order doesn't matter, and there are no priority numbers to keep in sync.
 
 ## Recipe 3: retries with backoff
 
@@ -108,11 +109,11 @@ async function connect(): Promise<{ connected: true }> {
   return { connected: true };
 }
 
-const $Conn = IoCToken<{ connected: true }>('Conn');
+const $Conn = IoCToken<{ connected: true }, 'Conn'>('Conn');
 
 const ioc = new IoCContainer();
 
-ioc.RegisterFactory($Conn, () => withRetry(connect), { Lazy: true });
+ioc.RegisterFactory($Conn, () => withRetry(connect));
 
 console.log(await ioc.Resolve($Conn), `after ${calls} attempts`); // { connected: true } after 3 attempts
 ```
@@ -124,49 +125,70 @@ Don't let a hung dependency stall startup forever:
 ```ts
 import { IoCContainer, IoCToken } from '@fathym/ioc';
 
-const $Remote = IoCToken<Response>('Remote');
+const $Remote = IoCToken<Response, 'Remote'>('Remote');
 
 const ioc = new IoCContainer();
 
 ioc.RegisterFactory($Remote, () => {
   // AbortSignal.timeout makes fetch reject after 2 seconds.
   return fetch('data:application/json,{"ok":true}', { signal: AbortSignal.timeout(2000) });
-}, { Lazy: true });
+});
 
 console.log(await (await ioc.Resolve($Remote)).json()); // { ok: true }
 ```
 
+Every container also has a backstop: anything still pending after `PendingTimeoutMs` (30 seconds
+by default) fails with `IoCResolveTimeoutError`, listing what it waited on. That covers every
+resolve, every build during `Start()`, and each module's `OnStart` and `OnStop`. Set it to your
+slowest legitimate startup step (`new IoCContainer({ PendingTimeoutMs: 60_000 })`), or `0` to
+turn it off. A timeout inside the factory, as above, is still better: it fails the one call with
+the real cause.
+
 ## Recipe 5: fail fast at startup
 
-Lazy services start on first use, which can hide a broken configuration until the first request.
-Call `Activate()` after registering. It builds every singleton that isn't ready yet, and throws
-one `AggregateError` naming every service that failed:
+A service that is first built by the first request hides a broken configuration until then. Call
+`Start()` at boot: it validates the wiring, builds every singleton, and starts the modules. If
+any build fails, it throws one `IoCActivationError` (an `AggregateError`) naming every service
+that failed, after disposing whatever it built:
 
 ```ts
-import { IoCContainer, IoCToken } from '@fathym/ioc';
+import { IoCContainer, IoCToken, isIoCError } from '@fathym/ioc';
 
-const ioc = new IoCContainer();
+const $Cache = IoCToken<{ ready: boolean }, 'Cache'>('Cache');
+const $Search = IoCToken<{ ready: boolean }, 'Search'>('Search');
 
-ioc.RegisterFactory(IoCToken('Cache'), () => ({ ready: true }), { Lazy: true });
-ioc.RegisterFactory(IoCToken('Search'), () => Promise.reject(new Error('index missing')), {
-  Lazy: true,
-});
+let indexReady = false;
+
+const ioc = new IoCContainer()
+  .RegisterFactory($Cache, () => ({ ready: true }))
+  .RegisterFactory(
+    $Search,
+    () => indexReady ? { ready: true } : Promise.reject(new Error('index missing')),
+  );
 
 try {
-  await ioc.Activate();
+  await ioc.Start();
 } catch (err) {
-  console.log((err as AggregateError).message); // IoC activation failed for: Search.
+  if (isIoCError(err, 'IOC_ACTIVATION_FAILED')) console.log(err.message);
+  // IoC activation failed for: Search.
 }
+
+indexReady = true;
+
+await ioc.Start(); // a failed Start() can be retried once the cause is fixed
+
+console.log(ioc.State); // started
+
+await ioc.Dispose();
 ```
 
-Failures aren't cached, so after fixing the cause you can call `Activate()` again, and only what
-failed is retried.
+Without modules, `Activate()` does the build step alone: it builds every singleton that isn't
+ready yet and reports every failure the same way.
 
 ## Pitfalls
 
-- **Don't resolve through a captured container after an `await`.** Use the factory's parameter,
-  so ordering, scopes and cycle detection work. See the
-  [guidelines](./guidelines.md#captured-container-in-a-factory).
+- **Resolve through the factory's parameter,** not a captured container, so a scope's overrides
+  reach the factory. See the [guidelines](./guidelines.md#captured-container-in-a-factory).
 - **Don't register a thenable value directly.** It will be awaited. Wrap it in an object; see
   [async resolution](../concepts/async-resolution.md#caveat-thenables-are-unwrapped).
 
@@ -174,7 +196,7 @@ failed is retried.
 
 - Why creation is shared and retried:
   [async-resolution.md](../concepts/async-resolution.md) _[Explanation]_
-- Put `Validate()` and `Activate()` in your startup sequence:
-  [organizing-registrations.md](./organizing-registrations.md) _[How-to]_
+- Start modules in order, and recover from a failed start:
+  [modules-and-lifecycle.md](./modules-and-lifecycle.md) _[How-to]_
 - Test startup failures: [testing.md](./testing.md#8-test-async-setup-failures-and-retries)
   _[How-to]_

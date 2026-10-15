@@ -7,7 +7,7 @@
  */
 import { IoCContainer, IoCToken } from '../mod.ts';
 
-const $Request = IoCToken<Request>('Request');
+const $Request = IoCToken<Request, 'Request'>('Request');
 
 abstract class NotesStore {
   public abstract add(text: string): Promise<void>;
@@ -54,17 +54,16 @@ class NotesHandler {
 // Composition root.
 const ioc = new IoCContainer();
 
-ioc.RegisterFactory(Deno.Kv, () => Deno.openKv(':memory:'), { Lazy: true });
-ioc.RegisterFactory(NotesStore, async (c) => new KvNotesStore(await c.Resolve(Deno.Kv)), {
-  Lazy: true,
-});
-ioc.RegisterClass(RequestLog, { Lifetime: 'scoped', Lazy: true });
+ioc.RegisterFactory(Deno.Kv, () => Deno.openKv(':memory:'));
+ioc.RegisterFactory(NotesStore, (_ioc, kv) => new KvNotesStore(kv), { Deps: [Deno.Kv] });
+ioc.Expect($Request); // registered on each request's scope, below
+ioc.RegisterClass(RequestLog, { Lifetime: 'scoped' });
 ioc.RegisterClass(NotesHandler, {
   Deps: [$Request, RequestLog, NotesStore],
   Lifetime: 'transient',
 });
 
-await ioc.Activate(); // fail fast if KV can't open
+await ioc.Start(); // validates the wiring and opens KV now, so a bad setup fails at startup
 
 const server = Deno.serve({ port: 0, onListen() {} }, async (req) => {
   await using scope = ioc.CreateScope();

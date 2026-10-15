@@ -521,7 +521,49 @@ Deno.test('Lifecycle - layers', async (t) => {
     assertEquals(events, ['stop:C', 'stop:A', 'stop:B']);
   });
 
-  await t.step('a requirement added to a parent does not create a layer in a scope', async () => {
+  await t.step('Dispose stops the modules of live scopes first, then disposes', async () => {
+    const events: string[] = [];
+
+    class Conn {
+      [Symbol.dispose]() {
+        events.push('dispose:Conn');
+      }
+    }
+
+    const host = module('Host', events, {
+      Register: (c) => {
+        events.push('register:Host');
+        c.RegisterClass(Conn);
+      },
+    });
+
+    const ioc = new IoCContainer().Use(host);
+
+    await ioc.Start();
+    await ioc.Resolve(Conn);
+
+    const plugin = ioc.CreateScope().Use(module('Plugin', events, { Requires: [host] }));
+
+    await plugin.Start();
+
+    const request = ioc.CreateScope();
+
+    request.RegisterClass(Conn, { Lifetime: 'scoped' });
+
+    await request.Resolve(Conn);
+
+    events.length = 0;
+
+    await ioc.Dispose();
+
+    // Plugin (which requires Host) stops before Host; nothing is disposed until every module
+    // stopped; then the scopes, then the root's own instances.
+    assertEquals(events, ['stop:Plugin', 'stop:Host', 'dispose:Conn', 'dispose:Conn']);
+    assertEquals(plugin.State, 'disposed');
+    assertEquals(request.State, 'disposed');
+  });
+
+  await t.step('a requirement added to a parent does not create a layer in a scope', () => {
     const events: string[] = [];
 
     const core = module('Core', events);

@@ -4,7 +4,7 @@ DocumentType: Guide
 Title: Security Policy
 Summary: How to report a vulnerability in @fathym/ioc privately, and which versions receive fixes.
 Created: 2026-10-13
-Updated: 2026-10-13
+Updated: 2026-10-15
 Owners:
   - fathym
 References:
@@ -35,10 +35,12 @@ ships. We credit reporters in the advisory unless you prefer otherwise.
 
 ## Supported versions
 
-| Version              | Supported                                                                                             |
-| -------------------- | ----------------------------------------------------------------------------------------------------- |
-| Latest release       | ✓                                                                                                     |
-| Older 0.0.x releases | Fixes go into the latest release; upgrade using the [migration guide](./docs/migration/from-0.0.x.md) |
+| Version          | Supported                                                                                           |
+| ---------------- | --------------------------------------------------------------------------------------------------- |
+| Latest 1.x       | ✓                                                                                                   |
+| 0.x (0.0.x, 0.1) | Fixes go into the latest release; upgrade using the [migration guide](./docs/migration/from-0.x.md) |
+
+The [versioning policy](./docs/policy.md) covers semantic versioning, deprecations and supported runtimes.
 
 ## Scope
 

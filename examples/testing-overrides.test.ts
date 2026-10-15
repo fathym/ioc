@@ -1,16 +1,18 @@
 /**
- * Testing with overrides: register the real app, then replace one dependency in a test scope.
+ * Testing with overrides: the real app module, a test container created with `{ Testing: true }`,
+ * and `Override()` to fake one dependency. Outside test mode, the module's registrations are
+ * sealed and `Override()` throws.
  *
  * Run: deno test examples/testing-overrides.test.ts
  */
-import { assertEquals } from 'jsr:@std/assert@1.0.16';
-import { IoCContainer, IoCToken } from '../mod.ts';
+import { assertEquals, assertThrows } from 'jsr:@std/assert@1.0.16';
+import { DefineModule, IoCContainer, IoCSealedError, IoCToken } from '../mod.ts';
 
 interface Mailer {
   send(to: string, subject: string): Promise<void>;
 }
 
-const $Mailer = IoCToken<Mailer>('Mailer');
+const $Mailer = IoCToken<Mailer, 'Mailer'>('Mailer');
 
 class SignupService {
   constructor(private mailer: Mailer) {}
@@ -21,35 +23,40 @@ class SignupService {
 }
 
 /** The production wiring, shared by the app and the tests. */
-function registerApp(ioc: IoCContainer): void {
-  ioc.RegisterFactory($Mailer, () => ({
-    send: () => Promise.reject(new Error('no SMTP server in tests')),
-  }));
-  ioc.RegisterClass(SignupService, { Deps: [$Mailer], Lifetime: 'transient' });
-}
+const App = DefineModule({
+  Name: 'App',
+  Register: (ioc) =>
+    ioc
+      .RegisterFactory($Mailer, () => ({
+        send: () => Promise.reject(new Error('no SMTP server in tests')),
+      }))
+      .RegisterClass(SignupService, { Deps: [$Mailer] }),
+});
 
 Deno.test('the production wiring is valid', () => {
-  const ioc = new IoCContainer();
-
-  registerApp(ioc);
-
-  ioc.Validate();
+  new IoCContainer().Use(App).Validate();
 });
 
 Deno.test('signUp sends a welcome mail to the normalized address', async () => {
-  const ioc = new IoCContainer();
-
-  registerApp(ioc);
-
-  await using test = ioc.CreateScope();
+  await using ioc = new IoCContainer({ Testing: true }).Use(App);
 
   const sent: string[] = [];
 
-  test.RegisterValue($Mailer, {
+  // Override before resolving the services that use it.
+  ioc.Override($Mailer, {
     send: (to, subject) => Promise.resolve(void sent.push(`${to}: ${subject}`)),
   });
 
-  await (await test.Resolve(SignupService)).signUp('Ada@Example.com');
+  await (await ioc.Resolve(SignupService)).signUp('Ada@Example.com');
 
   assertEquals(sent, ['ada@example.com: Welcome!']);
+});
+
+Deno.test('outside test mode, the App module owns its registrations', () => {
+  const ioc = new IoCContainer().Use(App);
+
+  const fake: Mailer = { send: () => Promise.resolve() };
+
+  assertThrows(() => ioc.Override($Mailer, fake), IoCSealedError);
+  assertThrows(() => ioc.RegisterValue($Mailer, fake, { Replace: true }), IoCSealedError);
 });

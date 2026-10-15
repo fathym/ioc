@@ -1,32 +1,38 @@
 /**
- * Small, async-first, decorator-free dependency injection for Deno.
+ * Small, async-first, decorator-free dependency injection for Deno, built for large applications.
  *
  * Register services once, resolve them anywhere, and let the container handle creation order,
  * async startup, per-request scopes and cleanup. No decorators, no `reflect-metadata`.
  *
- * - **Async-first:** async factories, shared in-flight creation, failures retried, not cached.
- * - **Typed:** {@link IoCToken typed tokens}, abstract classes as keys, and constructor
- *   dependencies (`Deps`) checked against the constructor and, on a
- *   {@link IoCContainer.Typed typed container}, against what is already registered.
- * - **Scopes and disposal:** {@link IoCContainer.CreateScope} with `await using`, disposed in
- *   reverse creation order.
- * - **Fails early:** errors name the resolution path and carry stable codes, cycles throw, and
- *   {@link IoCContainer.Validate} / {@link IoCContainer.Start} check wiring at startup.
- * - **For frameworks and plugin hosts:** {@link IoCModule modules} with lifecycle, `Default`
- *   registrations, scope levels, {@link IoCContainer.Isolate}, and {@link IoCContainer.Describe}.
+ * - **Safe by default:** `new IoCContainer()` is strict (a second registration of the same key
+ *   throws unless it says `Replace: true`), lazy (nothing is built until it is needed or
+ *   `Start()` runs), and fails anything still pending after 30 seconds instead of hanging.
+ * - **Keys are references:** an {@link IoCToken} is a unique key, and a class key is the class
+ *   itself. Share a service by exporting its token; keep it private by not exporting it.
+ * - **Sealed, typed modules:** only the module that registered a service can replace it, unless
+ *   it registered it with `Default: true`. {@link DefineModule} types a module's needs and what it
+ *   provides, and `Use()` on a {@link IoCContainer.Typed typed container} checks them.
+ * - **Lifecycle at scale:** {@link IoCContainer.Start} validates, builds every singleton and
+ *   starts modules by layer; a failed start cleans up and can be retried; `Dispose()` (or
+ *   `await using`) stops modules, then disposes scopes and instances in reverse.
+ * - **Scopes and levels:** {@link IoCContainer.CreateScope} per request or tenant, with declared
+ *   `Levels`; {@link IoCContainer.Validate} reports missing, cyclic and captive dependencies.
+ * - **Observable:** errors carry stable codes and the resolution path; `OnEvent` reports timings
+ *   and warnings; {@link IoCContainer.Describe} shows the whole graph.
  *
  * Full documentation (tutorial, guides, error catalog):
  * https://github.com/fathym/ioc/blob/main/docs/README.md
  *
  * @example Quick start
  * ```ts
- * import { IoCContainer, IoCToken } from '@fathym/ioc';
+ * import { DefineModule, IoCContainer, IoCToken } from '@fathym/ioc';
  *
  * interface Logger {
  *   log(message: string): void;
  * }
  *
- * const $Logger = IoCToken<Logger, 'Logger'>('Logger');
+ * // Exported, so other packages can resolve it. A token you don't export stays private.
+ * export const $Logger = IoCToken<Logger, 'Logger'>('Logger');
  *
  * class Config {
  *   public url = 'kv://local';
@@ -36,15 +42,21 @@
  *   constructor(public config: Config, public logger: Logger) {}
  * }
  *
- * const ioc = new IoCContainer()
- *   .Typed() // Deps may only name keys registered above them
- *   .RegisterClass(Config)
- *   .RegisterFactory($Logger, () => ({ log: (message) => console.log(message) }))
- *   .RegisterClass(Repo, { Deps: [Config, $Logger] });
+ * // A module owns its registrations; Default: true lets the app replace the logger.
+ * const Data = DefineModule({
+ *   Name: 'Data',
+ *   Register: (ioc) =>
+ *     ioc
+ *       .RegisterClass(Config)
+ *       .RegisterValue($Logger, { log: (m) => console.log(m) }, { Default: true })
+ *       .RegisterClass(Repo, { Deps: [Config, $Logger] }), // checked against Repo's constructor
+ * });
  *
- * ioc.Validate();
+ * await using ioc = new IoCContainer().Typed().Use(Data);
  *
- * const repo = await ioc.Resolve(Repo);
+ * await ioc.Start(); // validates the wiring and builds every singleton
+ *
+ * const repo = await ioc.Resolve(Repo); // typed as Repo
  *
  * repo.logger.log(`Connected to ${repo.config.url}`);
  * ```

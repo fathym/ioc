@@ -11,7 +11,7 @@ interface Exporter {
   export(rows: string[]): string;
 }
 
-const $Exporter = IoCToken<Exporter>('Exporter');
+const $Exporter = IoCToken<Exporter, 'Exporter'>('Exporter');
 
 const ioc = new IoCContainer();
 

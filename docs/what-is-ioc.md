@@ -4,7 +4,7 @@ DocumentType: Guide
 Title: What Is IoC, and When Not to Use It
 Summary: The problem a dependency-injection container solves, what you gain, what it costs, and when you are better off without one.
 Created: 2026-10-13
-Updated: 2026-10-13
+Updated: 2026-10-15
 Owners:
   - fathym
 References:
@@ -87,16 +87,14 @@ class NotesService {
 const ioc = new IoCContainer();
 
 ioc.RegisterClass(Config);
-ioc.RegisterFactory(Deno.Kv, async (c) => await Deno.openKv((await c.Resolve(Config)).dbPath), {
-  Lazy: true,
-});
-ioc.RegisterClass(NotesStore, { Deps: [Deno.Kv], Lazy: true });
+ioc.RegisterFactory(Deno.Kv, (_ioc, config) => Deno.openKv(config.dbPath), { Deps: [Config] });
+ioc.RegisterClass(NotesStore, { Deps: [Deno.Kv] });
 ioc.RegisterClass(Mailer, { Deps: [Config] });
-ioc.RegisterClass(NotesService, { Deps: [NotesStore, Mailer], Lazy: true });
+ioc.RegisterClass(NotesService, { Deps: [NotesStore, Mailer] });
 
-ioc.Validate(); // every declared dependency exists, no cycles
+await ioc.Start(); // checks every dependency exists and there are no cycles, then builds everything
 
-const service = await ioc.Resolve(NotesService); // built in the right order
+const service = await ioc.Resolve(NotesService); // already built, in the right order
 
 console.log(service.store.kv instanceof Deno.Kv); // true
 
@@ -110,16 +108,18 @@ await ioc.Dispose(); // closes KV, last created first
 | You order construction by hand             | Dependencies are built on demand, in the right order              |
 | Lifetimes live in your wiring code         | Lifetimes are declared: singleton, transient, scoped              |
 | Tests repeat the wiring to swap one thing  | Tests register a fake on a scope ([testing](./guides/testing.md)) |
-| Async setup spreads through your code      | Async factories, shared creation, retries, `Activate()`           |
+| Async setup spreads through your code      | Async factories, shared creation, retries, `Start()`              |
 | Per-request state is passed around by hand | One scope per request with `await using`                          |
 | Cleanup order is up to you                 | `Dispose()` cleans up what was created, last first                |
-| Wiring mistakes surface at runtime         | `Validate()` reports them all at startup                          |
+| Wiring mistakes surface at runtime         | `Start()` (through `Validate()`) reports them all at startup      |
+| Any code can reach any object it imports   | A service is private unless its token is exported                 |
+| Startup and shutdown order is up to you    | Modules start by dependency layer and stop in reverse             |
 
 ## What it costs
 
 - **Indirection.** You can't see construction order by reading one function. The trade-off is
   explicit registrations, and errors that print the resolution path.
-- **An extra concept to learn.** Keys, lifetimes and scopes. The [concepts](./concepts/README.md)
+- **An extra concept to learn.** Keys, lifetimes, scopes and modules. The [concepts](./concepts/README.md)
   section is short.
 - **`Resolve` is async.** It always returns a promise, so you resolve at the edges of your app,
   not deep inside business logic.
@@ -144,9 +144,14 @@ Things this container deliberately does not do:
 
 - **No decorators or `reflect-metadata`.** Dependencies are declared in code you can read (`Deps`),
   so nothing breaks under esbuild, Vite or standard decorators.
-- **No auto-scanning of files.** Registrations are explicit; there are no hidden modules.
+- **No auto-scanning of files.** Registrations are explicit, and modules are plain objects you
+  add with `Use()`.
+- **No global key registry.** A key is a token object or a class, compared by reference, so two
+  packages can't collide on a name.
 - **No global container.** You create containers and pass them where needed.
 - **No implicit HTTP scope.** A scope exists only when you create one.
+- **No modes.** Every container is strict, lazy and protected against hangs; there are no
+  switches to pick.
 - **No lifetime "bubbling".** The container never silently changes a service's lifetime;
   `Validate()` reports risky combinations instead.
 

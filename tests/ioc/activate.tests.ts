@@ -3,7 +3,13 @@
 import { IoCActivationError, IoCContainerDisposedError } from '../../src/ioc/errors.ts';
 import { IoCContainer } from '../../src/ioc/ioc.ts';
 import { IoCToken } from '../../src/ioc/IoCToken.ts';
-import { assert, assertEquals, assertInstanceOf, assertRejects } from '../test.deps.ts';
+import {
+  assert,
+  assertEquals,
+  assertInstanceOf,
+  assertRejects,
+  assertThrows,
+} from '../test.deps.ts';
 
 Deno.test('Activate', async (t) => {
   await t.step('builds singletons, not scoped or transient services', async () => {
@@ -110,5 +116,51 @@ Deno.test('Activate', async (t) => {
     await ioc.Dispose();
 
     await assertRejects(() => ioc.Activate(), IoCContainerDisposedError);
+  });
+});
+
+Deno.test('Activate - OnDemand singletons', async (t) => {
+  await t.step('are skipped by Activate() and Start(), and built on first resolve', async () => {
+    let built = 0;
+
+    class Client {
+      constructor() {
+        built++;
+      }
+    }
+
+    const ioc = new IoCContainer().RegisterClass(Client, { OnDemand: true });
+
+    await ioc.Activate();
+    await ioc.Start();
+
+    assertEquals(built, 0);
+
+    const client = await ioc.Resolve(Client);
+
+    assertEquals(built, 1);
+    assertEquals(await ioc.Resolve(Client), client);
+  });
+
+  await t.step('are still checked by Validate()', () => {
+    class NeedsArgs {
+      constructor(public x: number) {}
+    }
+
+    const issues = new IoCContainer().RegisterClass(NeedsArgs, { OnDemand: true }).Validate({
+      Throw: false,
+    });
+
+    assertEquals(issues.map((i) => i.Kind), ['arguments']);
+  });
+
+  await t.step('only apply to singletons', () => {
+    class Session {}
+
+    assertThrows(
+      () => new IoCContainer().RegisterClass(Session, { Lifetime: 'scoped', OnDemand: true }),
+      Error,
+      'Session is scoped, so it is never built at startup; OnDemand applies to singletons.',
+    );
   });
 });

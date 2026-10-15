@@ -2,9 +2,9 @@
 FrontmatterVersion: 1
 DocumentType: Guide
 Title: Troubleshooting
-Summary: Symptoms that don't throw an error - a factory running twice, an ignored override, a lazy service built early, disposal that didn't run - with their causes and fixes.
+Summary: Symptoms that don't throw an error, or throw one that needs context - a factory running twice, an ignored override, a service built early, a sealed registration, modules starting together, a Use() that won't compile - with their causes and fixes.
 Created: 2026-10-13
-Updated: 2026-10-13
+Updated: 2026-10-15
 Owners:
   - fathym
 References:
@@ -18,53 +18,76 @@ References:
 
 # Troubleshooting
 
-> **Goal:** Fix behavior that surprises you without throwing. If you have an error message, search
-> the [error catalog](./reference/errors.md) instead.
+> **Goal:** Fix behavior that surprises you. If you have an error message, search the
+> [error catalog](./reference/errors.md) first.
 
-| Symptom                                                                             | Most likely cause                                |
-| ----------------------------------------------------------------------------------- | ------------------------------------------------ |
-| [My factory ran more than once](#my-factory-ran-more-than-once)                     | Transient lifetime, a scoped service, or a retry |
-| [My override is ignored](#my-override-is-ignored)                                   | The consumer is a singleton                      |
-| [`Lazy` didn't defer creation](#lazy-didnt-defer-creation)                          | Something resolved it, or `Activate()` ran       |
-| [My scope sees the parent's instance](#my-scope-sees-the-parents-instance)          | The service is a singleton, not scoped           |
-| [I got a value instead of my object](#i-got-a-value-instead-of-my-object)           | The object has a `then` method                   |
-| [My factory's `ioc` isn't `===` my container](#my-factorys-ioc-isnt--my-container)  | Factories receive a view                         |
-| [Disposal didn't run](#disposal-didnt-run)                                          | Transient, a value, or a scope never disposed    |
-| [A service was disposed that I still use](#a-service-was-disposed-that-i-still-use) | A factory returned a shared object               |
-| [Startup hangs](#startup-hangs)                                                     | A cycle through a captured container             |
-| [My registration order matters](#my-registration-order-matters)                     | Eager singletons                                 |
+| Symptom                                                                                        | Most likely cause                                  |
+| ---------------------------------------------------------------------------------------------- | -------------------------------------------------- |
+| [My factory ran more than once](#my-factory-ran-more-than-once)                                | Transient lifetime, a scoped service, or a retry   |
+| [My override is ignored](#my-override-is-ignored)                                              | The consumer is a singleton that was already built |
+| [A service was built before I resolved it](#a-service-was-built-before-i-resolved-it)          | `Start()` or `Activate()` builds every singleton   |
+| [I can't replace a service a module registered](#i-cant-replace-a-service-a-module-registered) | Module registrations are sealed                    |
+| [My scope sees the parent's instance](#my-scope-sees-the-parents-instance)                     | The service is a singleton, not scoped             |
+| [I got a value instead of my object](#i-got-a-value-instead-of-my-object)                      | The object has a `then` method                     |
+| [My factory's `ioc` isn't `===` my container](#my-factorys-ioc-isnt--my-container)             | Factories receive a view                           |
+| [Disposal didn't run](#disposal-didnt-run)                                                     | Transient, a value, or a container never disposed  |
+| [A service was disposed that I still use](#a-service-was-disposed-that-i-still-use)            | A factory returned a shared object                 |
+| [Two modules started at the same time](#two-modules-started-at-the-same-time)                  | Neither `Requires` the other                       |
+| [Startup takes 30 seconds, then fails](#startup-takes-30-seconds-then-fails)                   | Something awaited never settles                    |
+| [My `Deps` doesn't compile on a typed container](#my-deps-doesnt-compile-on-a-typed-container) | The key isn't registered above it                  |
+| [My `Use()` doesn't compile](#my-use-doesnt-compile)                                           | A module's `Needs` aren't registered yet           |
 
 ## My factory ran more than once
 
 - **It's `transient`.** That's the point: one build per resolve.
-- **It's `scoped`.** One build per scope, and the registering container counts as one.
+- **It's `scoped`.** One build per scope.
 - **An earlier attempt failed.** Failed creations aren't cached; the next resolve retries.
-- **You registered it twice.** The second registration replaced the first, and both were eager.
+- **A `Start()` failed.** Everything built during a failed `Start()` is disposed and forgotten,
+  so the next `Start()` builds it again.
+- **A scope has its own registration.** A scope that registers the key, or calls `Isolate()` on
+  it, builds its own instance.
 
 ## My override is ignored
 
-Overrides registered on a **scope** reach transient and scoped services resolved from that
-scope. A **singleton** is always built by the container that registered it, so it never sees a
-scope's overrides. Either:
-
-- make the consumer `transient` or `scoped`;
-- register the override on the container itself, before the singleton is built (a fresh container
-  per test);
-- or override the consumer itself on the scope.
+- **The consumer was built before the override.** Instances already built keep what they were
+  given. Call `Override()` before resolving the services that use it, or use a fresh container
+  per test.
+- **The override is on a scope, and the consumer is a singleton.** A singleton is built by the
+  container that registered it, so it never sees a scope's registrations. Make the consumer
+  `transient` or `scoped`, or override on the root container of a test.
 
 See [testing, recipe 4](./guides/testing.md#4-overrides-after-a-singleton-is-built).
 
-## `Lazy` didn't defer creation
+## A service was built before I resolved it
 
-- **Something resolved it early,** possibly through another service's dependencies.
-- **`Activate()` ran.** It builds every lazy singleton on purpose.
-- **`Lazy` is set on a different registration** (a different name or key) from the one you
-  resolve.
+Nothing is built at registration. A singleton is built the first time something needs it:
+
+- **`Start()` or `Activate()` ran.** They build every singleton on purpose, so a broken service
+  fails at startup instead of on first use.
+- **Another service depends on it,** and that one was resolved or built.
+
+Transient and scoped services are never built by `Start()`; they belong to each resolve and each
+scope.
+
+## I can't replace a service a module registered
+
+What a module registers belongs to it: only that module can replace, decorate or unregister it.
+Anyone else gets `IoCSealedError`, naming the module. Choose the fix that matches your intent:
+
+- **The module should allow it.** Register the service in the module with `Default: true`; then
+  any registration replaces it.
+- **You are writing a test.** Create the container with `new IoCContainer({ Testing: true })`.
+  It lifts sealing and enables `Override()`.
+- **You only need it in one scope.** Register the replacement on a scope; it shadows the parent's
+  registration there and changes nothing else.
+
+See [sealing](./concepts/keys-and-registrations.md#sealing-modules-own-their-registrations).
 
 ## My scope sees the parent's instance
 
 Only `scoped` services get one instance per scope. Check the registration has
-`Lifetime: 'scoped'`. A singleton is shared by the container and all its scopes.
+`Lifetime: 'scoped'` (or a `ScopeLevel`). A singleton is shared by the container and all its
+scopes.
 
 ## I got a value instead of my object
 
@@ -75,17 +98,20 @@ results). Wrap the object: `RegisterValue($Query, { query })`. See
 ## My factory's `ioc` isn't `===` my container
 
 Every factory receives a **view** of the container. It shares all the container's state and is an
-`IoCContainer`, but it isn't the same object. It carries the resolution path that powers cycle
-detection. Compare state (`c.services === ioc.services`), not identity.
+`IoCContainer`, but it isn't the same object: it carries the resolution path that powers cycle
+detection. Resolve through it, and don't compare containers by identity. A module's `Register`,
+`OnStart` and `OnStop` receive a module view too: it registers as the module, and it can't call
+`Use`, `Start`, `Dispose` or `Override`.
 
 ## Disposal didn't run
 
 - **The instance is transient.** The container never disposes transients.
-- **It was registered with `RegisterValue`.** Values are never disposed.
-- **It was a scoped instance in a scope that was never disposed.** Use `await using`.
-- **It doesn't implement `Symbol.dispose` or `Symbol.asyncDispose`.**
-- **You disposed the root and expected its scopes to be disposed.** The root doesn't track its
-  scopes.
+- **It was registered with `RegisterValue`.** Values are never disposed, unless you pass a
+  `Dispose` callback.
+- **The container or scope was never disposed.** Use `await using`, or call `Dispose()`.
+  Disposing a container also disposes its live child scopes.
+- **It doesn't implement `Symbol.dispose` or `Symbol.asyncDispose`.** Pass a `Dispose` callback
+  in the registration.
 
 ## A service was disposed that I still use
 
@@ -93,38 +119,48 @@ A factory that returns an existing object hands it to the container, which dispo
 everything else it created. Register objects you own with `RegisterValue`. See
 [guidelines](./guides/guidelines.md#factory-returning-a-shared-resource).
 
-## Startup hangs
+## Two modules started at the same time
 
-Two lazy services that need each other, resolved through a **captured** container after an
-`await`, wait for each other forever: the captured container can't tell which resolution it
-belongs to. Resolved through the factory's parameter, the same cycle throws
-`IoCCircularDependencyError`, including when both are built at the same time (`Promise.all`, or
-`Activate()`). Resolve through the parameter, then break the cycle. See
-[cycles and errors](./concepts/cycles-and-errors.md).
+`Start()` runs modules by layer. A module starts after the modules it `Requires`, and modules
+that don't require each other start concurrently. If one module's `OnStart` needs another to have
+started first, add that module to its `Requires`. `Describe().Modules` shows each module's
+`Layer`.
 
-## My registration order matters
+## Startup takes 30 seconds, then fails
 
-Eager singletons are built when you register them, so their dependencies must already be
-registered. Use `Lazy: true` for services with dependencies, and call `Activate()` at startup to
-keep fail-fast behavior.
+Every pending resolve, every build in `Start()` and every `OnStart`/`OnStop` is bounded by
+`PendingTimeoutMs` (30 seconds by default). When it expires you get an `IoCResolveTimeoutError`
+listing what was still pending. Common causes:
 
-On a [typed container](./guides/declared-dependencies.md#depend-only-on-whats-registered-typed-containers),
-order matters at compile time too, by design: `Deps` may only name keys registered earlier in the
-chain.
+- **Something the factory awaits never settles,** such as a connection or a lock.
+- **Two factories wait for each other through a container captured in a closure,** on a runtime
+  without `AsyncLocalStorage` (browsers). On Deno, Node.js and Bun the container follows the
+  chain across `await` and throws `IoCCircularDependencyError` instead. Resolve through the
+  factory's parameter either way. See [cycles and errors](./concepts/cycles-and-errors.md).
+- **It is just slow.** Raise `PendingTimeoutMs`, or set it to `0` to turn the timeout off.
 
 ## My `Deps` doesn't compile on a typed container
 
 The error lists what's registered so far, after `IoCNoKeys`. The key you named isn't in it:
 
 - **It's registered later in the chain.** Move that registration up.
-- **It's registered as a statement** (`ioc.RegisterClass(X);` on its own line) or with
-  `Register`. Neither adds to the type. Chain it, or declare it with `Expect(X)`.
+- **It's registered as a statement** (`ioc.RegisterClass(X);` on its own line). That doesn't add
+  to the type. Chain it, or declare it with `Expect(X)`.
 - **It's registered under a name.** Use `[key, 'name']`, or register the default name.
-- **It's a plain symbol.** Use a typed token.
+- **It comes from a hand-written `IoCModule`.** Only modules made with `DefineModule` add their
+  keys to the type. Use `DefineModule`, or declare the key with `Expect(X)`.
 - **It's a token of a plain type, and the ids differ.** `IoCToken<string, 'A'>` and
   `IoCToken<string, 'B'>` are different keys.
 
 See [the error catalog](./reference/errors.md#typescript-errors).
+
+## My `Use()` doesn't compile
+
+On a typed container, `Use(module)` checks that the container already has what the module
+`Needs`. The error names the missing keys under `'@fathym/ioc/unmet-needs'`. Register those keys
+(or `Expect` them) before the `Use()` call, or add the module that provides them in the same
+`Use()` call or an earlier one. See
+[declared dependencies](./guides/declared-dependencies.md#modules).
 
 ## What's Next
 

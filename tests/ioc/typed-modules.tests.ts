@@ -100,6 +100,28 @@ Deno.test('Typed modules - types', async (t) => {
     new IoCContainer().Typed().Use(RepoModule);
   });
 
+  await t.step('a module needs what its requirements need, unless they provide it', () => {
+    const $DbUrl = IoCToken<string, 'DbUrl'>('DbUrl');
+
+    const Data = DefineModule({
+      Name: 'Data',
+      Needs: [$DbUrl],
+      Register: (ioc) => ioc.RegisterClass(Db, { Deps: [$DbUrl] }),
+    });
+
+    const Notes = DefineModule({ Name: 'Notes', Requires: [Data], Register: (ioc) => ioc });
+
+    assertType<Equal<IoCModuleNeeds<typeof Notes>, typeof $DbUrl>>();
+
+    // @ts-expect-error Data (required by Notes) needs $DbUrl
+    new IoCContainer().Typed().Use(Notes);
+
+    new IoCContainer().Typed().RegisterValue($DbUrl, 'kv://x').Use(Notes);
+
+    // Config provides $Url, so DbModule's requirement chain needs nothing from outside.
+    assertType<Equal<IoCModuleNeeds<typeof RepoModule>, typeof $Port>>();
+  });
+
   await t.step('needs can be met by another module in the same Use() call', () => {
     const PortModule = DefineModule({
       Name: 'Port',

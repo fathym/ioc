@@ -1,5 +1,6 @@
 /**
- * Startup validation: Validate() reports every wiring problem at once, before anything is built.
+ * Startup validation: Validate() reports every wiring problem at once, before anything is built:
+ * here a missing dependency, and a tenant-level service capturing a request-level one.
  *
  * Run: deno run examples/startup-validation.ts
  */
@@ -7,21 +8,24 @@ import { IoCContainer, IoCValidationError } from '../mod.ts';
 
 class Config {}
 
-class Session {}
+class RequestUser {
+  public name = 'ada';
+}
 
-class Cache {
-  constructor(public session: Session) {}
+class TenantCache {
+  constructor(public user: RequestUser) {}
 }
 
 class Repo {
   constructor(public config: Config) {}
 }
 
-const ioc = new IoCContainer();
+const ioc = new IoCContainer({ Levels: ['tenant', 'request'] });
 
-ioc.RegisterClass(Session, { Lifetime: 'scoped', Lazy: true });
-ioc.RegisterClass(Cache, { Deps: [Session], Lazy: true }); // a singleton capturing a scoped service
-ioc.RegisterClass(Repo, { Deps: [Config], Lazy: true }); // Config is never registered
+ioc.RegisterClass(RequestUser, { ScopeLevel: 'request' });
+// Lives as long as a tenant, so it would keep the first request's user forever.
+ioc.RegisterClass(TenantCache, { Deps: [RequestUser], ScopeLevel: 'tenant' });
+ioc.RegisterClass(Repo, { Deps: [Config] }); // Config is never registered
 
 try {
   ioc.Validate();
@@ -36,7 +40,7 @@ try {
 
 // Fix both problems and validate again.
 ioc.RegisterClass(Config);
-ioc.RegisterClass(Cache, { Deps: [Session], Lifetime: 'scoped', Lazy: true });
+ioc.RegisterClass(TenantCache, { Deps: [RequestUser], ScopeLevel: 'request', Replace: true });
 
 ioc.Validate();
 

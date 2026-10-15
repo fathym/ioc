@@ -2,9 +2,9 @@
 FrontmatterVersion: 1
 DocumentType: Guide
 Title: Cycles and Errors
-Summary: How the container detects circular dependencies, how resolution paths appear in errors, and the one limit (resolving through a captured container after an await).
+Summary: How the container detects circular dependencies (including across await and between concurrent resolutions), how resolution paths appear in errors, how hangs become timeouts, and how to break a cycle.
 Created: 2026-10-13
-Updated: 2026-10-13
+Updated: 2026-10-15
 Owners:
   - fathym
 References:
@@ -18,7 +18,8 @@ References:
 
 When `A` needs `B` and `B` needs `A`, there is no order in which both can be built. Many
 containers hang or fail with a misleading message. This one throws `IoCCircularDependencyError`
-with the full path. This page explains how, and the one case it can't see.
+with the full path, and turns anything that still can't finish into a timeout error instead of a
+hang.
 
 ## Resolution paths
 
@@ -34,19 +35,18 @@ builds `Db`. The container records that path, which gives you two things:
 - **Better "not found" errors.** A missing dependency deep in the graph says where it was needed:
 
   ```text
-  No Service for symbol 'Db' with name '$default' has been registered. Resolution path: Service -> Repo.
+  No service is registered for Db. Resolution path: Service -> Repo.
   ```
 
 ```ts
 import { IoCCircularDependencyError, IoCContainer, IoCToken } from '@fathym/ioc';
 
-const $A = IoCToken<unknown>('A');
-const $B = IoCToken<unknown>('B');
+const $A = IoCToken<{ b: unknown }, 'A'>('A');
+const $B = IoCToken<{ a: unknown }, 'B'>('B');
 
-const ioc = new IoCContainer();
-
-ioc.RegisterFactory($A, async (c) => ({ b: await c.Resolve($B) }), { Lazy: true });
-ioc.RegisterFactory($B, async (c) => ({ a: await c.Resolve($A) }), { Lazy: true });
+const ioc = new IoCContainer()
+  .RegisterFactory($A, async (c) => ({ b: await c.Resolve($B) }))
+  .RegisterFactory($B, async (c) => ({ a: await c.Resolve($A) }));
 
 try {
   await ioc.Resolve($A);
@@ -58,61 +58,23 @@ try {
 
 ## Resolve through the factory's parameter
 
-Every factory (eager ones included) receives a **view** of the container that carries the current
-path. Resolving through that parameter (`c` above) is how the container follows the path across
-`await`s. The view shares all the container's state; it just isn't `===` the container.
+Every factory receives a **view** of the container that carries the current path. Resolving
+through that parameter (`c` above) is how the container follows the path across `await`s, and
+how a scope's overrides reach the factory. The view shares all the container's state; it just
+isn't `===` the container.
 
-If a factory resolves through a container it **captured** from the outer scope instead, the
-container can still follow the path **until the factory's first `await`**. After that, the path
-is lost:
+A factory that resolves through a container it **captured** instead is followed too, by the
+container's automatic async context (see
+[async resolution](./async-resolution.md#following-the-chain-across-await)):
 
-| Factory resolves through…                | Cycle detected?                   | Path in errors? |
-| ---------------------------------------- | --------------------------------- | --------------- |
-| Its parameter (`(c) => c.Resolve(…)`)    | Yes                               | Yes             |
-| A captured container, before any `await` | Yes                               | Yes             |
-| A captured container, after an `await`   | No: a lazy cycle can wait forever | No              |
-| …with the `AsyncContext` option          | Yes                               | Yes             |
+| Factory resolves through…                   | Cycle detected?                                | Sees a scope's overrides? |
+| ------------------------------------------- | ---------------------------------------------- | ------------------------- |
+| Its parameter (`(c) => c.Resolve(…)`)       | Yes                                            | Yes                       |
+| A captured container                        | Yes (async context)                            | No                        |
+| A captured container, `AsyncContext: false` | Before the first `await` only; a timeout after | No                        |
 
-So always resolve through the parameter. The
+So resolve through the parameter. The
 [guidelines](../guides/guidelines.md#captured-container-in-a-factory) show the fix.
-
-When you can't (a large codebase that captures the container everywhere), two options cover the
-gap:
-
-- **`AsyncContext`:** pass an `AsyncLocalStorage` (from `node:async_hooks`, available in Deno,
-  Node.js and Bun) and the container follows the path across `await`s, so captured-container
-  cycles throw `IoCCircularDependencyError` too. The container never imports `node:async_hooks`
-  itself, so browser bundles don't pay for it.
-- **`PendingTimeoutMs`:** a resolve, a startup build or an `OnStart` that is still pending after
-  the timeout fails with `IoCResolveTimeoutError`, listing what it was waiting on, instead of
-  waiting forever.
-
-```ts
-import { AsyncLocalStorage } from 'node:async_hooks';
-import { IoCCircularDependencyError, IoCContainer, IoCToken } from '@fathym/ioc';
-
-const $A = IoCToken<number, 'CapturedA'>('CapturedA');
-const $B = IoCToken<number, 'CapturedB'>('CapturedB');
-
-const ioc = new IoCContainer({ AsyncContext: new AsyncLocalStorage() });
-
-// Both factories use the captured `ioc`, after an await.
-ioc.RegisterFactory($A, async () => {
-  await Promise.resolve();
-  return (await ioc.Resolve($B)) + 1;
-}, { Lazy: true });
-
-ioc.RegisterFactory($B, async () => {
-  await Promise.resolve();
-  return (await ioc.Resolve($A)) + 1;
-}, { Lazy: true });
-
-try {
-  await ioc.Resolve($A);
-} catch (err) {
-  console.log(err instanceof IoCCircularDependencyError); // true
-}
-```
 
 **Concurrent resolutions are covered too.** When two resolutions enter the same cycle at the same
 time (`Promise.all([Resolve(A), Resolve(B)])`, or `Activate()`, which builds singletons in
@@ -125,11 +87,41 @@ When one part of a build fails (a cycle, or any error), the rest of that build s
 resolves still running inside it start nothing new and reject with the same error. A resolve made
 afterwards, from outside the failed build, retries normally.
 
+## When something never settles
+
+Some waits are not cycles: a connection that never answers, a lock nobody releases, or a cycle
+the container can't see (with `AsyncContext: false`). The pending timeout catches them. After
+`PendingTimeoutMs` (30 seconds by default), the resolve, the startup build or the module's
+`OnStart`/`OnStop` fails with `IoCResolveTimeoutError`, listing what it was still waiting on:
+
+```text
+Upstream did not finish within 30000ms; still pending: Upstream. Something it awaits may never
+settle (a connection, a lock), or factories may wait on each other through a container captured
+in a closure; resolve through the factory's parameter. Raise PendingTimeoutMs if it is just slow.
+```
+
+See [async resolution](./async-resolution.md#the-pending-timeout) for tuning it.
+
 ## Declared dependencies
 
-For classes registered with `Deps`, `Validate()` finds cycles **before anything runs**. It reads
-the declared graph and reports every cycle, each once. See
+For services registered with `Deps`, `Validate()` finds cycles **before anything runs**. It reads
+the declared graph and reports every cycle, each once, alongside missing, captive and undeclared
+dependencies. `Start()` runs it first. See
 [declared dependencies](../guides/declared-dependencies.md).
+
+## Errors name the fix
+
+Every error the container throws has a stable `code` (check it with
+`isIoCError(err, 'IOC_SEALED')`), and its message says what happened, to which service, in which
+module, and what to do:
+
+```text
+Theme belongs to module 'Framework', so only that module can replace it. If it should be
+replaceable, register it with Default: true in 'Framework'; in tests, use a container created
+with { Testing: true }.
+```
+
+The [error catalog](../reference/errors.md) lists every message.
 
 ## Breaking a cycle
 

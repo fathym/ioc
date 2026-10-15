@@ -39,19 +39,19 @@ process:
 
 ## Removed
 
-| 0.x                                                       | 1.0                                                                                       |
-| --------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| `Register(...)` (overloaded)                              | `RegisterClass`, `RegisterFactory`, `RegisterValue`                                       |
-| `Symbol(id)`, plain symbols and `Symbol.for` keys         | `IoCToken<T>('Description')`: a unique key object                                         |
-| Class keys matched by name                                | Class keys are the class itself                                                           |
-| `CopyTo`, `RegisterDirect`, `ResolveDirect`               | Share registrations through modules (`Use`)                                               |
-| Public `services` / `symbols` maps                        | `Describe()`, `Names()`, `Has()`                                                          |
-| `ModuleFromContainer`                                     | Plugins export a module                                                                   |
-| `Strict` option, `IoCContainer.Create()`                  | Always strict                                                                             |
-| `Lazy` / `LazyByDefault`                                  | Always lazy; `Start()` (or `Activate()`) builds everything                                |
-| `Diagnostics` option                                      | `OnEvent` (`warning` events)                                                              |
-| Cross-version protocol, frozen fixtures, interop suites   | -                                                                                         |
-| `IOC_KEY_COLLISION`, `IOC_CLASS_NAME_FALLBACK` (diag)     | Impossible with reference identity                                                        |
+| 0.x                                                     | 1.0                                                        |
+| ------------------------------------------------------- | ---------------------------------------------------------- |
+| `Register(...)` (overloaded)                            | `RegisterClass`, `RegisterFactory`, `RegisterValue`        |
+| `Symbol(id)`, plain symbols and `Symbol.for` keys       | `IoCToken<T>('Description')`: a unique key object          |
+| Class keys matched by name                              | Class keys are the class itself                            |
+| `CopyTo`, `RegisterDirect`, `ResolveDirect`             | Share registrations through modules (`Use`)                |
+| Public `services` / `symbols` maps                      | `Describe()`, `Names()`, `Has()`                           |
+| `ModuleFromContainer`                                   | Plugins export a module                                    |
+| `Strict` option, `IoCContainer.Create()`                | Always strict                                              |
+| `Lazy` / `LazyByDefault`                                | Always lazy; `Start()` (or `Activate()`) builds everything |
+| `Diagnostics` option                                    | `OnEvent` (`warning` events)                               |
+| Cross-version protocol, frozen fixtures, interop suites | -                                                          |
+| `IOC_KEY_COLLISION`, `IOC_CLASS_NAME_FALLBACK` (diag)   | Impossible with reference identity                         |
 
 ## Identity and encapsulation
 
@@ -128,8 +128,11 @@ nor in its `Needs`.
   built during this `Start()` is disposed and forgotten, the container returns to `idle`, and
   `Start()` throws one error (`IoCActivationError` or `IoCStartError`). `Start()` can be called
   again.
-- **Dispose():** stop the modules, then dispose live child scopes (deepest first), then this
-  container's instances in reverse creation order. Parents hold child scopes weakly, so a scope
+- **Dispose():** stop the modules across the scope tree (live child scopes' modules first,
+  deepest first, since they may require this container's), then dispose live child scopes
+  (deepest first), then this container's instances in reverse creation order.
+- **OnDemand:** a singleton registered with `OnDemand: true` is skipped by `Start()` and
+  `Activate()` and built on first resolve, for resources only some code paths need. Parents hold child scopes weakly, so a scope
   that is dropped without being disposed can still be garbage-collected.
 - `Dispose()` during `Start()` stops the module that was starting and makes `Start()` throw
   `IOC_CONTAINER_DISPOSED`.

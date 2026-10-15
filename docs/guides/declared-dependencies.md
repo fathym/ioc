@@ -4,7 +4,7 @@ DocumentType: Guide
 Title: Declared Dependencies
 Summary: Let the container construct classes from typed Deps lists checked against the constructor and, on a typed container, against what is already registered; use named dependencies; validate the graph at startup.
 Created: 2026-10-13
-Updated: 2026-10-13
+Updated: 2026-10-15
 Owners:
   - fathym
 References:
@@ -31,8 +31,8 @@ interface Logger {
   log(message: string): void;
 }
 
-const $Logger = IoCToken<Logger>('Logger');
-const $DbUrl = IoCToken<string>('DbUrl');
+const $Logger = IoCToken<Logger, 'Logger'>('Logger');
+const $DbUrl = IoCToken<string, 'DbUrl'>('DbUrl');
 
 class Repo {
   constructor(public url: string, public logger: Logger) {}
@@ -42,14 +42,12 @@ class NotesService {
   constructor(public repo: Repo, public logger: Logger) {}
 }
 
-const ioc = new IoCContainer();
-
-ioc.RegisterValue($DbUrl, 'kv://primary');
-ioc.RegisterValue($DbUrl, 'kv://replica', { Name: 'replica' });
-ioc.RegisterValue($Logger, { log: (message) => console.log(message) });
-
-ioc.RegisterClass(Repo, { Deps: [[$DbUrl, 'replica'], $Logger] }); // [key, name] for a named dependency
-ioc.RegisterClass(NotesService, { Deps: [Repo, $Logger] });
+const ioc = new IoCContainer()
+  .RegisterValue($DbUrl, 'kv://primary')
+  .RegisterValue($DbUrl, 'kv://replica', { Name: 'replica' })
+  .RegisterValue($Logger, { log: (message) => console.log(message) })
+  .RegisterClass(Repo, { Deps: [[$DbUrl, 'replica'], $Logger] }) // [key, name] for a named dependency
+  .RegisterClass(NotesService, { Deps: [Repo, $Logger] });
 
 ioc.Validate();
 
@@ -75,13 +73,12 @@ class Report {
   constructor(public clock: Clock, public title: string) {}
 }
 
-const $Title = IoCToken<string>('Title');
+const $Title = IoCToken<string, 'Title'>('Title');
 
-const ioc = new IoCContainer();
-
-ioc.RegisterValue($Title, 'Weekly');
-ioc.RegisterClass(Clock);
-ioc.RegisterClass(Report, { Deps: [Clock, $Title] }); // correct
+const ioc = new IoCContainer()
+  .RegisterValue($Title, 'Weekly')
+  .RegisterClass(Clock)
+  .RegisterClass(Report, { Deps: [Clock, $Title] }); // correct
 
 console.log((await ioc.Resolve(Report)).title); // Weekly
 ```
@@ -92,7 +89,7 @@ cases are checked in [`tests/ioc/types.tests.ts`](../../tests/ioc/types.tests.ts
 ```ts ignore
 ioc.RegisterClass(Report, { Deps: [$Title, Clock] }); // wrong order: a string token where a Clock is expected
 ioc.RegisterClass(Report, { Deps: [Clock] }); // missing the second dependency
-ioc.RegisterClass(Report, { Deps: [Clock, $Count] }); // $Count is IoCToken<number>; title is a string
+ioc.RegisterClass(Report, { Deps: [Clock, $Count] }); // $Count is IoCToken<number, 'Count'>; title is a string
 ```
 
 The error points at the `Deps` array and names the element whose type doesn't match, for example
@@ -165,27 +162,27 @@ Read it as "a `Clock` is needed, but only `Config` is registered so far". Move t
 
 ### The rules
 
-| Registration in the chain                       | Adds to the registry   | Then `Deps` may name |
-| ----------------------------------------------- | ---------------------- | -------------------- |
-| `RegisterClass(Repo)`                           | the class              | `Repo`               |
-| `RegisterClass(PgDb, { Type: $Db })`            | the token (not `PgDb`) | `$Db`                |
-| `RegisterFactory($Db, …)` / `RegisterValue(…)`  | the key                | `$Db`                |
-| `…({ Name: 'replica' })`                        | the key with that name | `[$Db, 'replica']`   |
-| `Expect($Request)`                              | the key (declared)     | `$Request`           |
-| anything keyed by a plain symbol, or `Register` | nothing                | –                    |
+| Registration in the chain                      | Adds to the registry   | Then `Deps` may name |
+| ---------------------------------------------- | ---------------------- | -------------------- |
+| `RegisterClass(Repo)`                          | the class              | `Repo`               |
+| `RegisterClass(PgDb, { Type: $Db })`           | the token (not `PgDb`) | `$Db`                |
+| `RegisterFactory($Db, …)` / `RegisterValue(…)` | the key                | `$Db`                |
+| `…({ Name: 'replica' })`                       | the key with that name | `[$Db, 'replica']`   |
+| `Expect($Request)`                             | the key (declared)     | `$Request`           |
+| `Use(Module)` (a `DefineModule` module)        | the module's keys      | what it registers    |
 
 - **Order is the point.** A class must come after everything it depends on. Moving a
   registration down is always the fix.
 - **Chain, don't use statements.** TypeScript can't change a variable's type after a statement,
   so `ioc.RegisterClass(…);` on its own line doesn't add to the type. Keep the result of the
   chain (`const ioc = …`). Registrations made as statements still work at runtime.
-- **Give tokens of plain types an id type.** `IoCToken<string>('DbUrl')` and
-  `IoCToken<string>('Title')` have the same type, so a typed container can't tell them apart.
-  `IoCToken<string, 'DbUrl'>('DbUrl')` can. Tokens of interfaces (`IoCToken<Db>`) are usually
-  distinct already.
-- **Plain symbols are never accepted in `Deps`**, typed container or not. They carry no type.
+- **Give every token an id type.** `IoCToken<string>('DbUrl')` and `IoCToken<string>('Title')`
+  have the same type, so a typed container can't tell them apart.
+  `IoCToken<string, 'DbUrl'>('DbUrl')` can.
 - **`Validate()` still matters.** The registry type proves keys were registered, not that their
   lifetimes are safe (captive dependencies) or that factories resolve what they need.
+- **Keep chains short.** A chain of hundreds of registrations is slow to type-check; split it
+  into typed modules (below).
 
 ### Keys registered elsewhere: `Expect`
 
@@ -204,7 +201,7 @@ class Handler {
 const ioc = new IoCContainer()
   .Typed()
   .Expect($Request) // registered on each request scope
-  .RegisterClass(Handler, { Deps: [$Request], Lifetime: 'scoped', Lazy: true });
+  .RegisterClass(Handler, { Deps: [$Request], Lifetime: 'scoped' });
 
 await using scope = ioc.CreateScope();
 
@@ -220,11 +217,12 @@ key was declared with `Expect()` and where to register it.
 
 ### Modules
 
-A module that registers services can require keys from earlier modules in its parameter type. The
-type parameter `K` carries everything else the container already has:
+A module defined with `DefineModule` gets the same checks inside its `Register`: the container
+there is typed with the keys its `Requires` provide and the keys it `Needs`. What `Register`
+returns is what the module provides, and `Use()` adds it to the app's typed container:
 
 ```ts
-import { IoCContainer, IoCToken } from '@fathym/ioc';
+import { DefineModule, IoCContainer, IoCToken } from '@fathym/ioc';
 
 interface Db {
   query(sql: string): string[];
@@ -241,27 +239,27 @@ class NotesRepo {
 }
 
 // core.ts
-function registerCore(ioc: IoCContainer) {
-  return ioc
-    .Typed()
-    .RegisterClass(Config)
-    .RegisterValue($Db, { query: (sql) => [sql] });
-}
+const Core = DefineModule({
+  Name: 'Core',
+  Register: (ioc) => ioc.RegisterClass(Config).RegisterValue($Db, { query: (sql) => [sql] }),
+});
 
-// notes.ts: needs Config and $Db, so it only accepts a container that has them
-function registerNotes<K>(ioc: IoCContainer<K | typeof Config | typeof $Db>) {
-  return ioc.RegisterClass(NotesRepo, { Deps: [Config, $Db] });
-}
+// notes.ts: builds on Core, so Config and $Db are typed in
+const Notes = DefineModule({
+  Name: 'Notes',
+  Requires: [Core],
+  Register: (ioc) => ioc.RegisterClass(NotesRepo, { Deps: [Config, $Db] }),
+});
 
 // main.ts
-const ioc = registerNotes(registerCore(new IoCContainer()));
+const ioc = new IoCContainer().Typed().Use(Notes); // adds Core, then Notes
 
 console.log((await ioc.Resolve(NotesRepo)).config.table); // notes
 ```
 
-Calling `registerNotes` before `registerCore` doesn't compile. A plain (untyped) `IoCContainer`
-is accepted by any module, so typed and untyped code mix freely. See
-[organizing registrations](./organizing-registrations.md).
+Without `Requires: [Core]`, `Deps: [Config, $Db]` in `Notes` doesn't compile. A key the
+application registers goes in `Needs`, and then `Use(Notes)` only compiles on a container that
+has it. See [modules and lifecycle](./modules-and-lifecycle.md#typed-modules).
 
 ## Where dependencies come from
 
@@ -278,10 +276,13 @@ Dependencies are resolved **from the container or scope resolving the class**:
 
 - dependencies that aren't registered;
 - cycles between declared dependencies;
-- singletons that depend on a scoped service (a [captive dependency](./guidelines.md#captive-dependency));
-- classes registered without arguments whose constructors take parameters.
+- services that depend, directly or through transients, on a shorter-lived one (a
+  [captive dependency](../concepts/lifetimes.md#captive-dependencies));
+- classes registered without arguments whose constructors take parameters;
+- a module's service depending on another module's service without `Requires` or `Needs`
+  (`undeclared`).
 
-Call it once after registering everything, and in a test, so mistakes fail CI. See
+`Start()` calls it first. Call it in a test too, so mistakes fail CI. See
 [organizing registrations](./organizing-registrations.md).
 
 > **Note:** Dependencies a factory resolves _inside_ its body are not checked by `Validate()`;
@@ -359,14 +360,15 @@ console.log((await audit.router()).handlers.length); // 2
   example) are interchangeable to the compiler, so a typed container may accept one for the other.
 - **Overloaded constructors** are checked against the last signature.
 - **Primitive dependencies need a token.** There is no class to name a `string`.
+- **`Use()` checks a module's own `Needs`.** The needs of the modules it `Requires` are checked by
+  `Validate()` at startup.
 - **`Deps` must be an inline array** (or `as const`), so the tuple type is preserved.
 
 ## What's Next
 
 - Startup validation and typed modules in a real app:
   [organizing-registrations.md](./organizing-registrations.md) _[How-to]_
-- `Typed`, `Expect` and the registry types: [api.md](../reference/api.md#typed)
+- `Typed`, `Expect` and the registry types: [api.md](../reference/api.md)
   _[Reference]_
-- Every `Validate()` message explained:
-  [errors.md](../reference/errors.md#ioc-validation-failed) _[Reference]_
+- Every `Validate()` message explained: [errors.md](../reference/errors.md) _[Reference]_
 - How cycles are found: [cycles-and-errors.md](../concepts/cycles-and-errors.md) _[Explanation]_

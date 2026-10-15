@@ -4,7 +4,7 @@ DocumentType: Guide
 Title: IoC Container Guide
 Summary: Playbook for maintaining the Fathym IoC container for Deno runtimes.
 Created: 2025-11-20
-Updated: 2026-10-13
+Updated: 2026-10-15
 Owners:
   - fathym
 References:
@@ -16,7 +16,9 @@ References:
     Path: ../README.md
   - Label: 'Projects: Ref-Arch Guide'
     Path: ../GUIDE.md
-  - Label: IoC Next (design and migration)
+  - Label: IoC 1.0 (design)
+    Path: ./docs/design/ioc-1.0.md
+  - Label: IoC Next (the 0.1 design)
     Path: ./docs/design/ioc-next.md
   - Label: DI Ecosystem Feedback (research)
     Path: ./docs/research/di-ecosystem-feedback.md
@@ -30,18 +32,16 @@ Use this playbook to keep IoC container work predictable and discoverable.
 
 ## Current Focus
 
-- Validate container lifecycle behaviors (transient, scoped, scopes) and symbol
-  registration patterns. The legacy suite (`tests/ioc/bench.ts`) and the
-  characterization tests run against the frozen 0.0.36 container in
-  `tests/fixtures/legacy-ioc.ts`; keep both green.
-- Keep cross-version interop working: dependents pin different exact versions,
-  so containers from several versions call each other's `CopyTo`
-  (`tests/ioc/interop.tests.ts`). Never use `#private` fields or `instanceof`
-  across containers.
+- Keep the 1.0 guarantees covered by tests: strict, lazy and timeout-bounded
+  containers, reference keys (tokens and classes), sealed module registrations,
+  typed modules, scope levels, and the layered `Start()`/`Dispose()` lifecycle
+  (`tests/ioc/*.tests.ts`).
+- Follow the [versioning policy](./docs/policy.md): breaking changes only in a
+  major release, each with a migration guide.
 - Keep the documentation in `docs/` complete and verified: `deno task docs:check` runs every
   example and checks links, frontmatter, footers and the error catalog.
 - Align APIs with other ref-arch libraries and the CLI where integration
-  matters. See [`docs/design/ioc-next.md`](./docs/design/ioc-next.md).
+  matters. See [`docs/design/ioc-1.0.md`](./docs/design/ioc-1.0.md).
 
 ## Workflow
 

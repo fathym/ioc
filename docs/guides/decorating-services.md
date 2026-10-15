@@ -4,7 +4,7 @@ DocumentType: Guide
 Title: Decorating Services
 Summary: Wrap an existing registration with logging, caching or retries using Decorate - keeping its lifetime, composing several decorators, and undoing or scoping them.
 Created: 2026-10-13
-Updated: 2026-10-13
+Updated: 2026-10-15
 Owners:
   - fathym
 References:
@@ -31,7 +31,7 @@ interface Prices {
   quote(symbol: string): Promise<number>;
 }
 
-const $Prices = IoCToken<Prices>('Prices');
+const $Prices = IoCToken<Prices, 'Prices'>('Prices');
 
 let upstreamCalls = 0;
 
@@ -72,8 +72,8 @@ console.log(upstreamCalls); // 1
   ```ts
   import { IoCContainer, IoCToken } from '@fathym/ioc';
 
-  const $Greeter = IoCToken<{ greet(name: string): string }>('Greeter');
-  const $Prefix = IoCToken<string>('Prefix');
+  const $Greeter = IoCToken<{ greet(name: string): string }, 'Greeter'>('Greeter');
+  const $Prefix = IoCToken<string, 'Prefix'>('Prefix');
 
   const ioc = new IoCContainer();
 
@@ -91,6 +91,10 @@ console.log(upstreamCalls); // 1
 - **On a scope, it affects only that scope.** That makes it the cleanest way to spy in tests (see
   [testing](./testing.md#3-fake-vs-spy)).
 - **Named registrations** are decorated by passing `{ Name }`.
+- **A module's registrations are sealed.** Only the module that registered a service may decorate
+  it in that container, unless the module registered it with `Default: true`; anyone else gets
+  `IoCSealedError`. A scope may always decorate, because that never changes the parent, and a
+  `{ Testing: true }` container lifts sealing.
 
 ## Pitfalls
 

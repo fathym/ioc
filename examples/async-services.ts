@@ -1,5 +1,5 @@
 /**
- * Async services: a lazily opened Deno KV, a flaky remote client that succeeds on retry, startup
+ * Async services: a Deno KV opened by an async factory, a flaky remote client that succeeds on retry, startup
  * activation and disposal.
  *
  * Run: deno run --unstable-kv examples/async-services.ts
@@ -10,7 +10,7 @@ interface RemoteConfig {
   featureFlags: string[];
 }
 
-const $RemoteConfig = IoCToken<RemoteConfig>('RemoteConfig');
+const $RemoteConfig = IoCToken<RemoteConfig, 'RemoteConfig'>('RemoteConfig');
 
 let configAttempts = 0;
 
@@ -25,10 +25,11 @@ async function fetchRemoteConfig(): Promise<RemoteConfig> {
 
 const ioc = new IoCContainer();
 
-ioc.RegisterFactory(Deno.Kv, () => Deno.openKv(':memory:'), { Lazy: true });
-ioc.RegisterFactory($RemoteConfig, fetchRemoteConfig, { Lazy: true });
+// Nothing is built at registration.
+ioc.RegisterFactory(Deno.Kv, () => Deno.openKv(':memory:'));
+ioc.RegisterFactory($RemoteConfig, fetchRemoteConfig);
 
-// Activate builds every lazy singleton and reports all failures together.
+// Activate builds every singleton now and reports all failures together.
 try {
   await ioc.Activate();
 } catch (err) {

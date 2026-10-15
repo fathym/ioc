@@ -4,7 +4,7 @@ DocumentType: Guide
 Title: Plugins and Named Services
 Summary: Register several implementations under one key, then pick one by name, check for one, or collect them all - the building blocks of a plugin system.
 Created: 2026-10-13
-Updated: 2026-10-13
+Updated: 2026-10-15
 Owners:
   - fathym
 References:
@@ -31,7 +31,7 @@ interface Exporter {
   export(rows: string[]): string;
 }
 
-const $Exporter = IoCToken<Exporter>('Exporter');
+const $Exporter = IoCToken<Exporter, 'Exporter'>('Exporter');
 
 const ioc = new IoCContainer();
 
@@ -60,33 +60,42 @@ console.log(await ioc.TryResolve($Exporter, 'xml')); // undefined
 
 ## A plugin registry
 
-Let each plugin module register itself, and let the app collect them:
+Let each plugin be a module that registers itself under its own name, and let the app collect
+them:
 
 ```ts
-import { IoCContainer, IoCToken } from '@fathym/ioc';
+import { IoCContainer, type IoCModule, IoCToken } from '@fathym/ioc';
 
 interface Plugin {
   readonly name: string;
   start(): string;
 }
 
-const $Plugin = IoCToken<Plugin>('Plugin');
+const $Plugin = IoCToken<Plugin, 'Plugin'>('Plugin');
 
-// Each plugin module exports a register function.
-const metricsPlugin = (ioc: IoCContainer) =>
-  ioc.RegisterValue($Plugin, { name: 'metrics', start: () => 'metrics on' }, { Name: 'metrics' });
+// Each plugin package exports a module.
+const Metrics: IoCModule = {
+  Name: 'Metrics',
+  Register: (ioc) =>
+    ioc.RegisterValue($Plugin, { name: 'metrics', start: () => 'metrics on' }, { Name: 'metrics' }),
+};
 
-const auditPlugin = (ioc: IoCContainer) =>
-  ioc.RegisterValue($Plugin, { name: 'audit', start: () => 'audit on' }, { Name: 'audit' });
+const Audit: IoCModule = {
+  Name: 'Audit',
+  Register: (ioc) =>
+    ioc.RegisterValue($Plugin, { name: 'audit', start: () => 'audit on' }, { Name: 'audit' }),
+};
 
-const ioc = new IoCContainer();
-
-for (const register of [metricsPlugin, auditPlugin]) register(ioc);
+const ioc = new IoCContainer().Use(Metrics, Audit);
 
 for (const plugin of await ioc.ResolveAll($Plugin)) {
   console.log(plugin.start()); // metrics on, then audit on
 }
 ```
+
+Each plugin owns its name: another module, or the app, registering `metrics` again gets
+`IoCSealedError` naming the `Metrics` module. See the
+[plugin host](../patterns/plugin-host.md) pattern for lifecycle and requirements.
 
 ### By name: `ResolveNamed`
 

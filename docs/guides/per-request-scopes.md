@@ -4,7 +4,7 @@ DocumentType: Guide
 Title: Per-Request Scopes
 Summary: Give every HTTP request its own scope, request value and scoped services, with Deno.serve or any middleware-based framework, and dispose them when the response is done.
 Created: 2026-10-13
-Updated: 2026-10-13
+Updated: 2026-10-15
 Owners:
   - fathym
 References:
@@ -23,17 +23,19 @@ References:
 
 ## Before you begin
 
-- **Register per-request services as `scoped`.** Use `Lazy: true` so the registering container
-  doesn't build one at startup.
+- **Register per-request services as `scoped`.** Each request scope builds its own, and resolving
+  one outside a scope throws `IoCScopeRequiredError`.
 - **Register services that use them as `transient`** (or `scoped`), so they're built inside the
   request's scope.
+- **Running tenants too?** Declare levels (`new IoCContainer({ Levels: ['tenant', 'request'] })`)
+  and see the [multi-tenant runtime](../patterns/multi-tenant-runtime.md) pattern.
 
 ## With `Deno.serve`
 
 ```ts
 import { IoCContainer, IoCToken } from '@fathym/ioc';
 
-const $Request = IoCToken<Request>('Request');
+const $Request = IoCToken<Request, 'Request'>('Request');
 
 class CurrentUser {
   constructor(public name: string) {}
@@ -47,14 +49,19 @@ class GreetingHandler {
   }
 }
 
-const ioc = new IoCContainer();
+const ioc = new IoCContainer()
+  .Expect($Request) // each request scope registers it
+  .RegisterFactory(
+    CurrentUser,
+    (_c, req) => new CurrentUser(req.headers.get('x-user') ?? 'guest'),
+    {
+      Deps: [$Request],
+      Lifetime: 'scoped',
+    },
+  )
+  .RegisterClass(GreetingHandler, { Deps: [CurrentUser], Lifetime: 'transient' });
 
-ioc.RegisterFactory(CurrentUser, async (c) => {
-  const req = await c.Resolve($Request);
-  return new CurrentUser(req.headers.get('x-user') ?? 'guest');
-}, { Lifetime: 'scoped', Lazy: true });
-
-ioc.RegisterClass(GreetingHandler, { Deps: [CurrentUser], Lifetime: 'transient' });
+ioc.Validate(); // passes: $Request is expected, and nothing request-scoped is captured
 
 const server = Deno.serve({ port: 0, onListen() {} }, async (req) => {
   await using scope = ioc.CreateScope();
@@ -79,7 +86,7 @@ request and a "next" function. Create the scope there and attach it to the reque
 ```ts
 import { IoCContainer, IoCToken } from '@fathym/ioc';
 
-const $Request = IoCToken<Request>('Request');
+const $Request = IoCToken<Request, 'Request'>('Request');
 
 /** The shape most frameworks' middleware share: a request, a context, and `next()`. */
 type Ctx = { scope?: IoCContainer };
@@ -120,8 +127,8 @@ In your framework:
 ## Pitfalls
 
 - **A singleton never sees a request's services.** It is built from the registering container.
-  Make anything that needs request data `scoped` or `transient`. `Validate()` flags singletons
-  that declare scoped dependencies.
+  Make anything that needs request data `scoped` or `transient`. `Validate()` reports a singleton
+  that declares a scoped dependency as `captive`.
 - **Don't keep the scope after the request.** It is disposed when the middleware finishes.
 
 ## What's Next
