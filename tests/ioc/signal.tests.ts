@@ -163,6 +163,151 @@ Deno.test('Signal - what aborts a build', async (t) => {
   });
 });
 
+Deno.test('Signal - work nested under an abandoned build', async (t) => {
+  const $Inner = IoCToken<string, 'Inner'>('Inner');
+
+  const runsUntilAborted = (seen: { signal?: IoCAbortSignal }) => async (c: IoCContainer) => {
+    seen.signal = c.Signal;
+
+    await aborted(seen.signal);
+
+    return 'late';
+  };
+
+  await t.step('a transient a timed-out startup build was waiting on', async () => {
+    const seen: { signal?: IoCAbortSignal } = {};
+
+    const ioc = new IoCContainer({ PendingTimeoutMs: 30 })
+      .RegisterFactory($Inner, runsUntilAborted(seen), { Lifetime: 'transient' })
+      .RegisterFactory($Slow, async (c) => await c.Resolve($Inner));
+
+    await assertRejects(() => ioc.Start());
+
+    assert(seen.signal?.aborted);
+
+    await ioc.Dispose();
+  });
+
+  await t.step("a decorated singleton's inner build", async () => {
+    const seen: { signal?: IoCAbortSignal } = {};
+
+    const ioc = new IoCContainer({ PendingTimeoutMs: 20 }).RegisterFactory(
+      $Slow,
+      runsUntilAborted(seen),
+    );
+
+    ioc.Decorate($Slow, (inner) => inner);
+
+    await assertRejects(() => ioc.Activate(), IoCActivationError);
+
+    assert(seen.signal?.aborted);
+  });
+
+  await t.step('a transient still running when the container is disposed', async () => {
+    const seen: { signal?: IoCAbortSignal } = {};
+
+    const ioc = new IoCContainer().RegisterFactory($Inner, runsUntilAborted(seen), {
+      Lifetime: 'transient',
+    });
+
+    const pending = ioc.Resolve($Inner);
+
+    await delay(0);
+    await ioc.Dispose();
+
+    assertInstanceOf(seen.signal?.reason, IoCContainerDisposedError);
+    assertEquals(await pending, 'late');
+  });
+
+  await t.step("a transient's own Resolve() timing out (it serves only that caller)", async () => {
+    const seen: { signal?: IoCAbortSignal } = {};
+
+    const ioc = new IoCContainer({ PendingTimeoutMs: 20 }).RegisterFactory(
+      $Inner,
+      runsUntilAborted(seen),
+      { Lifetime: 'transient' },
+    );
+
+    await assertRejects(() => ioc.Resolve($Inner), IoCResolveTimeoutError);
+
+    assertInstanceOf(seen.signal?.reason, IoCResolveTimeoutError);
+  });
+
+  await t.step('a child scope still starting when its parent is disposed', async () => {
+    const seen: { signal?: IoCAbortSignal } = {};
+
+    const ioc = new IoCContainer();
+
+    await ioc.Start();
+
+    const scope = ioc.CreateScope().Use({
+      Name: 'LatePlugin',
+      Register: () => {},
+      OnStart: async (c) => void await runsUntilAborted(seen)(c),
+    });
+
+    const starting = scope.Start().catch((err) => err);
+
+    await delay(5);
+
+    const begin = performance.now();
+
+    await ioc.Dispose();
+
+    assert(performance.now() - begin < 1000);
+    assertInstanceOf(seen.signal?.reason, IoCContainerDisposedError);
+
+    await starting;
+  });
+
+  await t.step('one startup singleton failing aborts the others being built', async () => {
+    const seen: { signal?: IoCAbortSignal } = {};
+
+    const $Broken = IoCToken<string, 'Broken'>('Broken');
+
+    const ioc = new IoCContainer()
+      .RegisterFactory($Slow, runsUntilAborted(seen))
+      .RegisterFactory($Broken, () => Promise.reject(new Error('bad config')));
+
+    const begin = performance.now();
+
+    const err = await assertRejects(() => ioc.Start(), IoCActivationError);
+
+    assert(performance.now() - begin < 1000);
+    assert(seen.signal?.aborted);
+    assertEquals(err.Services, ['Broken'], 'the aborted build is not reported as a failure');
+  });
+
+  await t.step('disposing a scope leaves the parent singleton it started alone', async () => {
+    const seen: { signal?: IoCAbortSignal } = {};
+
+    let release!: () => void;
+
+    const ioc = new IoCContainer().RegisterFactory($Slow, async (c) => {
+      seen.signal = c.Signal;
+
+      await new Promise<void>((r) => release = r);
+
+      return 'done';
+    });
+
+    const scope = ioc.CreateScope().RegisterValue($Inner, 'owned');
+
+    const pending = scope.Resolve($Slow);
+
+    await delay(0);
+    await scope.Dispose();
+
+    assertEquals(seen.signal?.aborted, false);
+
+    release();
+
+    assertEquals(await pending, 'done');
+
+    await ioc.Dispose();
+  });
+});
+
 Deno.test('Signal - module hooks', async (t) => {
   await t.step('an OnStart timeout aborts its signal', async () => {
     let signal: IoCAbortSignal | undefined;

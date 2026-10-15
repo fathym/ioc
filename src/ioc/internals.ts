@@ -33,11 +33,35 @@ export function createAborter(): IoCAborter | undefined {
 }
 
 /**
+ * The abort controller of the build `frame` runs, created on first use. A build that isn't
+ * `shared` (a transient, a decorator's inner build) is also aborted when the build that asked for
+ * it is, so cancelling a build reaches the work it started.
+ */
+export function frameAborter(frame: IoCResolveFrame): IoCAborter | undefined {
+  if (frame.aborter) return frame.aborter;
+
+  const aborter = frame.aborter = createAborter();
+
+  const parent = frame.parent;
+
+  if (aborter && parent && !frame.shared && !parent.inferred) {
+    const upstream = frameAborter(parent)?.signal as
+      | { aborted: boolean; reason: unknown; addEventListener(t: 'abort', f: () => void): void }
+      | undefined;
+
+    if (upstream?.aborted) aborter.abort(upstream.reason);
+    else upstream?.addEventListener('abort', () => aborter.abort(upstream.reason));
+  }
+
+  return aborter;
+}
+
+/**
  * Aborts the signal of the build `frame` runs, creating it if the factory hasn't read it yet, so
  * a factory that reads `Signal` later still sees the abort.
  */
 export function abortFrame(frame: IoCResolveFrame | undefined, reason: unknown): void {
-  if (frame) (frame.aborter ??= createAborter())?.abort(reason);
+  if (frame) frameAborter(frame)?.abort(reason);
 }
 
 /** A registration key: a token created by `IoCToken`, or a class. */
@@ -105,6 +129,8 @@ export interface IoCResolveFrame {
   inferred?: boolean;
   /** Created when the factory asks for its `Signal`; aborted when the container gives up. */
   aborter?: IoCAborter;
+  /** A registered singleton or scoped build, which other callers may share (not aborted with its parent). */
+  shared?: boolean;
   /** The registration whose factory this frame runs. */
   reg?: IoCRegistration;
 }
@@ -121,6 +147,8 @@ export interface IoCRegistration {
   readonly owner: object;
   /** The module whose `Register` made it, if any (else the application owns it). */
   readonly module?: { readonly Name: string };
+  /** The module whose code the factory is (a decorator's is whoever decorated), if any. */
+  readonly actor?: { readonly Name: string };
   readonly holder?: IoCHolder;
   readonly label: string;
   /** Declared constructor dependencies (`RegisterClass(…, { Deps })`), used by `Validate()`. */
@@ -132,10 +160,10 @@ export interface IoCRegistration {
   /** A framework default (`Default: true`): it yields to any other registration of its key. */
   readonly default?: boolean;
   /**
-   * What the factory actually resolved while building (key label to dependency), for factories
-   * that don't declare `Deps`. Read by `Describe()`.
+   * What the factory actually resolved while building (key to names), for factories that don't
+   * declare `Deps`. Read by `Describe()`.
    */
-  readonly observed?: Map<string, IoCDependencyRecord>;
+  readonly observed?: Map<IoCKey, Set<string>>;
   /** For scoped registrations: the scope level the instance lives in (`ScopeLevel`). */
   readonly scopeLevel?: string;
   /**

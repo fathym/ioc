@@ -39,7 +39,8 @@ already strict, lazy and protected against hangs.
     transients;
   - `arguments`: a class whose constructor needs parameters but has no `Deps`;
   - `undeclared`: a module using another module's service, or one the application registers,
-    without `Requires` or `Needs` (in its `Deps`, or in what its factories resolved).
+    without `Requires` or `Needs` (in its `Deps`; what a factory resolves in its body is
+    reported as it runs, as an `IOC_UNDECLARED_DEPENDENCY` warning).
 - **Declare dependencies** (`Deps` on classes and factories, `IoCLazy`, `IoCAll`) rather than
   resolving inside factories, so `Validate()` and `Describe()` can see the graph.
 - **`Start()`** validates, builds every singleton and starts the modules, so a broken service

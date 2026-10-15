@@ -169,8 +169,9 @@ console.log(await (await ioc.Resolve($Remote)).json()); // { ok: true }
 await ioc.Dispose();
 ```
 
-A `Resolve` that times out doesn't abort the build, since other callers may still be waiting for
-it; the signal is about the container abandoning the work, not one caller.
+A `Resolve` that times out doesn't abort a shared build (a singleton or scoped instance), since
+other callers may still be waiting for it; it does abort a transient build, which only that caller
+was waiting for.
 
 ## Recipe 5: fail fast at startup
 

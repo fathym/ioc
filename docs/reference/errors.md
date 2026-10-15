@@ -215,17 +215,20 @@ may provide it).
 The same check covers services the application registers:
 
 ```text
-Server (module 'Http') depends on Config, which the application registers, but 'Http' doesn't list it in its Needs.
+Server (module 'Http') depends on Config, which the application provides, but 'Http' doesn't list it in its Needs.
 ```
 
 A module that works only when the application happens to register `Y` should say so: add `Y` to
 its `Needs`, so a typed container and `Validate()` can tell the application what to provide.
 
-The check reads declared `Deps` and, for factories without `Deps`, what they actually resolved
-(after `Activate()` or `Start()` has run them). A module still provides a key the application
-replaced (a module's `Default: true` registration the application overrode). For an
-[encapsulated](#module--is-encapsulated-and-cant-resolve-) module only its direct `Requires`
-count, and the message says `neither requires 'B' directly`.
+The check reads declared `Deps` only, so it gives the same answer however much has already run.
+What a factory without `Deps` resolves is reported as it runs instead, as an
+[`IOC_UNDECLARED_DEPENDENCY` warning](#warnings). A module still provides a key the application
+replaced (a module's `Default: true` registration the application overrode). A key declared with
+`Expect()` is the application's to provide, so a module using it lists it in `Needs` too. Collecting
+every name of a key (`IoCAll`) is how extension points work, so it counts only for encapsulated
+modules. For an [encapsulated](#module--is-encapsulated-and-cant-resolve-) module only its direct
+`Requires` count, and the message says `neither requires 'B' directly`.
 
 ```ts
 import { IoCContainer, type IoCModule, IoCToken } from '@fathym/ioc';
@@ -465,9 +468,14 @@ the details.
 **Fix:** if the module should have it, add the key to its `Needs` (the application then provides
 it, or a module the application adds), or add the module that registers it to its `Requires`. If
 it shouldn't, the module is reaching for something that isn't its business: pass it what it needs
-through a service it may resolve. `Validate()` reports the same dependency ahead of time, as
+through a service it may resolve. `Validate()` reports a declared dependency that breaks this
+ahead of time, as
 [`undeclared`](#undeclared-x-module-a-depends-on-y-from-module-b-but-a-neither-requires-b-nor-lists-y-in-its-needs),
-for declared `Deps` and for what factories resolved once they have run.
+for declared `Deps`; what a factory resolves in its body is only known when it runs.
+
+`[key, name]` in `Needs` covers that name only; a bare key covers every name. Resolving every name
+of a key (`ResolveAll`, `ResolveNamed`, `Names`, `IoCAll`) needs a bare key, and the message then
+names the key with `(every name)`.
 
 ```ts
 import { IoCContainer, IoCToken } from '@fathym/ioc';
@@ -774,13 +782,14 @@ Some problems can't be thrown to anyone, or aren't errors. The container reports
 `OnEvent` option as `{ Type: 'warning', Code, Message, Service? }` (see
 [OnEvent and IoCEvent](./api.md#onevent-and-iocevent)). Match on `Code`.
 
-| `Code`                    | Message                                                                                                                                                                        | What to do                                                                                                                                                                                           |
-| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `IOC_MODULE_OVERRIDDEN`   | `The application replaced Url, registered by module 'Core'.` (or `decorated`, `unregistered`)                                                                                  | Nothing, if the override is intended: the application may change any module's registration. The warning keeps overrides of non-default registrations visible in logs (replacing a default is silent) |
-| `IOC_DEFAULT_REPLACED`    | `Module 'Plugin' replaced the default Url, registered by module 'Framework'.` (or `decorated`, `unregistered`; without the `registered by` part for the application's default) | Nothing, if intended: defaults exist to be replaced. If two modules replace the same default, decide which one wins and remove the other's registration                                              |
-| `IOC_MODULE_DUPLICATE`    | `Two different modules are named 'Metrics'; both were added.`                                                                                                                  | Give each module a unique `Name`; errors, `Describe()` and events tell modules apart by name                                                                                                         |
-| `IOC_ROLLBACK_FAILED`     | `Cleaning up after a failed Start() failed: …`                                                                                                                                 | Look at the disposer or `OnStop` that threw; the `Start()` error itself is thrown as usual                                                                                                           |
-| `IOC_LATE_DISPOSE_FAILED` | `An instance that finished building after Dispose() failed to dispose: …`, or `Pool, built after a failed Start() gave up on it, failed to dispose: …`                         | A build outlived its container (or a failed `Start()`), and its disposer threw. Fix the disposer; look for builds that hang (they also show up as timeouts)                                          |
+| `Code`                      | Message                                                                                                                                                                                                                | What to do                                                                                                                                                                                                                         |
+| --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `IOC_MODULE_OVERRIDDEN`     | `The application replaced Url, registered by module 'Core'.` (or `decorated`, `unregistered`)                                                                                                                          | Nothing, if the override is intended: the application may change any module's registration. The warning keeps overrides of non-default registrations visible in logs (replacing a default is silent)                               |
+| `IOC_DEFAULT_REPLACED`      | `Module 'Plugin' replaced the default Url, registered by module 'Framework'.` (or `decorated`, `unregistered`; without the `registered by` part for the application's default)                                         | Nothing, if intended: defaults exist to be replaced. If two modules replace the same default, decide which one wins and remove the other's registration                                                                            |
+| `IOC_MODULE_DUPLICATE`      | `Two different modules are named 'Metrics'; both were added.`                                                                                                                                                          | Give each module a unique `Name`; errors, `Describe()` and events tell modules apart by name                                                                                                                                       |
+| `IOC_ROLLBACK_FAILED`       | `Cleaning up after a failed Start() failed: …`                                                                                                                                                                         | Look at the disposer or `OnStop` that threw; the `Start()` error itself is thrown as usual                                                                                                                                         |
+| `IOC_UNDECLARED_DEPENDENCY` | `Repo (module 'Repos') resolved Db from module 'Data', but 'Repos' neither requires 'Data' nor lists Db in its Needs.`, or `… resolved Url, which the application provides, but 'Repos' doesn't list it in its Needs.` | A module's factory without `Deps` used something its module didn't declare; it works only because of what happens to be registered. Add the module to `Requires`, or the key to `Needs` (reported once per service and dependency) |
+| `IOC_LATE_DISPOSE_FAILED`   | `An instance that finished building after Dispose() failed to dispose: …`, or `Pool, built after a failed Start() gave up on it, failed to dispose: …`                                                                 | A build outlived its container (or a failed `Start()`), and its disposer threw. Fix the disposer; look for builds that hang (they also show up as timeouts)                                                                        |
 
 ## What's Next
 

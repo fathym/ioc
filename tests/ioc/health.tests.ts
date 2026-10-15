@@ -184,6 +184,57 @@ Deno.test('Health - running the checks', async (t) => {
     await ioc.Dispose();
   });
 
+  await t.step('Dispose() aborts the checks still running', async () => {
+    let signal: IoCAbortSignal | undefined;
+
+    const ioc = new IoCContainer().Use({
+      Name: 'Hangs',
+      Register: () => {},
+      Health: (c) => {
+        signal = c.Signal;
+
+        return new Promise((resolve) => signal?.addEventListener('abort', () => resolve(false)));
+      },
+    });
+
+    await ioc.Start();
+
+    const report = ioc.Health();
+
+    await Promise.resolve();
+    await ioc.Dispose();
+
+    assert(signal?.aborted);
+    assertEquals((await report).Healthy, false);
+  });
+
+  await t.step("started scopes' modules (late plugins) are checked too", async () => {
+    const ioc = new IoCContainer().Use({ Name: 'Host', Register: () => {}, Health: () => true });
+
+    await ioc.Start();
+
+    const plugins = ioc.CreateScope().Use({
+      Name: 'Plugin',
+      Register: () => {},
+      Health: () => false,
+    });
+
+    // Not started yet: not part of the application's health.
+    assertEquals((await ioc.Health()).Healthy, true);
+
+    await plugins.Start();
+
+    const report = await ioc.Health();
+
+    assertEquals(report.Healthy, false);
+    assertEquals(report.Modules.map((m) => [m.Module, m.Healthy]), [['Host', true], [
+      'Plugin',
+      false,
+    ]]);
+
+    await ioc.Dispose();
+  });
+
   await t.step('each result is reported to OnEvent', async () => {
     const events: IoCEvent[] = [];
 

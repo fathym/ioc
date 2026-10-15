@@ -1,6 +1,7 @@
 import { IoCValidationError } from '../../src/ioc/errors.ts';
 import { IoCContainer } from '../../src/ioc/ioc.ts';
 import type { IoCModule } from '../../src/ioc/IoCModule.ts';
+import { IoCAll } from '../../src/ioc/IoCDeps.ts';
 import { IoCToken } from '../../src/ioc/IoCToken.ts';
 import { assert, assertEquals, assertRejects, assertThrows } from '../test.deps.ts';
 
@@ -387,7 +388,7 @@ Deno.test('Validate - undeclared module dependencies', async (t) => {
     assertEquals(new IoCContainer().Use(Data, Repos).Validate({ Throw: false }), []);
   });
 
-  await t.step('Needs is matched by name', () => {
+  await t.step('a [key, name] need covers that name; a bare key, every name', () => {
     const Replica: IoCModule = {
       Name: 'ValReplica',
       Register: (ioc) => {
@@ -397,7 +398,7 @@ Deno.test('Validate - undeclared module dependencies', async (t) => {
 
     const Repos: IoCModule = {
       Name: 'ValReposNamed',
-      Needs: [$Db],
+      Needs: [[$Db, 'primary']],
       Register: (ioc) => {
         ioc.RegisterClass(Repo, { Deps: [[$Db, 'replica']] });
       },
@@ -408,9 +409,13 @@ Deno.test('Validate - undeclared module dependencies', async (t) => {
       ['Repo'],
     );
 
-    const Fixed: IoCModule = { ...Repos, Name: 'ValReposNamedFixed', Needs: [[$Db, 'replica']] };
+    const Exact: IoCModule = { ...Repos, Name: 'ValReposExact', Needs: [[$Db, 'replica']] };
 
-    assertEquals(new IoCContainer().Use(Replica, Fixed).Validate({ Throw: false }), []);
+    assertEquals(new IoCContainer().Use(Replica, Exact).Validate({ Throw: false }), []);
+
+    const Bare: IoCModule = { ...Repos, Name: 'ValReposBare', Needs: [$Db] };
+
+    assertEquals(new IoCContainer().Use(Replica, Bare).Validate({ Throw: false }), []);
   });
 
   await t.step('depending on what the application registers needs Needs too', () => {
@@ -428,7 +433,7 @@ Deno.test('Validate - undeclared module dependencies', async (t) => {
     assertEquals(issues.map((i) => i.Kind), ['undeclared']);
     assertEquals(
       issues[0].Message,
-      "Repo (module 'ValReposApp') depends on ValDb, which the application registers, but " +
+      "Repo (module 'ValReposApp') depends on ValDb, which the application provides, but " +
         "'ValReposApp' doesn't list it in its Needs.",
     );
 
@@ -442,22 +447,133 @@ Deno.test('Validate - undeclared module dependencies', async (t) => {
     );
   });
 
-  await t.step('what a factory resolved counts too, once it has run', async () => {
-    const Repos: IoCModule = {
-      Name: 'ValReposObserved',
-      Register: (ioc) => {
-        ioc.RegisterFactory(Repo, async (c) => new Repo(await c.Resolve($Db)));
+  await t.step(
+    'what a factory resolves is reported as it happens, never by Validate()',
+    async () => {
+      const Repos: IoCModule = {
+        Name: 'ValReposObserved',
+        Register: (ioc) => {
+          ioc.RegisterFactory(Repo, async (c) => new Repo(await c.Resolve($Db)), {
+            Lifetime: 'transient',
+          });
+        },
+      };
+
+      const warnings: string[] = [];
+
+      const ioc = new IoCContainer({
+        OnEvent: (e) => {
+          if (e.Type === 'warning' && e.Code === 'IOC_UNDECLARED_DEPENDENCY') {
+            warnings.push(e.Message);
+          }
+        },
+      }).RegisterValue($Db, { url: 'kv://app' }).Use(Repos);
+
+      assertEquals(ioc.Validate({ Throw: false }), []);
+
+      await ioc.Resolve(Repo);
+      await ioc.Resolve(Repo);
+
+      // Validate() gives the same answer whatever has run, so a retried Start() can't fail on it.
+      assertEquals(ioc.Validate({ Throw: false }), []);
+
+      assertEquals(warnings, [
+        "Repo (module 'ValReposObserved') resolved ValDb, which the application provides, but " +
+        "'ValReposObserved' doesn't list it in its Needs.",
+      ]);
+    },
+  );
+
+  await t.step('two keys with one description are told apart', async () => {
+    const $Mine = IoCToken<string, 'Config'>('Config');
+    const $Theirs = IoCToken<string, 'Config'>('Config');
+
+    const warnings: string[] = [];
+
+    const ioc = new IoCContainer({
+      OnEvent: (e) => {
+        if (e.Type === 'warning' && e.Code === 'IOC_UNDECLARED_DEPENDENCY') {
+          warnings.push(e.Message);
+        }
       },
-    };
+    })
+      .RegisterValue($Mine, 'mine')
+      .RegisterValue($Theirs, 'theirs')
+      .Use({
+        Name: 'ValTwoConfigs',
+        Needs: [$Mine],
+        Register: (c) =>
+          c.RegisterFactory(Repo, async (r) => {
+            await r.Resolve($Mine);
 
-    const ioc = new IoCContainer().RegisterValue($Db, { url: 'kv://app' }).Use(Repos);
-
-    // Nothing declared, and the factory hasn't run: nothing to see yet.
-    assertEquals(ioc.Validate({ Throw: false }), []);
+            return new Repo({ url: await r.Resolve($Theirs) });
+          }),
+      });
 
     await ioc.Resolve(Repo);
 
+    assertEquals(warnings.length, 1);
+    assertEquals(ioc.Describe().Services.find((s) => s.Label === 'Repo')?.Observed, [
+      'Config',
+      'Config',
+    ]);
+  });
+
+  await t.step("an app decorator's resolves are the app's, not the module's", async () => {
+    const $Log = IoCToken<string, 'ValLog'>('ValLog');
+
+    const warnings: unknown[] = [];
+
+    const ioc = new IoCContainer({
+      OnEvent: (e) =>
+        e.Type === 'warning' && e.Code === 'IOC_UNDECLARED_DEPENDENCY' && warnings.push(e),
+    })
+      .RegisterValue($Log, 'log')
+      .Use(Data);
+
+    ioc.Decorate($Db, async (inner, c) => ({ url: `${inner.url}+${await c.Resolve($Log)}` }));
+
+    assertEquals((await ioc.Resolve($Db)).url, 'kv://local+log');
+    assertEquals(warnings, []);
+    assertEquals(ioc.Validate({ Throw: false }), []);
+  });
+
+  await t.step('IoCAll is held to declarations only for encapsulated modules', () => {
+    const Contrib: IoCModule = {
+      Name: 'ValContrib',
+      Register: (ioc) => ioc.RegisterValue($Db, { url: 'kv://a' }, { Name: 'a' }),
+    };
+
+    const Collector: IoCModule = {
+      Name: 'ValCollector',
+      Register: (ioc) =>
+        ioc.RegisterFactory(Repo, (_c, all) => new Repo(all[0]), { Deps: [IoCAll($Db)] }),
+    };
+
+    // An extension point gathering contributions: fine for a plain module...
+    assertEquals(new IoCContainer().Use(Contrib, Collector).Validate({ Throw: false }), []);
+
+    // ...an encapsulated one must declare it, as at runtime.
+    const issues = new IoCContainer({ EncapsulateModules: (m) => m.Name === 'ValCollector' })
+      .Use(Contrib, Collector)
+      .Validate({ Throw: false });
+
+    assertEquals(issues.map((i) => i.Kind), ['undeclared']);
+  });
+
+  await t.step('an Expect()ed key a module uses must be in its Needs', () => {
+    const Repos: IoCModule = {
+      Name: 'ValReposExpected',
+      Register: (ioc) => ioc.RegisterClass(Repo, { Deps: [$Db] }),
+    };
+
+    const ioc = new IoCContainer().Expect($Db).Use(Repos);
+
     assertEquals(ioc.Validate({ Throw: false }).map((i) => i.Kind), ['undeclared']);
+
+    const Declared: IoCModule = { ...Repos, Name: 'ValReposExpectedOk', Needs: [$Db] };
+
+    assertEquals(new IoCContainer().Expect($Db).Use(Declared).Validate({ Throw: false }), []);
   });
 
   await t.step('an encapsulated module must require directly what it depends on', () => {

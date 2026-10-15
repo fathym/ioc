@@ -32,6 +32,7 @@ import {
   crossesInferred,
   currentFrame,
   currentModule as activeModule,
+  frameAborter,
   framePath,
   IOC_CONTEXT,
   IOC_EXTERNAL,
@@ -67,7 +68,8 @@ export type IoCWarningCode =
   | 'IOC_MODULE_DUPLICATE'
   | 'IOC_ROLLBACK_FAILED'
   | 'IOC_DEFAULT_REPLACED'
-  | 'IOC_MODULE_OVERRIDDEN';
+  | 'IOC_MODULE_OVERRIDDEN'
+  | 'IOC_UNDECLARED_DEPENDENCY';
 
 /**
  * What the `OnEvent` option receives:
@@ -575,17 +577,30 @@ function normalizeDependency(dep: unknown): IoCDependencyRecord {
   return { key: checkKey(dep), name: DEFAULT_NAME };
 }
 
-/** Records that the factory running in `frame` resolved `key` + `name` (see `observed`). */
-function observe(frame: IoCResolveFrame | undefined, key: IoCKey, name: string): void {
+/**
+ * Records that the factory running in `frame` resolved `key` + `name` (see `observed`). Returns
+ * the registration the first time, else `undefined`.
+ */
+function observe(
+  frame: IoCResolveFrame | undefined,
+  key: IoCKey,
+  name: string,
+): IoCRegistration | undefined {
   while (frame?.inferred) frame = frame.parent;
 
-  const observed = frame && !frame.settled ? frame.reg?.observed : undefined;
+  const reg = frame && !frame.settled ? frame.reg : undefined;
 
-  if (!observed) return;
+  if (!reg?.observed) return undefined;
 
-  const label = labelFor(key, name);
+  let names = reg.observed.get(key);
 
-  if (!observed.has(label)) observed.set(label, { key, name });
+  if (!names) reg.observed.set(key, names = new Set());
+
+  if (names.has(name)) return undefined;
+
+  names.add(name);
+
+  return reg;
 }
 
 /** The labels of the pending builds `holder` is (transitively) waiting on, itself first. */
@@ -783,7 +798,7 @@ export class IoCContainer<TKeys = any> {
    *
    * @ignore
    */
-  protected readonly declarers: Map<IoCKey, Set<IoCModule>>;
+  protected readonly declarers: Map<IoCKey, Map<string, Set<IoCModule>>>;
 
   /**
    * The layers of modules that started, in start order; stopped in reverse.
@@ -807,11 +822,19 @@ export class IoCContainer<TKeys = any> {
   protected starting?: Promise<void>;
 
   /**
-   * The signals of the `OnStart` calls running now, aborted if `Dispose()` comes.
+   * The signals of the `OnStart` and `Health` calls running now, aborted if `Dispose()` comes.
    *
    * @ignore
    */
-  protected readonly startAborters: Set<IoCAborter>;
+  protected readonly hookAborters: Set<IoCAborter>;
+
+  /**
+   * The factories running in this container (builds it owns, and transients resolved through
+   * it), so `Dispose()` can tell them to stop.
+   *
+   * @ignore
+   */
+  protected readonly inflight: Set<IoCResolveFrame>;
 
   /**
    * Holders built while `Start()` runs, so a failed start can forget them.
@@ -887,7 +910,8 @@ export class IoCContainer<TKeys = any> {
     this.startedLayers = [];
     this.startMs = new Map();
     this.children = new Set();
-    this.startAborters = new Set();
+    this.hookAborters = new Set();
+    this.inflight = new Set();
     this.disposed = false;
     this.state = 'idle';
   }
@@ -906,12 +930,13 @@ export class IoCContainer<TKeys = any> {
   }
 
   /**
-   * Inside a factory (on the `ioc` it receives) or a module's `OnStart`/`OnStop`, a signal that
-   * aborts when the container gives up on that work: its `Start()`/`Activate()` (or module)
-   * timeout expired, a failed `Start()` rolled back, or the container was disposed. Pass it on to
+   * Inside a factory (on the `ioc` it receives) or a module's `OnStart`, `OnStop` or `Health`, a
+   * signal that aborts when the container gives up on that work: its `Start()`/`Activate()` (or
+   * module) timeout expired, a failed `Start()` rolled back, or the container was disposed. Work
+   * nested under it (transients, a decorator's inner build) is aborted with it. Pass it on to
    * `fetch`, database clients and long migrations so abandoned work actually stops. `undefined`
-   * elsewhere, and on runtimes without `AbortController`. A `Resolve` that times out doesn't abort
-   * the build: others may still be waiting for it.
+   * elsewhere, and on runtimes without `AbortController`. A `Resolve` that times out aborts only a
+   * transient build; a shared singleton or scoped build keeps running for its other callers.
    *
    * @example
    * ```ts
@@ -938,7 +963,7 @@ export class IoCContainer<TKeys = any> {
 
     if (!frame || frame.inferred) return undefined;
 
-    return (frame.aborter ??= createAborter())?.signal as IoCAbortSignal | undefined;
+    return frameAborter(frame)?.signal as IoCAbortSignal | undefined;
   }
 
   //#region Resolution
@@ -957,14 +982,9 @@ export class IoCContainer<TKeys = any> {
     if (!this.self().options.OnEvent) {
       const reg = this.lookup(checkKey(key), n, frame);
 
-      observe(frame, key, n);
+      this.self().checkResolved(observe(frame, key, n), key, n);
 
-      return (await this.timed(
-        reg.resolveIn(this.self(), frame),
-        reg.label,
-        reg.holder,
-        reg.timeoutMs,
-      )) as IoCServiceOf<K>;
+      return (await this.self().resolveTimed(reg, frame)) as IoCServiceOf<K>;
     }
 
     const started = now();
@@ -974,14 +994,9 @@ export class IoCContainer<TKeys = any> {
     try {
       const reg = this.lookup(key, n, frame);
 
-      observe(frame, key, n);
+      this.self().checkResolved(observe(frame, key, n), key, n);
 
-      const result = await this.timed(
-        reg.resolveIn(this.self(), frame),
-        reg.label,
-        reg.holder,
-        reg.timeoutMs,
-      );
+      const result = await this.self().resolveTimed(reg, frame);
 
       this.emit({ Type: 'resolve', Service: label, Ms: now() - started });
 
@@ -1125,7 +1140,18 @@ export class IoCContainer<TKeys = any> {
    * await ioc.Activate(); // builds Cache now; throws an IoCActivationError naming every failure
    * ```
    */
-  public async Activate(): Promise<void> {
+  public Activate(): Promise<void> {
+    return this.activateNow(false);
+  }
+
+  /**
+   * Builds every startup singleton. With `failFast` (from `Start()`, which rolls back on any
+   * failure), the first failure aborts the builds still running, through their `Signal`, and
+   * only the failures that aren't that abort are reported.
+   *
+   * @ignore
+   */
+  protected async activateNow(failFast: boolean): Promise<void> {
     const self = this.self();
 
     self.assertNotDisposed();
@@ -1134,11 +1160,17 @@ export class IoCContainer<TKeys = any> {
 
     const work: Promise<void>[] = [];
 
+    const activating: IoCRegistration[] = [];
+
+    let first: { error: unknown } | undefined;
+
     for (const bank of self.registrations.values()) {
       for (const reg of bank.values()) {
         // Transients are built per resolve, scoped services belong to the scopes that use them,
         // and on-demand singletons wait for their first resolve.
         if (reg.lifetime !== 'singleton' || reg.onDemand) continue;
+
+        activating.push(reg);
 
         work.push(
           Promise.resolve()
@@ -1154,7 +1186,20 @@ export class IoCContainer<TKeys = any> {
               )
             )
             .then(noop, (error) => {
+              // A build that gave up because it was told to (it threw the abort reason) didn't fail.
+              if (first && error === first.error) return;
+
               failures.push({ label: reg.label, error });
+
+              if (!failFast || first) return;
+
+              first = { error };
+
+              for (const other of activating) {
+                if (other !== reg && other.holder?.state === 'pending') {
+                  abortFrame(other.holder.building, error);
+                }
+              }
             }),
         );
       }
@@ -1181,12 +1226,13 @@ export class IoCContainer<TKeys = any> {
    *   would capture forever;
    * - `arguments`: a class registered without `Deps` whose constructor takes parameters (it would
    *   be constructed with `undefined` arguments);
-   * - `undeclared`: a module's service depending on a service from another module that the
-   *   module neither `Requires` nor lists in `Needs`.
+   * - `undeclared`: a module's service depending on a service from another module, or from the
+   *   application, that the module neither `Requires` nor lists in `Needs`.
    *
-   * Keys declared with {@link IoCContainer.Expect} count as provided. Factories without `Deps` are
-   * opaque, so what they resolve is not checked; `Activate()` covers those by building
-   * everything. Pass `{ Throw: false }` to get the issues back instead of an error.
+   * Keys declared with {@link IoCContainer.Expect} count as provided. Only declared `Deps` are
+   * read, so the result never depends on what has already run: what factories without `Deps`
+   * resolve is reported as they run (an `IOC_UNDECLARED_DEPENDENCY` warning), and `Activate()`
+   * builds everything. Pass `{ Throw: false }` to get the issues back instead of an error.
    *
    * @example
    * ```ts
@@ -1301,28 +1347,38 @@ export class IoCContainer<TKeys = any> {
         visit(reg, []);
       }
 
-      // Undeclared module dependencies: a module may lean only on what it declares. Checked for
-      // declared Deps and for what its factories actually resolved (once they have run).
+      // Undeclared module dependencies: a module may lean only on what it declares. Checked on
+      // declared Deps only, so the result never depends on what has run; what factories resolve
+      // is reported as it happens (IOC_UNDECLARED_DEPENDENCY), and enforced for encapsulated
+      // modules.
       if (reg.module) {
         const module = reg.module as IoCModule;
 
         // An encapsulated module sees only the modules it requires directly, as at runtime.
         const direct = this.isEncapsulated(module);
 
-        const seen = new Set<string>();
+        for (const dep of reg.deps ?? []) {
+          // IoCAll takes every name of the key; anything else, one name.
+          const name = dep.mode === 'all' ? undefined : dep.name;
 
-        for (const dep of [...reg.deps ?? [], ...reg.observed?.values() ?? []]) {
-          const target = resolveDep(dep);
+          // Collecting every contribution to a key is how extension points work (a host
+          // gathering its plugins' routes), so only an encapsulated module is held to it.
+          if (name === undefined && !direct) continue;
 
-          const label = dependencyLabel(dep);
+          // Nothing anywhere provides it: that is `missing`, reported above (an expected key is
+          // the application's to provide, per scope).
+          const known = name === undefined
+            ? this.namesOf(dep.key).length > 0
+            : !!resolveDep(dep) || this.providersOf(dep.key, name).length > 0;
 
-          if (!target || seen.has(label)) continue;
+          if (!known && !this.isExpected(dep.key, dep.name)) continue;
 
-          seen.add(label);
+          if (this.mayUse(module, dep.key, name, direct)) continue;
 
-          if (listsNeed(module, dep) || this.providesTo(module, target.key, direct)) continue;
+          const label = name === undefined ? labelFor(dep.key, DEFAULT_NAME) : dependencyLabel(dep);
 
-          const from = (target.module ?? this.declaredBy(target.key)[0]) as IoCModule | undefined;
+          const from = (name === undefined ? this.namesOf(dep.key) : [dep.name])
+            .flatMap((n) => this.providersOf(dep.key, n))[0];
 
           issue(
             'undeclared',
@@ -1332,7 +1388,7 @@ export class IoCContainer<TKeys = any> {
                 `'${from.Name}', but '${module.Name}' neither requires '${from.Name}'` +
                 `${direct ? ' directly' : ''} nor lists ${label} in its Needs.`
               : `${reg.label} (module '${module.Name}') depends on ${label}, which the ` +
-                `application registers, but '${module.Name}' doesn't list it in its Needs.`,
+                `application provides, but '${module.Name}' doesn't list it in its Needs.`,
           );
         }
       }
@@ -1680,8 +1736,10 @@ export class IoCContainer<TKeys = any> {
       deps: original.deps,
       options: { Replace: true },
       sealChecked: true,
-      // Decorating doesn't change who owns the service, or whether it is a default.
+      // Decorating doesn't change who owns the service, or whether it is a default; the
+      // decorator itself runs as whoever decorated.
       owner: { module: original.module as IoCModule | undefined, default: original.default },
+      actor: this.currentModule(),
     });
 
     return () => {
@@ -1920,7 +1978,7 @@ export class IoCContainer<TKeys = any> {
 
   /**
    * Checks that the application is ready for work, for readiness and liveness probes: runs every
-   * started module's `Health` hook concurrently, each bounded by `TimeoutMs` (its `ioc.Signal`
+   * started module's `Health` hook (started scopes' modules included) concurrently, each bounded by `TimeoutMs` (its `ioc.Signal`
    * aborts when that expires). `Healthy` is true when the container has started and every check
    * passed; a check fails by throwing or returning `false`, which the report records rather than
    * throws.
@@ -1962,12 +2020,27 @@ export class IoCContainer<TKeys = any> {
 
     if (self.state !== 'started') return { Healthy: false, State: self.state, Modules: [] };
 
-    const checked = self.startedLayers.flat().filter((module) => module.Health);
+    // This container's started modules, then those of its started scopes (late plugins).
+    const checked: [IoCContainer, IoCModule][] = [];
 
-    const modules = await Promise.all(checked.map(async (module): Promise<IoCModuleHealth> => {
+    const collect = (container: IoCContainer) => {
+      for (const module of container.startedLayers.flat()) {
+        if (module.Health) checked.push([container, module]);
+      }
+
+      for (const scope of container.children) {
+        if (scope.self().state === 'started') collect(scope.self());
+      }
+    };
+
+    collect(self);
+
+    const modules = await Promise.all(checked.map(async ([owner, module]) => {
       const begin = now();
 
       const aborter = createAborter();
+
+      if (aborter) owner.hookAborters.add(aborter);
 
       let result: IoCModuleHealth;
 
@@ -1975,7 +2048,7 @@ export class IoCContainer<TKeys = any> {
         const value = await self.timed(
           Promise.resolve().then(() =>
             module.Health!(
-              new IoCModuleView(self, module, undefined, aborter) as unknown as IoCContainer,
+              new IoCModuleView(owner, module, undefined, aborter) as unknown as IoCContainer,
             )
           ),
           `Module '${module.Name}' Health`,
@@ -1988,6 +2061,8 @@ export class IoCContainer<TKeys = any> {
         result = { Module: module.Name, Healthy: value !== false, Ms: now() - begin };
       } catch (err) {
         result = { Module: module.Name, Healthy: false, Ms: now() - begin, Error: err };
+      } finally {
+        if (aborter) owner.hookAborters.delete(aborter);
       }
 
       self.emit({ Type: 'health', ...result });
@@ -2045,7 +2120,9 @@ export class IoCContainer<TKeys = any> {
             Depth: depth,
             Shadowed: visible.has(id),
             Deps: (reg.deps ?? []).map((d) => `${d.mode ? `${d.mode}:` : ''}${dependencyLabel(d)}`),
-            Observed: [...reg.observed?.keys() ?? []],
+            Observed: [...reg.observed ?? []].flatMap(([k, names]) =>
+              [...names].map((n) => labelFor(k, n))
+            ),
             State: reg.lifetime !== 'transient' ? holder?.state ?? 'empty' : undefined,
             BuildMs: holder?.state === 'ready' ? holder.buildMs : undefined,
           });
@@ -2371,7 +2448,7 @@ export class IoCContainer<TKeys = any> {
 
       if (options?.Validate !== false) this.Validate();
 
-      await this.Activate();
+      await this.activateNow(true);
 
       for (const layer of this.layers()) {
         if (this.disposing) throw new IoCContainerDisposedError();
@@ -2390,7 +2467,7 @@ export class IoCContainer<TKeys = any> {
           const aborter = createAborter();
 
           if (aborter) {
-            this.startAborters.add(aborter);
+            this.hookAborters.add(aborter);
 
             siblings.push(aborter);
           }
@@ -2421,7 +2498,7 @@ export class IoCContainer<TKeys = any> {
 
             this.emit({ Type: 'start', Module: module.Name, Ms: now() - begin, Error: err });
           } finally {
-            if (aborter) this.startAborters.delete(aborter);
+            if (aborter) this.hookAborters.delete(aborter);
           }
         }));
 
@@ -2624,6 +2701,20 @@ export class IoCContainer<TKeys = any> {
   }
 
   /**
+   * Tells everything still running in this container and its live scopes (builds, transients,
+   * `OnStart` and `Health` calls) to stop, through their `Signal`: it is being disposed.
+   *
+   * @ignore
+   */
+  protected abortPending(reason: unknown): void {
+    for (const aborter of this.hookAborters) aborter.abort(reason);
+
+    for (const frame of this.inflight) abortFrame(frame, reason);
+
+    for (const scope of this.children) scope.self().abortPending(reason);
+  }
+
+  /**
    * Waits for a running `Start()`, stops the modules, disposes the live child scopes, then the
    * owned instances.
    *
@@ -2639,21 +2730,7 @@ export class IoCContainer<TKeys = any> {
     // their Signal.
     const disposedError = new IoCContainerDisposedError();
 
-    const abortPending = () => {
-      for (const aborter of self.startAborters) aborter.abort(disposedError);
-
-      for (const bank of self.registrations.values()) {
-        for (const reg of bank.values()) {
-          if (reg.holder?.state === 'pending') abortFrame(reg.holder.building, disposedError);
-        }
-      }
-
-      for (const holder of self.scopedHolders.values()) {
-        if (holder.state === 'pending') abortFrame(holder.building, disposedError);
-      }
-    };
-
-    abortPending();
+    self.abortPending(disposedError);
 
     await self.starting?.catch(noop);
 
@@ -2673,7 +2750,7 @@ export class IoCContainer<TKeys = any> {
     self.state = 'disposed';
 
     // Builds started since (by OnStop, say) won't be used either.
-    abortPending();
+    self.abortPending(disposedError);
 
     for (const { value, label } of self.owned.splice(0).reverse()) {
       try {
@@ -2740,43 +2817,121 @@ export class IoCContainer<TKeys = any> {
   }
 
   /**
-   * The modules that registered `key` here or in a parent (see `declarers`).
+   * The modules that registered `key` + `name` here or in a parent (see `declarers`), and the
+   * modules of the registrations in place.
    *
    * @ignore
    */
-  protected declaredBy(key: IoCKey): IoCModule[] {
-    const modules: IoCModule[] = [];
+  protected providersOf(key: IoCKey, name: string): IoCModule[] {
+    const modules = new Set<IoCModule>();
 
     for (const container of this.chain()) {
-      for (const module of container.declarers.get(key) ?? []) modules.push(module);
+      const reg = container.registrations.get(key)?.get(name);
+
+      if (reg?.module) modules.add(reg.module as IoCModule);
+
+      for (const module of container.declarers.get(key)?.get(name) ?? []) modules.add(module);
     }
 
-    return modules;
+    return [...modules];
   }
 
   /**
-   * True when `module` registers `key`, or a module it requires (directly, when `direct`) does.
+   * Every name `key` is registered (or was declared by a module) under, here or in a parent.
    *
    * @ignore
    */
-  protected providesTo(module: IoCModule, key: IoCKey, direct: boolean): boolean {
-    const owners = new Set(this.declaredBy(key));
+  protected namesOf(key: IoCKey): string[] {
+    const names = new Set<string>();
 
     for (const container of this.chain()) {
-      for (const reg of container.registrations.get(key)?.values() ?? []) {
-        if (reg.module) owners.add(reg.module as IoCModule);
-      }
+      for (const name of container.registrations.get(key)?.keys() ?? []) names.add(name);
+      for (const name of container.declarers.get(key)?.keys() ?? []) names.add(name);
     }
 
-    for (const owner of owners) {
-      if (owner === module) return true;
+    return [...names];
+  }
 
-      if (direct ? (module.Requires ?? []).includes(owner) : requiresModule(module, owner)) {
-        return true;
-      }
-    }
+  /**
+   * True when `module` may lean on `key` (every name of it, when `name` is `undefined`): it lists
+   * it in `Needs` (a bare key covers every name; `[key, name]` that name), or it, or a module it
+   * requires (directly, when `direct`), registers it.
+   *
+   * @ignore
+   */
+  protected mayUse(
+    module: IoCModule,
+    key: IoCKey,
+    name: string | undefined,
+    direct: boolean,
+  ): boolean {
+    if (needsCover(module, key, name)) return true;
 
-    return false;
+    const provides = (n: string) =>
+      this.providersOf(key, n).some((owner) =>
+        owner === module ||
+        (direct ? (module.Requires ?? []).includes(owner) : requiresModule(module, owner))
+      );
+
+    if (name !== undefined) return provides(name);
+
+    const names = this.namesOf(key);
+
+    return names.length > 0 && names.every(provides);
+  }
+
+  /**
+   * Resolves `reg` within its timeout. A shared build (a singleton or scoped instance) keeps
+   * running when one caller gives up, since others may be waiting for it; a transient build
+   * serves only this caller, so it is told to stop, through its `Signal`.
+   *
+   * @ignore
+   */
+  protected resolveTimed(reg: IoCRegistration, frame: IoCResolveFrame | undefined): unknown {
+    const before = reg.holder ? undefined : new Set(this.inflight);
+
+    const value = reg.resolveIn(this, frame);
+
+    const mine = before && [...this.inflight].filter((f) => f.reg === reg && !before.has(f));
+
+    return this.timed(
+      value,
+      reg.label,
+      reg.holder,
+      reg.timeoutMs,
+      undefined,
+      mine?.length ? (err) => mine.forEach((f) => abortFrame(f, err)) : undefined,
+    );
+  }
+
+  /**
+   * Reports, once, a module's factory resolving something its module didn't declare. Encapsulated
+   * modules are stopped by their view instead; for the others this is the runtime half of
+   * `Validate()`'s `undeclared` check, which reads only declared `Deps`.
+   *
+   * @ignore
+   */
+  protected checkResolved(reg: IoCRegistration | undefined, key: IoCKey, name: string): void {
+    const module = reg?.actor as IoCModule | undefined;
+
+    if (!reg || !module || !this.options.OnEvent || this.isEncapsulated(module)) return;
+
+    if (this.mayUse(module, key, name, false)) return;
+
+    const label = labelFor(key, name);
+
+    const from = this.providersOf(key, name)[0];
+
+    this.emit({
+      Type: 'warning',
+      Code: 'IOC_UNDECLARED_DEPENDENCY',
+      Message: from
+        ? `${reg.label} (module '${module.Name}') resolved ${label} from module '${from.Name}', ` +
+          `but '${module.Name}' neither requires '${from.Name}' nor lists ${label} in its Needs.`
+        : `${reg.label} (module '${module.Name}') resolved ${label}, which the application ` +
+          `provides, but '${module.Name}' doesn't list it in its Needs.`,
+      Service: reg.label,
+    });
   }
 
   /**
@@ -3085,6 +3240,8 @@ export class IoCContainer<TKeys = any> {
     sealChecked?: boolean;
     /** Set by `Decorate`: the owner and default flag to keep (the original's). */
     owner?: { module?: IoCModule; default?: boolean };
+    /** The module the factory runs as (its view); defaults to the owner. */
+    actor?: IoCModule;
     /** Overrides the lifetime from the options (`Decorate` keeps the original's). */
     lifetime?: IoCLifetime;
     /** Overrides the level from the options. */
@@ -3126,24 +3283,37 @@ export class IoCContainer<TKeys = any> {
 
     const declarer = spec.owner ? undefined : this.currentModule();
 
-    if (declarer && !spec.detached) {
-      const modules = self.declarers.get(key) ?? new Set<IoCModule>();
+    /** Records the registering module as a provider of the key, once the registration succeeds. */
+    const declare = () => {
+      if (!declarer || spec.detached) return;
 
-      if (!modules.has(declarer)) {
-        modules.add(declarer);
+      let names = self.declarers.get(key);
 
-        self.declarers.set(key, modules);
+      if (!names) self.declarers.set(key, names = new Map());
 
-        recordUndo(() => modules.delete(declarer));
-      }
-    }
+      let modules = names.get(name);
+
+      if (!modules) names.set(name, modules = new Set());
+
+      if (modules.has(declarer)) return;
+
+      modules.add(declarer);
+
+      const added = modules;
+
+      recordUndo(() => added.delete(declarer));
+    };
 
     const existing = self.registrations.get(key)?.get(name);
 
     if (existing && !spec.detached) {
       if (options.Default) {
         // A default yields to whatever is already registered, unless that is a default too.
-        if (!existing.default) return existing;
+        if (!existing.default) {
+          declare();
+
+          return existing;
+        }
 
         this.checkSealed(existing, 'replace');
       } else if (!spec.sealChecked) {
@@ -3160,7 +3330,11 @@ export class IoCContainer<TKeys = any> {
     if (options.Default && !existing && !spec.detached) {
       const inherited = self.parent?.find(key, name);
 
-      if (inherited && !inherited.default) return inherited;
+      if (inherited && !inherited.default) {
+        declare();
+
+        return inherited;
+      }
     }
 
     const holder: IoCHolder | undefined = lifetime === 'transient' ? undefined : { state: 'empty' };
@@ -3170,6 +3344,10 @@ export class IoCContainer<TKeys = any> {
     const { dispose } = spec;
 
     const module = spec.owner ? spec.owner.module : this.currentModule();
+
+    // Whose code the factory is: its view, and the module its resolves are checked against. A
+    // decorator runs as whoever decorated, while the registration keeps the original's owner.
+    const actor = 'actor' in spec ? spec.actor : module;
 
     /** Hands an instance to its owner: the `Dispose` option's cleanup, else the instance itself. */
     const own = (tracker: IoCContainer, value: unknown, h?: IoCHolder) => {
@@ -3195,7 +3373,19 @@ export class IoCContainer<TKeys = any> {
       parent: IoCResolveFrame | undefined,
       frameKey: object,
     ) => {
-      const frame: IoCResolveFrame = { key: frameKey, label, parent, settled: false, reg };
+      const frame: IoCResolveFrame = {
+        key: frameKey,
+        label,
+        parent,
+        settled: false,
+        reg,
+        // A registered singleton or scoped build may serve other callers too, so it isn't
+        // cancelled with the build that asked for it; transients and a decorator's inner build
+        // are (see `frameAborter`).
+        shared: isHolder(frameKey) && self.registrations.get(key)?.get(name) === reg,
+      };
+
+      container.inflight.add(frame);
 
       if (isHolder(frameKey)) frameKey.building = frame;
 
@@ -3205,6 +3395,8 @@ export class IoCContainer<TKeys = any> {
 
       const done = (error?: { error: unknown }) => {
         frame.settled = true;
+
+        container.inflight.delete(frame);
 
         const ms = now() - begin;
 
@@ -3222,8 +3414,8 @@ export class IoCContainer<TKeys = any> {
 
       try {
         // A module's factories act as the module (a module view); the app's get a plain view.
-        const arg = module
-          ? new IoCModuleView(container, module, frame) as unknown as IoCContainer
+        const arg = actor
+          ? new IoCModuleView(container, actor, frame) as unknown as IoCContainer
           : createView(container, frame) as IoCContainer;
 
         const context = container.asyncContext;
@@ -3362,6 +3554,7 @@ export class IoCContainer<TKeys = any> {
       ctor: spec.ctor,
       owner: self,
       module,
+      actor,
       holder,
       label,
       deps: spec.deps,
@@ -3375,6 +3568,9 @@ export class IoCContainer<TKeys = any> {
 
         return target.addRegistration({
           ...spec,
+          // The copy keeps the original's owner and actor, whoever isolates it.
+          owner: spec.owner ?? { module, default: undefined },
+          actor,
           factory: spec.fork ? spec.fork(target) : factory,
           options: { ...options, Default: undefined, Replace: true },
           lifetime,
@@ -3435,7 +3631,11 @@ export class IoCContainer<TKeys = any> {
       if (dispose) own(self, spec.value.value, holder);
     }
 
-    if (!spec.detached) self.store(reg);
+    if (!spec.detached) {
+      self.store(reg);
+
+      declare();
+    }
 
     return reg;
   }
@@ -3458,12 +3658,15 @@ function requiresModule(module: IoCModule, other: IoCModule, seen = new Set<IoCM
   return false;
 }
 
-/** True when `module` lists `dep` (key and name) in its `Needs`. */
-function listsNeed(module: IoCModule, dep: IoCDependencyRecord): boolean {
+/**
+ * True when `module`'s `Needs` cover `key` + `name`: a bare key covers every name, `[key, name]`
+ * only that name. `name` `undefined` (every name of the key) needs a bare key.
+ */
+function needsCover(module: IoCModule, key: IoCKey, name: string | undefined): boolean {
   return (module.Needs ?? []).some((need) => {
-    const { key, name } = normalizeDependency(need);
+    if (!Array.isArray(need)) return need === key;
 
-    return key === dep.key && name === dep.name;
+    return name !== undefined && need[0] === key && ((need[1] as string) || DEFAULT_NAME) === name;
   });
 }
 
@@ -3515,19 +3718,23 @@ class IoCModuleView {
     this.#encapsulated = (container as Indexable).isEncapsulated(module);
   }
 
-  /** Throws `IoCAccessError` when this module is encapsulated and hasn't declared `key`. */
-  #check(key: unknown): void {
+  /**
+   * Throws `IoCAccessError` when this module is encapsulated and hasn't declared `key` + `name`
+   * (every name of the key, when `name` is `undefined`).
+   */
+  #check(key: unknown, name: string | undefined): void {
     if (!this.#encapsulated) return;
 
     const k = checkKey(key);
 
     const module = this.#module;
 
-    if ((module.Needs ?? []).some((need) => normalizeDependency(need).key === k)) return;
+    if ((this.#container as Indexable).mayUse(module, k, name, true)) return;
 
-    if ((this.#container as Indexable).providesTo(module, k, true)) return;
-
-    throw new IoCAccessError(module.Name, keyDescription(k));
+    throw new IoCAccessError(
+      module.Name,
+      name === undefined ? `${keyDescription(k)} (every name)` : labelFor(k, name),
+    );
   }
 
   /** Throws `IoCAccessError` for a whole-container call when this module is encapsulated. */
@@ -3544,7 +3751,7 @@ class IoCModuleView {
 
     if (!this.#frame || this.#frame.inferred) return undefined;
 
-    return (this.#frame.aborter ??= createAborter())?.signal as IoCAbortSignal | undefined;
+    return frameAborter(this.#frame)?.signal as IoCAbortSignal | undefined;
   }
 
   /** Where resolves continue from: the factory's resolution chain, when this is a factory's. */
@@ -3573,6 +3780,9 @@ class IoCModuleView {
   }
 
   Decorate(...args: Parameters<IoCContainer['Decorate']>): () => void {
+    // Decorating hands the decorator the service: only for what the module may resolve.
+    this.#check(args[0], args[2]?.Name || DEFAULT_NAME);
+
     const restore = this.#as((c) => c.Decorate(...args));
 
     return () => this.#as(() => restore());
@@ -3583,13 +3793,19 @@ class IoCModuleView {
   }
 
   Isolate(...args: Parameters<IoCContainer['Isolate']>): this {
+    for (const item of args) {
+      const { key, name } = normalizeDependency(item);
+
+      this.#check(key, name);
+    }
+
     this.#as((c) => c.Isolate(...args));
     return this;
   }
 
   Resolve(...args: Parameters<IoCContainer['Resolve']>): ReturnType<IoCContainer['Resolve']> {
     try {
-      this.#check(args[0]);
+      this.#check(args[0], args[1] || DEFAULT_NAME);
     } catch (err) {
       return Promise.reject(err);
     }
@@ -3601,7 +3817,7 @@ class IoCModuleView {
     ...args: Parameters<IoCContainer['TryResolve']>
   ): ReturnType<IoCContainer['TryResolve']> {
     try {
-      this.#check(args[0]);
+      this.#check(args[0], args[1] || DEFAULT_NAME);
     } catch (err) {
       return Promise.reject(err);
     }
@@ -3613,7 +3829,7 @@ class IoCModuleView {
     ...args: Parameters<IoCContainer['ResolveAll']>
   ): ReturnType<IoCContainer['ResolveAll']> {
     try {
-      this.#check(args[0]);
+      this.#check(args[0], undefined);
     } catch (err) {
       return Promise.reject(err);
     }
@@ -3625,7 +3841,7 @@ class IoCModuleView {
     ...args: Parameters<IoCContainer['ResolveNamed']>
   ): ReturnType<IoCContainer['ResolveNamed']> {
     try {
-      this.#check(args[0]);
+      this.#check(args[0], undefined);
     } catch (err) {
       return Promise.reject(err);
     }
@@ -3637,7 +3853,11 @@ class IoCModuleView {
     ...args: Parameters<IoCContainer['ResolveRecord']>
   ): ReturnType<IoCContainer['ResolveRecord']> {
     try {
-      for (const dep of Object.values(args[0])) this.#check(normalizeDependency(dep).key);
+      for (const dep of Object.values(args[0])) {
+        const { key, name, mode } = normalizeDependency(dep);
+
+        this.#check(key, mode === 'all' ? undefined : name);
+      }
     } catch (err) {
       return Promise.reject(err);
     }
@@ -3649,13 +3869,13 @@ class IoCModuleView {
   }
 
   Names(...args: Parameters<IoCContainer['Names']>): string[] {
-    this.#check(args[0]);
+    this.#check(args[0], undefined);
 
     return this.#container.Names(...args);
   }
 
   Has(...args: Parameters<IoCContainer['Has']>): boolean {
-    this.#check(args[0]);
+    this.#check(args[0], args[1] || DEFAULT_NAME);
 
     return this.#container.Has(...args);
   }

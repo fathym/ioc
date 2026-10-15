@@ -127,7 +127,9 @@ that share a container upgrade together.
 - **`ioc.Signal`:** inside a factory or a module's `OnStart`, `OnStop` or `Health`, an
   `AbortSignal` (`IoCAbortSignal`) that aborts when the container gives up on that work: a
   `Start()`/`Activate()` or module timeout, a sibling module failing to start, a rolled-back
-  `Start()`, or `Dispose()`. A `Resolve()` timeout doesn't abort the build.
+  `Start()`, or `Dispose()` (also of a parent). It reaches transients and decorated inner builds
+  under the abandoned build. A `Resolve()` timeout aborts only a transient build, never a shared
+  singleton or scoped one.
 - **`ioc.Health(options?)`** and **`IoCModule.Health`:** runs every started module's check
   concurrently, each bounded by `TimeoutMs` (5 s by default), and returns an `IoCHealthReport`
   (`Healthy`, `State`, per-module `Healthy`/`Ms`/`Error`) for readiness and liveness probes.
@@ -147,7 +149,9 @@ that share a container upgrade together.
   `Infinity`) throw `IoCRegistrationError` at registration or at `Use()`.
 - **`IoCModule.Needs`:** keys a module expects someone else to register. `Validate()` reports an
   `undeclared` issue when a module depends on another module's service, or on one the application
-  registers, without `Requires` or `Needs`, in its `Deps` or in what its factories resolved. A
+  registers, without `Requires` or `Needs`, in its declared `Deps` (so the result never depends
+  on what has run). What a factory without `Deps` resolves is reported as it runs, as an
+  `IOC_UNDECLARED_DEPENDENCY` warning. A
   module's `Default: true` registration the application replaced still counts as the module's.
 - **Container options `Levels`, `OnEvent` and `Testing`.** `OnEvent` receives `build`, `resolve`,
   `start`, `stop` and `warning` events (`IoCEvent`, `IoCWarningCode`), including the new

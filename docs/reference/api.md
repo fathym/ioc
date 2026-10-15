@@ -959,21 +959,31 @@ console.log(await app.Resolve($Region), (await app.Resolve($Clock))(), warnings)
 Sealing stops modules from changing each other's registrations. Encapsulation also limits what a
 module may **resolve**: an encapsulated module may resolve only
 
-- what it registers itself,
-- the keys it lists in `Needs` (whoever registers them), and
+- what it registers itself (a successful registration, a yielded `Default: true` included: the
+  module offered that key, so it may use it),
+- the keys it lists in `Needs` (whoever registers them): a bare key covers every name of it,
+  `[key, name]` only that name, and
 - what the modules in its own `Requires` register (not what their requirements register).
+
+Access is per name: resolving every name of a key (`ResolveAll`, `ResolveNamed`, `Names`,
+`IoCAll`) needs a bare key in `Needs`, or every name to come from the module or its requirements.
 
 Anything else throws [`IoCAccessError`](./errors.md#module--is-encapsulated-and-cant-resolve-)
 (`IOC_ACCESS_DENIED`), from every resolve method of its view, from its hooks, and from the
-factories it registered (their `Deps` included). `Describe()` and `Validate()` on its view throw
-it too, since they would show the whole container. A scope the module creates keeps the limit.
+factories it registered (their `Deps` included). `Decorate` and `Isolate` on its view are checked
+the same way, since both hand the module the service. `Describe()` and `Validate()` on its view
+throw it too, since they would show the whole container. A scope the module creates keeps the
+limit, and so does a copy of the module's service that anyone isolates in a scope.
 
 A module is encapsulated when it says `Encapsulated: true`, or when the container's
 `EncapsulateModules` option picks it (and the module doesn't say `Encapsulated: false`). Use it
 for modules you don't write: partner and third-party plugins, so they can only use what they
-declare, and the declaration is the contract you review. `Validate()` reports the same mistakes
-ahead of time as [`undeclared`](#validateoptions), counting only direct `Requires` for an
-encapsulated module.
+declare, and the declaration is the contract you review. `Validate()` reports the declared `Deps`
+that break it ahead of time as [`undeclared`](#validateoptions), counting only direct `Requires`
+for an encapsulated module.
+
+A decorator runs as whoever decorates: the application's decorator on a module's service gets a
+plain view and isn't limited, while the service still belongs to the module.
 
 A module still provides a key the application replaced: when the application overrides a module's
 `Default: true` registration, modules that require that module may still resolve the key.
@@ -1129,20 +1139,24 @@ Checks the registrations visible from this container without building anything, 
 `{ Throw: false }` it returns the problems instead, and an empty array when there are none. Each
 issue is `{ Kind, Service, Message }`:
 
-| `Kind`       | Problem                                                                                                                                                                                                                                       |
-| ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `missing`    | A declared dependency (`Deps`) that isn't registered                                                                                                                                                                                          |
-| `cycle`      | A cycle between declared dependencies (`IoCLazy` dependencies don't count)                                                                                                                                                                    |
-| `captive`    | A service that depends, directly or through transients, on a shorter-lived one: a singleton on a scoped service, a tenant-level service on a request-level one                                                                                |
-| `arguments`  | A class registered without `Deps` whose constructor declares parameters                                                                                                                                                                       |
-| `undeclared` | A module's service depends on a service from another module, or from the application, that the module neither `Requires` (directly, for an encapsulated module) nor lists in `Needs`. Covers `Deps` and what factories resolved once they ran |
+| `Kind`       | Problem                                                                                                                                                                                                                                                                |
+| ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `missing`    | A declared dependency (`Deps`) that isn't registered                                                                                                                                                                                                                   |
+| `cycle`      | A cycle between declared dependencies (`IoCLazy` dependencies don't count)                                                                                                                                                                                             |
+| `captive`    | A service that depends, directly or through transients, on a shorter-lived one: a singleton on a scoped service, a tenant-level service on a request-level one                                                                                                         |
+| `arguments`  | A class registered without `Deps` whose constructor declares parameters                                                                                                                                                                                                |
+| `undeclared` | A module's service declares a dependency (`Deps`) on a service from another module, or from the application, that the module neither `Requires` (directly, for an encapsulated module) nor lists in `Needs`. `IoCAll` dependencies count only for encapsulated modules |
 
 Lifetimes rank from longest to shortest: singleton, then each declared level in order, then
 `scoped` without a level. Transients have no rank of their own; `Validate()` looks through them.
 
-Keys declared with [`Expect`](#expectkeys) count as provided. Factories without `Deps` are opaque,
-so what they resolve isn't checked; `Activate()` covers those by building everything. `Start()`
-calls `Validate()` for you.
+Keys declared with [`Expect`](#expectkeys) count as provided (a module using one still lists it in
+`Needs`). `Validate()` reads only declared `Deps`, so its answer never depends on what has
+already run, and a retried `Start()` can't fail on something a factory did the first time. What a
+module's factory without `Deps` resolves is reported as it runs, once, as an
+[`IOC_UNDECLARED_DEPENDENCY` warning](#onevent-and-iocevent) (an encapsulated module is stopped
+instead); `Activate()` covers those factories by building everything. `Start()` calls
+`Validate()` for you.
 
 ```ts
 import { IoCContainer } from '@fathym/ioc';
@@ -1388,10 +1402,11 @@ interface IoCModuleHealth {
 ```
 
 Checks that the application is ready for work, for readiness and liveness probes. It runs the
-`Health` hook of every started module, all at the same time, each bounded by `TimeoutMs` (default
+`Health` hook of every started module, including the modules of started scopes (late plugins),
+all at the same time, each bounded by `TimeoutMs` (default
 5000; `0` for no limit). A check fails by throwing or returning `false`; anything else passes. A
-failing or slow check is recorded in the report, never thrown. A check that times out is told
-through its [`Signal`](#signal).
+failing or slow check is recorded in the report, never thrown. A check that times out, or is
+still running when the container is disposed, is told through its [`Signal`](#signal).
 
 `Healthy` is `true` when the container has started and every check passed. Before `Start()`
 finishes, and after `Dispose()`, it is `false` and `Modules` is empty. For a liveness probe,
@@ -1445,12 +1460,18 @@ clients and long loops, so abandoned work actually stops. It aborts, with the re
 - a module's `OnStart`, `OnStop` or `Health` times out (`IoCResolveTimeoutError`);
 - another module starting in the same layer fails (that module's error), or a failed `Start()`
   rolls back and abandons the builds still running (the error that failed it);
-- the container is disposed while the work runs (`IoCContainerDisposedError`).
+- the container, or the parent of the scope it runs in, is disposed while the work runs
+  (`IoCContainerDisposedError`);
+- the `Resolve` waiting for a transient build times out (a transient serves only that caller).
 
-A `Resolve` that times out does **not** abort the build: other callers may still be waiting for
-it. Each build and each hook call has its own signal, and a factory that reads `Signal` after the
-container gave up still sees it aborted. It is `undefined` elsewhere (on the container itself, or
-on a runtime without `AbortController`).
+Work nested under an aborted build is aborted with it: the transients it resolved, and the inner
+build of a decorated service. A **shared** build, a singleton or scoped instance, is never aborted
+because one caller gave up: a `Resolve` that times out leaves it running for its other callers,
+and disposing a scope leaves the parent's singletons it asked for alone.
+
+Each build and each hook call has its own signal, and a factory that reads `Signal` after the
+container gave up still sees it aborted. It is `undefined` elsewhere: on the container itself, on
+a scope created from a hook's or factory's `ioc`, and on a runtime without `AbortController`.
 
 ```ts
 import { IoCContainer, IoCToken } from '@fathym/ioc';
@@ -1677,13 +1698,14 @@ What the `OnEvent` option receives:
 - **`health`:** a module's `Health` check finished, from [`Health()`](#healthoptions);
 - **`warning`:** something failed where no caller could be told.
 
-| `IoCWarningCode`          | When                                                                                                                                                 |
-| ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `IOC_DEFAULT_REPLACED`    | A module replaced, decorated or unregistered a default (`Default: true`) that another module or the application registered (see [sealing](#sealing)) |
-| `IOC_MODULE_OVERRIDDEN`   | The application replaced, decorated or unregistered a module's non-default registration (a default changes silently)                                 |
-| `IOC_LATE_DISPOSE_FAILED` | An instance that finished building after `Dispose()`, or after a failed `Start()` gave up on it, failed to dispose                                   |
-| `IOC_MODULE_DUPLICATE`    | Two different modules with the same `Name` were added                                                                                                |
-| `IOC_ROLLBACK_FAILED`     | Cleaning up after a `Start()` that failed in `Validate()` or `Activate()` threw                                                                      |
+| `IoCWarningCode`            | When                                                                                                                                                                |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `IOC_DEFAULT_REPLACED`      | A module replaced, decorated or unregistered a default (`Default: true`) that another module or the application registered (see [sealing](#sealing))                |
+| `IOC_MODULE_OVERRIDDEN`     | The application replaced, decorated or unregistered a module's non-default registration (a default changes silently)                                                |
+| `IOC_LATE_DISPOSE_FAILED`   | An instance that finished building after `Dispose()`, or after a failed `Start()` gave up on it, failed to dispose                                                  |
+| `IOC_MODULE_DUPLICATE`      | Two different modules with the same `Name` were added                                                                                                               |
+| `IOC_ROLLBACK_FAILED`       | Cleaning up after a `Start()` that failed in `Validate()` or `Activate()` threw                                                                                     |
+| `IOC_UNDECLARED_DEPENDENCY` | A module's factory resolved a service its module neither requires nor lists in `Needs` (reported once per service and dependency; see [Validate](#validateoptions)) |
 
 Each warning's `Message` is in the [error catalog](./errors.md#warnings).
 

@@ -283,8 +283,8 @@ Dependencies are resolved **from the container or scope resolving the class**:
   [captive dependency](../concepts/lifetimes.md#captive-dependencies));
 - classes registered without arguments whose constructors take parameters;
 - a module's service depending on another module's service, or on one the application
-  registers, without `Requires` or `Needs` (`undeclared`; it also reads what factories without
-  `Deps` resolved, once they have run).
+  registers, without `Requires` or `Needs` (`undeclared`; what a factory without `Deps`
+  resolves is reported as it runs, as an `IOC_UNDECLARED_DEPENDENCY` warning).
 
 `Start()` calls it first. Call it in a test too, so mistakes fail CI. See
 [organizing registrations](./organizing-registrations.md).

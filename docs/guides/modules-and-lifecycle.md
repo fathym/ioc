@@ -287,7 +287,9 @@ await ioc.Dispose();
 ```
 
 A module can also opt in itself (`Encapsulated: true`), or out (`Encapsulated: false`, which wins
-over the option). `Validate()` reports the same mistakes before anything runs, as `undeclared`.
+over the option). `Validate()` reports a declared dependency that breaks this before anything
+runs, as `undeclared`. `[key, name]` in `Needs` grants that name only; a bare key, every name.
+Registering a key, even as a `Default: true` that yields, counts as declaring it.
 
 Unexported tokens already keep a package's private services out of reach of code that can't
 import them; encapsulation covers what is reachable but not declared. Neither is a security

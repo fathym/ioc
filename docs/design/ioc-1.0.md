@@ -190,9 +190,16 @@ type never grows with its requirements. Measured with TypeScript 5.9, 10 service
 ## Validate()
 
 Issue kinds: `missing`, `cycle`, `captive`, `arguments`, and `undeclared`: a module's dependency
-(declared in `Deps`, or observed when a factory without `Deps` ran) on a key registered by
+(declared in `Deps`) on a key registered by
 another module, or by the application, that is neither in its `Requires` (transitive; direct
 only for an encapsulated module) nor in its `Needs`.
+
+`Validate()` reads only declared `Deps`: it must give the same answer however much has run, or a
+retried `Start()` (or a late plugin scope's `Start()`) could fail on something a factory did
+earlier. What a factory resolves in its body is checked as it runs instead: an
+`IOC_UNDECLARED_DEPENDENCY` warning for a plain module, `IoCAccessError` for an encapsulated one.
+`IoCAll` collections count only for encapsulated modules, since gathering contributions is how
+extension points work.
 
 ## Lifecycle
 
@@ -228,7 +235,10 @@ only for an encapsulated module) nor in its `Needs`.
 - **Abort signals:** each build and each `OnStart`/`OnStop`/`Health` call has its own
   `AbortController`, created lazily when the code reads `ioc.Signal` (or when the container
   aborts it first, so a late read still sees the abort). It aborts on a startup or hook timeout,
-  a sibling's start failure, a rollback, and `Dispose()`. A `Resolve()` timeout doesn't abort:
+  a sibling's start failure, a rollback, and `Dispose()` (of the container or of a parent,
+  reaching every in-flight factory, transients included). It propagates to work that isn't
+  shared (transients and a decorator's inner build). A `Resolve()` timeout aborts only a
+  transient build; for a shared build it doesn't:
   the build is shared, and other callers may still be waiting for it.
 - **Health:** `Health()` runs the started modules' `Health` hooks concurrently, each bounded by
   its `TimeoutMs` (5 s by default, shorter than typical probe timeouts so the report names the
