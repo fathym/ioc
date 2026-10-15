@@ -20,15 +20,17 @@ import {
   abandonedBy,
   activeHolders,
   type AnyFunction,
+  asModule,
+  atomically,
   attachBuild,
   constructorArity,
-  createModuleView,
   createView,
+  crossesInferred,
   currentFrame,
+  currentModule as activeModule,
   framePath,
   IOC_CONTEXT,
   IOC_EXTERNAL,
-  IOC_MODULE,
   IOC_OWNERS,
   IOC_SELF,
   type IoCDependencyRecord,
@@ -44,6 +46,7 @@ import {
   labelFor,
   nearestHolder,
   noop,
+  recordUndo,
   releaseBuild,
   settleInto,
   waitPath,
@@ -57,7 +60,9 @@ import { type IoCToken, isIoCToken } from './IoCToken.ts';
 export type IoCWarningCode =
   | 'IOC_LATE_DISPOSE_FAILED'
   | 'IOC_MODULE_DUPLICATE'
-  | 'IOC_ROLLBACK_FAILED';
+  | 'IOC_ROLLBACK_FAILED'
+  | 'IOC_DEFAULT_REPLACED'
+  | 'IOC_MODULE_OVERRIDDEN';
 
 /**
  * What the `OnEvent` option receives:
@@ -99,8 +104,11 @@ export interface IoCContainerOptions {
 
   /**
    * How the container follows resolution chains across `await` when a factory resolves through a
-   * container captured in a closure instead of its parameter, so a cycle through them throws
-   * instead of hanging. By default it uses `AsyncLocalStorage` where the runtime provides one
+   * container captured in a closure instead of its parameter, so errors keep their resolution
+   * path and `Describe()` its observed dependencies. Such a chain is only presumed (a callback a
+   * factory started looks the same), so it never reports a cycle: a real one fails at
+   * `PendingTimeoutMs`, naming what is pending. Resolve through the factory's parameter to have
+   * cycles reported at once. By default it uses `AsyncLocalStorage` where the runtime provides one
    * (Node.js, Deno, Bun); `false` turns it off, and an `AsyncLocalStorage` you pass is used
    * instead. The container never imports `node:async_hooks`, so browser bundles are unaffected.
    */
@@ -242,6 +250,13 @@ export type IoCServiceOptions = {
    * default).
    */
   Replace?: boolean;
+
+  /**
+   * Overrides the container's `PendingTimeoutMs` for this service: its builds (also during
+   * `Start()`) and resolves fail after this many milliseconds (`0` turns it off). For the one
+   * slow service, such as a migration, without raising the limit for everything else.
+   */
+  TimeoutMs?: number;
 
   /**
    * For singletons: build it on first resolve only, never in `Start()` or `Activate()`. For
@@ -434,6 +449,15 @@ function runtimeAsyncContext(): IoCAsyncContext | undefined {
   return defaultContext ?? undefined;
 }
 
+/** Throws unless `ms` is undefined or a finite, non-negative number of milliseconds. */
+function checkTimeout(ms: number | undefined, option: string): void {
+  if (ms !== undefined && (!(ms >= 0) || !Number.isFinite(ms))) {
+    throw new IoCRegistrationError(
+      `${option} must be a finite number of milliseconds (0 turns it off).`,
+    );
+  }
+}
+
 /** Throws `IOC_INVALID_KEY` unless `key` is a token or a class. */
 function checkKey(key: unknown): IoCKey {
   if (isClassLike(key) || isIoCToken(key)) return key as IoCKey;
@@ -467,6 +491,8 @@ function normalizeDependency(dep: unknown): IoCDependencyRecord {
 
 /** Records that the factory running in `frame` resolved `key` + `name` (see `observed`). */
 function observe(frame: IoCResolveFrame | undefined, key: IoCKey, name: string): void {
+  while (frame?.inferred) frame = frame.parent;
+
   const observed = frame && !frame.settled ? frame.reg?.observed : undefined;
 
   if (!observed) return;
@@ -532,18 +558,18 @@ function isDisposable(value: unknown): value is object {
     typeof (value as Indexable)[Symbol.dispose] === 'function';
 }
 
-/** An instance a container must dispose, and the holder that caches it (if any). */
+/**
+ * How the container calls a registration's factory: with the view the factory sees, plus (for the
+ * container's own wrappers, never user code) the container it builds on and its frame.
+ */
+type IoCFactory = (ioc: IoCContainer, container: IoCContainer, frame: IoCResolveFrame) => unknown;
+
+/** An instance a container must dispose, the holder that caches it (if any), and its label. */
 interface IoCOwned {
   value: object;
   holder?: IoCHolder;
+  label: string;
 }
-
-/** Removes a scope that was garbage-collected without being disposed from its parent's list. */
-const scopeFinalizer = new FinalizationRegistry<
-  { parent: WeakRef<IoCContainer>; ref: WeakRef<IoCContainer> }
->(({ parent, ref }) => {
-  (parent.deref() as Indexable)?.children.delete(ref);
-});
 
 /** Thrown inside `Start()` when a layer of modules failed; turned into an `IoCStartError`. */
 class LayerFailure {
@@ -710,18 +736,20 @@ export class IoCContainer<TKeys = any> {
   protected level?: string;
 
   /**
-   * Live child scopes, held weakly so a scope dropped without `Dispose()` can still be collected.
+   * Child scopes that own something to clean up (instances, modules, or scopes of their own) and
+   * aren't disposed yet; disposing this container disposes them. Scopes that own nothing aren't
+   * tracked, so dropping them costs nothing.
    *
    * @ignore
    */
-  protected readonly children: Set<WeakRef<IoCContainer>>;
+  protected readonly children: Set<IoCContainer>;
 
   /**
-   * This scope's entry in its parent's `children`.
+   * Whether this scope is in its parent's `children`.
    *
    * @ignore
    */
-  protected selfRef?: WeakRef<IoCContainer>;
+  protected retained?: boolean;
 
   /**
    * Creates a container. Every option is optional: with none, the container is already strict,
@@ -730,25 +758,19 @@ export class IoCContainer<TKeys = any> {
    * @param options Levels, timeouts, events and test mode.
    */
   constructor(options?: IoCContainerOptions) {
-    this.options = { ...options };
+    const levels = options?.Levels;
 
-    if (this.options.Levels) {
-      const levels = this.options.Levels;
-
-      if (new Set(levels).size !== levels.length || levels.some((l) => !l)) {
-        throw new IoCRegistrationError('Levels must be distinct, non-empty names.');
-      }
-
-      this.options.Levels = Object.freeze([...levels]);
+    if (levels && (new Set(levels).size !== levels.length || levels.some((l) => !l))) {
+      throw new IoCRegistrationError('Levels must be distinct, non-empty names.');
     }
 
-    const timeout = this.options.PendingTimeoutMs;
+    checkTimeout(options?.PendingTimeoutMs, 'PendingTimeoutMs');
 
-    if (timeout !== undefined && (!(timeout >= 0) || !Number.isFinite(timeout))) {
-      throw new IoCRegistrationError(
-        'PendingTimeoutMs must be a finite number of milliseconds (0 turns it off).',
-      );
-    }
+    // Frozen, so nothing (a module included) can switch on testing mode or change levels later.
+    this.options = Object.freeze({
+      ...options,
+      Levels: levels ? Object.freeze([...levels]) : undefined,
+    });
 
     this.asyncContext = this.options.AsyncContext === false
       ? undefined
@@ -801,6 +823,7 @@ export class IoCContainer<TKeys = any> {
         reg.resolveIn(this.self(), frame),
         reg.label,
         reg.holder,
+        reg.timeoutMs,
       )) as IoCServiceOf<K>;
     }
 
@@ -813,7 +836,12 @@ export class IoCContainer<TKeys = any> {
 
       observe(frame, key, n);
 
-      const result = await this.timed(reg.resolveIn(this.self(), frame), reg.label, reg.holder);
+      const result = await this.timed(
+        reg.resolveIn(this.self(), frame),
+        reg.label,
+        reg.holder,
+        reg.timeoutMs,
+      );
 
       this.emit({ Type: 'resolve', Service: label, Ms: now() - started });
 
@@ -974,7 +1002,9 @@ export class IoCContainer<TKeys = any> {
 
         work.push(
           Promise.resolve()
-            .then(() => self.timed(reg.resolveIn(self, undefined), reg.label, reg.holder))
+            .then(() =>
+              self.timed(reg.resolveIn(self, undefined), reg.label, reg.holder, reg.timeoutMs)
+            )
             .then(noop, (error) => {
               failures.push({ label: reg.label, error });
             }),
@@ -1112,8 +1142,9 @@ export class IoCContainer<TKeys = any> {
                 reg.label,
                 `${lifetimeName(reg)} ${reg.label} depends on ${lifetimeName(target)} ` +
                   `${target.label}${via.length ? ` (through ${via.join(' -> ')})` : ''}; it ` +
-                  `would keep one instance for its whole life. Give ${reg.label} a shorter ` +
-                  `lifetime, or inject IoCLazy(...) and resolve it per use.`,
+                  `would keep one instance for its whole life. Give ${reg.label} a lifetime no ` +
+                  `longer than ${target.label}'s, or resolve ${target.label} where it is used, ` +
+                  `from the scope at hand.`,
               );
             }
           }
@@ -1258,8 +1289,6 @@ export class IoCContainer<TKeys = any> {
   >(...deps: TDeps): IoCContainer<TKeys | IoCExpected<TDeps>> {
     const self = this.self();
 
-    this.assertNotModuleView('Expect');
-
     for (const dep of deps) {
       const { key, name } = normalizeDependency(dep);
 
@@ -1376,7 +1405,8 @@ export class IoCContainer<TKeys = any> {
       kind: 'factory',
       factory: deps
         ? async (ioc) => call(ioc, ...await Promise.all(deps.map((d) => resolveDependency(ioc, d))))
-        : call,
+        // Only the view: never the internal arguments a factory is called with.
+        : (ioc) => call(ioc),
       deps,
       options: opts,
       dispose: opts.Dispose as ((instance: unknown) => unknown) | undefined,
@@ -1469,8 +1499,8 @@ export class IoCContainer<TKeys = any> {
 
     if (own) this.checkSealed(own, 'decorate');
 
-    const decorate = (inner: IoCRegistration) => (ioc: IoCContainer) => {
-      const value = inner.resolveIn((ioc as IoCContainer).self(), ioc.frame());
+    const decorate = (inner: IoCRegistration): IoCFactory => (ioc, container, frame) => {
+      const value = inner.resolveIn(container, frame);
 
       return value instanceof Promise
         ? value.then((v) => decorator(v as IoCServiceOf<K>, ioc))
@@ -1489,6 +1519,8 @@ export class IoCContainer<TKeys = any> {
       deps: original.deps,
       options: { Replace: true },
       sealChecked: true,
+      // Decorating doesn't change who owns the service, or whether it is a default.
+      owner: { module: original.module as IoCModule | undefined, default: original.default },
     });
 
     return () => {
@@ -1504,7 +1536,7 @@ export class IoCContainer<TKeys = any> {
 
   /**
    * Removes a registration from this container (not from parents). Returns whether one existed.
-   * A registration a module made can only be removed by that module.
+   * A module may remove only its own registrations and defaults; the application may remove any.
    */
   public Unregister(key: IoCServiceKey<unknown>, name?: string): boolean {
     const self = this.self();
@@ -1523,7 +1555,9 @@ export class IoCContainer<TKeys = any> {
 
     bank.delete(n);
 
-    if (!bank.size) self.registrations.delete(k);
+    recordUndo(() => {
+      if (!bank.has(n)) bank.set(n, reg);
+    });
 
     return true;
   }
@@ -1579,12 +1613,6 @@ export class IoCContainer<TKeys = any> {
     scope.parent = self;
 
     scope.level = level;
-
-    scope.selfRef = new WeakRef(scope);
-
-    self.children.add(scope.selfRef);
-
-    scopeFinalizer.register(scope, { parent: new WeakRef(self), ref: scope.selfRef }, scope);
 
     return scope;
   }
@@ -1677,8 +1705,6 @@ export class IoCContainer<TKeys = any> {
     const k = checkKey(key);
 
     const name = options?.Name || DEFAULT_NAME;
-
-    this.assertNotModuleView('Override');
 
     if (!self.options.Testing) {
       throw new IoCSealedError(labelFor(k, name), undefined, 'override');
@@ -1820,8 +1846,6 @@ export class IoCContainer<TKeys = any> {
   public async Dispose(): Promise<void> {
     const self = this.self();
 
-    this.assertNotModuleView('Dispose');
-
     if (self.disposed) return;
 
     // A second call waits for the first to finish; the first caller gets any errors.
@@ -1877,8 +1901,6 @@ export class IoCContainer<TKeys = any> {
   ): IoCContainer<TKeys | IoCModulesProvide<TModules>> {
     const self = this.self();
 
-    this.assertNotModuleView('Use');
-
     self.assertNotDisposed();
 
     const visit = (module: IoCModule, path: IoCModule[]) => {
@@ -1898,6 +1920,8 @@ export class IoCContainer<TKeys = any> {
 
       for (const required of module.Requires ?? []) visit(required, [...path, module]);
 
+      checkTimeout(module.TimeoutMs, 'TimeoutMs');
+
       if (self.starting || self.state !== 'idle') {
         throw new IoCRegistrationError(
           `Module '${module.Name}' was added after Start(); add modules before starting the ` +
@@ -1914,12 +1938,19 @@ export class IoCContainer<TKeys = any> {
         });
       }
 
-      module.Register(createModuleView(self, module));
+      module.Register(new IoCModuleView(self, module) as unknown as IoCContainer);
 
       self.modules.push(module);
+
+      self.retain();
+
+      recordUndo(() => self.modules.splice(self.modules.indexOf(module), 1));
     };
 
-    for (const module of modules as readonly IoCModule[]) visit(module, []);
+    // All or nothing: if a Register throws, every registration this call made is undone.
+    atomically(() => {
+      for (const module of modules as readonly IoCModule[]) visit(module, []);
+    });
 
     return this as unknown as IoCContainer<TKeys | IoCModulesProvide<TModules>>;
   }
@@ -1963,8 +1994,6 @@ export class IoCContainer<TKeys = any> {
   public Start(options?: { Validate?: boolean }): Promise<void> {
     const self = this.self();
 
-    this.assertNotModuleView('Start');
-
     self.assertNotDisposed();
 
     if (self.disposing) return Promise.reject(new IoCContainerDisposedError());
@@ -1992,8 +2021,8 @@ export class IoCContainer<TKeys = any> {
    *
    * @ignore
    */
-  protected timed(value: unknown, label: string, holder?: IoCHolder): unknown {
-    const ms = this.self().options.PendingTimeoutMs ?? DEFAULT_TIMEOUT_MS;
+  protected timed(value: unknown, label: string, holder?: IoCHolder, timeoutMs?: number): unknown {
+    const ms = timeoutMs ?? this.self().options.PendingTimeoutMs ?? DEFAULT_TIMEOUT_MS;
 
     if (!ms || !(value instanceof Promise)) return value;
 
@@ -2068,6 +2097,8 @@ export class IoCContainer<TKeys = any> {
     this.startBuilds = [];
 
     try {
+      this.checkParentModulesStarted();
+
       if (options?.Validate !== false) this.Validate();
 
       await this.Activate();
@@ -2084,8 +2115,10 @@ export class IoCContainer<TKeys = any> {
 
           try {
             await this.timed(
-              module.OnStart?.(createModuleView(this, module)),
+              module.OnStart?.(new IoCModuleView(this, module) as unknown as IoCContainer),
               `Module '${module.Name}' OnStart`,
+              undefined,
+              module.TimeoutMs,
             );
 
             const ms = now() - begin;
@@ -2116,8 +2149,17 @@ export class IoCContainer<TKeys = any> {
 
       this.state = 'started';
     } catch (err) {
-      // Dispose() is running: it stops and disposes everything; nothing to roll back here.
-      if (this.disposing) throw new IoCContainerDisposedError();
+      // Dispose() is running: it stops and disposes everything; nothing to roll back here. A real
+      // failure is still reported as itself.
+      if (this.disposing) {
+        if (err instanceof LayerFailure) {
+          const [first] = err.failures;
+
+          throw new IoCStartError(first.Module, first.Error, [], err.failures);
+        }
+
+        throw err;
+      }
 
       const rollback = [...await this.stopModules(), ...await this.forgetSince(mark)];
 
@@ -2144,6 +2186,36 @@ export class IoCContainer<TKeys = any> {
   }
 
   /**
+   * Throws an `IoCStartError` when a module here requires a module that belongs to a parent
+   * container that hasn't started: the scope's module would start before what it needs.
+   *
+   * @ignore
+   */
+  protected checkParentModulesStarted(): void {
+    for (const module of this.modules) {
+      for (const required of module.Requires ?? []) {
+        if (this.modules.includes(required)) continue;
+
+        for (let c = this.parent; c; c = c.parent) {
+          if (!c.modules.includes(required)) continue;
+
+          if (c.state !== 'started') {
+            throw new IoCStartError(
+              module.Name,
+              new Error(
+                `it requires module '${required.Name}', which belongs to a parent container ` +
+                  `that hasn't started; start the parent first`,
+              ),
+            );
+          }
+
+          break;
+        }
+      }
+    }
+  }
+
+  /**
    * Disposes the instances created since `mark` and empties the holders built during `Start()`,
    * so a retried `Start()` builds them again.
    *
@@ -2154,14 +2226,19 @@ export class IoCContainer<TKeys = any> {
 
     for (const entry of this.owned.splice(mark).reverse()) {
       try {
-        await disposeOne(entry.value);
+        await this.timed(disposeOne(entry.value), `Disposing ${entry.label}`);
       } catch (err) {
         errors.push(err);
       }
     }
 
     for (const holder of this.startBuilds ?? []) {
-      if (holder.state !== 'ready') continue;
+      // A build still running (it timed out) is abandoned: if it lands later, its instance is
+      // disposed instead of cached (see `track`).
+      if (holder.state === 'pending') {
+        holder.promise = undefined;
+        releaseBuild(holder);
+      } else if (holder.state !== 'ready') continue;
 
       holder.state = 'empty';
       holder.value = undefined;
@@ -2186,8 +2263,10 @@ export class IoCContainer<TKeys = any> {
 
         try {
           await this.timed(
-            module.OnStop?.(createModuleView(this, module)),
+            module.OnStop?.(new IoCModuleView(this, module) as unknown as IoCContainer),
             `Module '${module.Name}' OnStop`,
+            undefined,
+            module.TimeoutMs,
           );
 
           this.emit({ Type: 'stop', Module: module.Name, Ms: now() - begin });
@@ -2211,7 +2290,7 @@ export class IoCContainer<TKeys = any> {
    * @ignore
    */
   protected async stopTree(): Promise<unknown[]> {
-    const scopes = [...this.children].map((ref) => ref.deref()).filter((s) => !!s);
+    const scopes = [...this.children];
 
     const nested = await Promise.all(
       scopes.map(async (scope) => {
@@ -2258,9 +2337,7 @@ export class IoCContainer<TKeys = any> {
     const errors: unknown[] = await self.stopTree();
 
     // Then the scopes created from this container, each disposing its own scopes first.
-    const scopes = [...self.children].map((ref) => ref.deref()).filter((s) => !!s);
-
-    const results = await Promise.allSettled(scopes.map((scope) => scope.Dispose()));
+    const results = await Promise.allSettled([...self.children].map((scope) => scope.Dispose()));
 
     for (const result of results) {
       if (result.status === 'rejected') errors.push(result.reason);
@@ -2270,19 +2347,15 @@ export class IoCContainer<TKeys = any> {
 
     self.state = 'disposed';
 
-    for (const { value } of self.owned.splice(0).reverse()) {
+    for (const { value, label } of self.owned.splice(0).reverse()) {
       try {
-        await disposeOne(value);
+        await self.timed(disposeOne(value), `Disposing ${label}`);
       } catch (err) {
         errors.push(err);
       }
     }
 
-    if (self.parent && self.selfRef) {
-      self.parent.children.delete(self.selfRef);
-
-      scopeFinalizer.unregister(self);
-    }
+    if (self.retained) self.parent?.children.delete(self);
 
     self.children.clear();
     self.scopedHolders.clear();
@@ -2304,10 +2377,13 @@ export class IoCContainer<TKeys = any> {
 
     if (frame) return frame;
 
-    // A captured container used after an `await`: the async context still knows the chain.
+    // A captured container used after an `await` (or a callback a factory started): the async
+    // context still knows the chain, but only as a presumption, so it is marked as one.
     const stored = this.self().asyncContext?.getStore() as IoCResolveFrame | undefined;
 
-    return stored && !stored.settled && typeof stored.label === 'string' ? stored : undefined;
+    if (!stored || stored.settled || typeof stored.label !== 'string') return undefined;
+
+    return { key: {}, label: '(async)', parent: stored, settled: false, inferred: true };
   }
 
   /**
@@ -2320,37 +2396,21 @@ export class IoCContainer<TKeys = any> {
   }
 
   /**
-   * The module a module view acts as, if this is one.
+   * The module the current registration call is made for (a module view forwarding a call), if
+   * any; otherwise the application is calling.
    *
    * @ignore
    */
   protected currentModule(): IoCModule | undefined {
-    return (this as Indexable)[IOC_MODULE];
+    return activeModule() as IoCModule | undefined;
   }
 
   /**
-   * Throws when a module view calls a method meant for the application.
-   *
-   * @ignore
-   */
-  protected assertNotModuleView(method: string): void {
-    const module = this.currentModule();
-
-    if (!module) return;
-
-    throw new IoCRegistrationError(
-      `Module '${module.Name}' called ${method}(), which only the application can call. ` +
-        (method === 'Use'
-          ? `List the modules a module needs in its Requires instead.`
-          : method === 'Expect'
-          ? `Declare the keys a module needs from elsewhere in its Needs instead.`
-          : `Modules receive a view of the container for registering and resolving.`),
-    );
-  }
-
-  /**
-   * Throws `IoCSealedError` when the caller may not change `reg`: only the module that made it
-   * may, unless it is a default or the container is in testing mode.
+   * Throws `IoCSealedError` when the caller may not change `reg`. The application may change
+   * anything (a module's registration emits an `IOC_MODULE_OVERRIDDEN` warning). A module may
+   * change its own registrations and defaults (a default another module or the app registered
+   * emits an `IOC_DEFAULT_REPLACED` warning), never another module's or the application's.
+   * Testing mode lifts every rule.
    *
    * @ignore
    */
@@ -2358,11 +2418,40 @@ export class IoCContainer<TKeys = any> {
     reg: IoCRegistration,
     action: 'replace' | 'decorate' | 'unregister',
   ): void {
-    if (!reg.module || reg.default || this.self().options.Testing) return;
+    if (this.self().options.Testing) return;
 
-    if (reg.module === this.currentModule()) return;
+    const caller = this.currentModule();
 
-    throw new IoCSealedError(reg.label, reg.module.Name, action);
+    if (reg.module === caller) return;
+
+    // The application replacing a default is the extension point working as designed.
+    if (!caller && reg.default) return;
+
+    if (!caller) {
+      this.emit({
+        Type: 'warning',
+        Code: 'IOC_MODULE_OVERRIDDEN',
+        Message: `The application ${pastTense(action)} ${reg.label}, registered by module ` +
+          `'${reg.module!.Name}'.`,
+        Service: reg.label,
+      });
+
+      return;
+    }
+
+    if (reg.default) {
+      this.emit({
+        Type: 'warning',
+        Code: 'IOC_DEFAULT_REPLACED',
+        Message: `Module '${caller.Name}' ${pastTense(action)} the default ${reg.label}` +
+          (reg.module ? `, registered by module '${reg.module.Name}'.` : '.'),
+        Service: reg.label,
+      });
+
+      return;
+    }
+
+    throw new IoCSealedError(reg.label, reg.module?.Name, action);
   }
 
   /**
@@ -2442,7 +2531,7 @@ export class IoCContainer<TKeys = any> {
    *
    * @ignore
    */
-  protected trackOwned(value: unknown, holder?: IoCHolder): void {
+  protected trackOwned(value: unknown, holder?: IoCHolder, label = 'an instance'): void {
     if (!isDisposable(value) || IOC_OWNERS.has(value)) return;
 
     const self = this.self();
@@ -2450,7 +2539,10 @@ export class IoCContainer<TKeys = any> {
     IOC_OWNERS.set(value, self);
 
     if (!self.disposed) {
-      self.owned.push({ value, holder });
+      self.owned.push({ value, holder, label });
+
+      self.retain();
+
       return;
     }
 
@@ -2461,6 +2553,24 @@ export class IoCContainer<TKeys = any> {
         Message: `An instance that finished building after Dispose() failed to dispose: ${err}`,
       })
     );
+  }
+
+  /**
+   * Puts this scope (and its ancestors' scopes) in its parent's `children`, once it owns
+   * something that disposing the parent must clean up.
+   *
+   * @ignore
+   */
+  protected retain(): void {
+    const self = this.self();
+
+    if (self.retained || !self.parent || self.disposed) return;
+
+    self.retained = true;
+
+    self.parent.children.add(self);
+
+    self.parent.retain();
   }
 
   /**
@@ -2546,7 +2656,18 @@ export class IoCContainer<TKeys = any> {
 
     if (!bank) this.registrations.set(reg.key, bank = new Map());
 
+    const previous = bank.get(reg.name);
+
     bank.set(reg.name, reg);
+
+    const target = bank;
+
+    recordUndo(() => {
+      if (target.get(reg.name) !== reg) return;
+
+      if (previous) target.set(reg.name, previous);
+      else target.delete(reg.name);
+    });
   }
 
   /**
@@ -2560,7 +2681,7 @@ export class IoCContainer<TKeys = any> {
     name: string;
     kind: IoCRegistration['kind'];
     ctor?: AnyFunction;
-    factory: (ioc: IoCContainer) => unknown;
+    factory: IoCFactory;
     deps?: readonly IoCDependencyRecord[];
     dispose?: (instance: unknown) => unknown;
     options: IoCServiceOptions;
@@ -2568,12 +2689,14 @@ export class IoCContainer<TKeys = any> {
     value?: { value: unknown };
     /** Set by `Decorate`, which checks sealing itself. */
     sealChecked?: boolean;
+    /** Set by `Decorate`: the owner and default flag to keep (the original's). */
+    owner?: { module?: IoCModule; default?: boolean };
     /** Overrides the lifetime from the options (`Decorate` keeps the original's). */
     lifetime?: IoCLifetime;
     /** Overrides the level from the options. */
     scopeLevel?: string;
     /** Makes the factory for an isolated copy owned by `owner` (default: the same factory). */
-    fork?: (owner: IoCContainer) => (ioc: IoCContainer) => unknown;
+    fork?: (owner: IoCContainer) => IoCFactory;
     /** Create the registration without checks or storing it. */
     detached?: boolean;
   }): IoCRegistration {
@@ -2605,6 +2728,8 @@ export class IoCContainer<TKeys = any> {
 
     if (scopeLevel !== undefined && !spec.detached) self.checkLevel(scopeLevel, false);
 
+    checkTimeout(options.TimeoutMs, 'TimeoutMs');
+
     const existing = self.registrations.get(key)?.get(name);
 
     if (existing && !spec.detached) {
@@ -2635,11 +2760,11 @@ export class IoCContainer<TKeys = any> {
 
     const { dispose } = spec;
 
-    const module = this.currentModule();
+    const module = spec.owner ? spec.owner.module : this.currentModule();
 
     /** Hands an instance to its owner: the `Dispose` option's cleanup, else the instance itself. */
     const own = (tracker: IoCContainer, value: unknown, h?: IoCHolder) => {
-      if (!dispose) return tracker.trackOwned(value, h);
+      if (!dispose) return tracker.trackOwned(value, h, label);
 
       const isObject = (typeof value === 'object' || typeof value === 'function') && value !== null;
 
@@ -2648,7 +2773,7 @@ export class IoCContainer<TKeys = any> {
 
       if (isObject) IOC_OWNERS.set(value, tracker.self());
 
-      tracker.trackOwned({ [Symbol.asyncDispose]: async () => await dispose(value) }, h);
+      tracker.trackOwned({ [Symbol.asyncDispose]: async () => await dispose(value) }, h, label);
     };
 
     /**
@@ -2687,13 +2812,16 @@ export class IoCContainer<TKeys = any> {
       };
 
       try {
-        const arg = createView(container, frame) as IoCContainer;
+        // A module's factories act as the module (a module view); the app's get a plain view.
+        const arg = module
+          ? new IoCModuleView(container, module, frame) as unknown as IoCContainer
+          : createView(container, frame) as IoCContainer;
 
         const context = container.asyncContext;
 
         result = context
-          ? context.run(frame, () => withFrame(frame, () => factory(arg)))
-          : withFrame(frame, () => factory(arg));
+          ? context.run(frame, () => withFrame(frame, () => factory(arg, container, frame)))
+          : withFrame(frame, () => factory(arg, container, frame));
       } catch (err) {
         done({ error: err });
         throw err;
@@ -2727,8 +2855,11 @@ export class IoCContainer<TKeys = any> {
       if (h.state === 'ready') return h.value;
 
       if (h.state === 'pending') {
-        // A synchronous factory re-entering itself, or a chain waiting on its own result.
-        if (!h.promise || isOnActivePath(frame, h)) {
+        // A synchronous factory re-entering itself, or a chain waiting on its own result. A chain
+        // recovered from the async context is only presumed: this may be a callback the build
+        // started rather than code it awaits, so it waits instead (a real cycle there fails at
+        // PendingTimeoutMs, listing what is pending).
+        if (!h.promise || (isOnActivePath(frame, h) && !crossesInferred(frame, h))) {
           throw new IoCCircularDependencyError([...framePath(frame), label]);
         }
 
@@ -2792,7 +2923,23 @@ export class IoCContainer<TKeys = any> {
       if (h.state === 'ready') {
         own(tracker, result, h);
       } else if (result instanceof Promise) {
-        result.then((value) => own(tracker, value, h), noop);
+        result.then((value) => {
+          if (h.state === 'ready' && h.value === value) return own(tracker, value, h);
+
+          // The build was abandoned (a failed Start() forgot it) and landed late: nobody will use
+          // this instance, so it is disposed rather than leaked.
+          if (isDisposable(value) && !IOC_OWNERS.has(value)) {
+            disposeOne(value).catch((err) =>
+              tracker.emit({
+                Type: 'warning',
+                Code: 'IOC_LATE_DISPOSE_FAILED',
+                Message: `${label}, built after a failed Start() gave up on it, failed to ` +
+                  `dispose: ${err}`,
+                Service: label,
+              })
+            );
+          }
+        }, noop);
       }
 
       return result;
@@ -2809,8 +2956,9 @@ export class IoCContainer<TKeys = any> {
       holder,
       label,
       deps: spec.deps,
-      default: options.Default || undefined,
+      default: (spec.owner ? spec.owner.default : options.Default) || undefined,
       onDemand: options.OnDemand || undefined,
+      timeoutMs: options.TimeoutMs,
       scopeLevel,
       observed: new Map(),
       fork(owner: object): IoCRegistration {
@@ -2829,7 +2977,7 @@ export class IoCContainer<TKeys = any> {
         const c = container as IoCContainer;
 
         if (!holder) {
-          if (isOnActivePath(frame, reg)) {
+          if (isOnActivePath(frame, reg) && !crossesInferred(frame, reg)) {
             throw new IoCCircularDependencyError([...framePath(frame), label]);
           }
 
@@ -2908,4 +3056,166 @@ function listsNeed(module: IoCModule, dep: IoCDependencyRecord): boolean {
 
     return key === dep.key && name === dep.name;
   });
+}
+
+/** `replace` -> `replaced`, for warning messages. */
+function pastTense(action: 'replace' | 'decorate' | 'unregister'): string {
+  return action === 'unregister' ? 'unregistered' : `${action}d`;
+}
+
+/** The error a module view throws for a method only the application may call. */
+function notForModules(module: IoCModule, method: string): IoCRegistrationError {
+  return new IoCRegistrationError(
+    `Module '${module.Name}' called ${method}(), which only the application can call. ` +
+      (method === 'Use'
+        ? `List the modules a module needs in its Requires instead.`
+        : method === 'Expect'
+        ? `Declare the keys a module needs from elsewhere in its Needs instead.`
+        : `Modules receive a view of the container for registering and resolving.`),
+  );
+}
+
+/**
+ * What a module's `Register`, `OnStart`, `OnStop` and factories receive instead of the container:
+ * a closed view that registers as the module and resolves normally. It holds the container in a
+ * private field and has no prototype link to it, so module code can't reach the container (or
+ * forge another module's identity) through it. Methods only the application may call throw.
+ */
+class IoCModuleView {
+  readonly #container: IoCContainer;
+
+  readonly #module: IoCModule;
+
+  readonly #frame?: IoCResolveFrame;
+
+  constructor(container: IoCContainer, module: IoCModule, frame?: IoCResolveFrame) {
+    this.#container = container;
+    this.#module = module;
+    this.#frame = frame;
+  }
+
+  get State(): IoCContainerState {
+    return this.#container.State;
+  }
+
+  /** Where resolves continue from: the factory's resolution chain, when this is a factory's. */
+  #resolver(): IoCContainer {
+    return this.#frame ? createView(this.#container, this.#frame) : this.#container;
+  }
+
+  /** Runs a registration call as the module. */
+  #as<T>(fn: (c: IoCContainer) => T): T {
+    return asModule(this.#module, () => fn(this.#container));
+  }
+
+  RegisterClass(...args: Parameters<IoCContainer['RegisterClass']>): this {
+    this.#as((c) => c.RegisterClass(...args));
+    return this;
+  }
+
+  RegisterFactory(...args: Parameters<IoCContainer['RegisterFactory']>): this {
+    this.#as((c) => c.RegisterFactory(...args));
+    return this;
+  }
+
+  RegisterValue(...args: Parameters<IoCContainer['RegisterValue']>): this {
+    this.#as((c) => c.RegisterValue(...args));
+    return this;
+  }
+
+  Decorate(...args: Parameters<IoCContainer['Decorate']>): () => void {
+    const restore = this.#as((c) => c.Decorate(...args));
+
+    return () => this.#as(() => restore());
+  }
+
+  Unregister(...args: Parameters<IoCContainer['Unregister']>): boolean {
+    return this.#as((c) => c.Unregister(...args));
+  }
+
+  Isolate(...args: Parameters<IoCContainer['Isolate']>): this {
+    this.#as((c) => c.Isolate(...args));
+    return this;
+  }
+
+  Resolve(...args: Parameters<IoCContainer['Resolve']>): ReturnType<IoCContainer['Resolve']> {
+    return this.#resolver().Resolve(...args);
+  }
+
+  TryResolve(
+    ...args: Parameters<IoCContainer['TryResolve']>
+  ): ReturnType<IoCContainer['TryResolve']> {
+    return this.#resolver().TryResolve(...args);
+  }
+
+  ResolveAll(
+    ...args: Parameters<IoCContainer['ResolveAll']>
+  ): ReturnType<IoCContainer['ResolveAll']> {
+    return this.#resolver().ResolveAll(...args);
+  }
+
+  ResolveNamed(
+    ...args: Parameters<IoCContainer['ResolveNamed']>
+  ): ReturnType<IoCContainer['ResolveNamed']> {
+    return this.#resolver().ResolveNamed(...args);
+  }
+
+  ResolveRecord(
+    ...args: Parameters<IoCContainer['ResolveRecord']>
+  ): ReturnType<IoCContainer['ResolveRecord']> {
+    return this.#resolver().ResolveRecord(...args);
+  }
+
+  Names(...args: Parameters<IoCContainer['Names']>): string[] {
+    return this.#container.Names(...args);
+  }
+
+  Has(...args: Parameters<IoCContainer['Has']>): boolean {
+    return this.#container.Has(...args);
+  }
+
+  Describe(): IoCDescription {
+    return this.#container.Describe();
+  }
+
+  Validate(...args: Parameters<IoCContainer['Validate']>): IoCValidationIssue[] {
+    return this.#container.Validate(...args);
+  }
+
+  Typed(): this {
+    return this;
+  }
+
+  /** A scope of the container, seen through a view that still acts as this module. */
+  CreateScope(...args: Parameters<IoCContainer['CreateScope']>): IoCModuleView {
+    return new IoCModuleView(this.#container.CreateScope(...args), this.#module);
+  }
+
+  Use(): never {
+    throw notForModules(this.#module, 'Use');
+  }
+
+  Start(): Promise<never> {
+    return Promise.reject(notForModules(this.#module, 'Start'));
+  }
+
+  Activate(): Promise<never> {
+    return Promise.reject(notForModules(this.#module, 'Activate'));
+  }
+
+  Dispose(): Promise<never> {
+    return Promise.reject(notForModules(this.#module, 'Dispose'));
+  }
+
+  [Symbol.asyncDispose](): Promise<never> {
+    return Promise.reject(notForModules(this.#module, 'Dispose'));
+  }
+
+  Override(): never {
+    throw notForModules(this.#module, 'Override');
+  }
+
+  Expect(): never {
+    throw notForModules(this.#module, 'Expect');
+  }
 }

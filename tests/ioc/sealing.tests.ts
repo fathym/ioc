@@ -1,10 +1,11 @@
-// Sealing: a module's registrations can only be changed by that module, unless they are
-// defaults, or the container is in testing mode. Encapsulation by unexported tokens.
+// Sealing: a module's registrations can be changed by that module and by the application, not by
+// other modules (unless they are defaults); the application's can't be changed by modules; testing
+// mode lifts it all. Closed module views, atomic Use(), encapsulation by unexported tokens.
 import { IoCSealedError, isIoCError } from '../../src/ioc/errors.ts';
-import { IoCContainer } from '../../src/ioc/ioc.ts';
+import { IoCContainer, type IoCEvent } from '../../src/ioc/ioc.ts';
 import type { IoCModule } from '../../src/ioc/IoCModule.ts';
 import { IoCToken } from '../../src/ioc/IoCToken.ts';
-import { assert, assertEquals, assertThrows } from '../test.deps.ts';
+import { assert, assertEquals, assertRejects, assertThrows } from '../test.deps.ts';
 
 const $Url = IoCToken<string, 'Url'>('Url');
 
@@ -29,24 +30,104 @@ Deno.test('Sealing - module registrations', async (t) => {
     assert(isIoCError(err, 'IOC_SEALED'));
     assertEquals(
       err.message,
-      "Url belongs to module 'Core', so only that module can replace it. If it should be " +
-        "replaceable, register it with Default: true in 'Core'; in tests, use a container " +
-        'created with { Testing: true }.',
+      "Url belongs to module 'Core', so other modules can't replace it. If other modules " +
+        "should be able to, register it with Default: true in 'Core'; the application can " +
+        'always replace it.',
     );
   });
 
-  await t.step('the application cannot replace, decorate or unregister it either', () => {
-    const ioc = new IoCContainer().Use(Core);
-
-    assertThrows(() => ioc.RegisterValue($Url, 'app', { Replace: true }), IoCSealedError);
-    assertThrows(() => ioc.Decorate($Url, (url) => `${url}!`), IoCSealedError);
-    assertThrows(() => ioc.Unregister($Url), IoCSealedError);
+  await t.step('nor decorate or unregister it, and registering it again reports the seal', () => {
+    for (
+      const attempt of [
+        (ioc: IoCContainer) => ioc.Decorate($Url, (url) => `${url}!`),
+        (ioc: IoCContainer) => ioc.Unregister($Url),
+        (ioc: IoCContainer) => ioc.RegisterValue($Url, 'again'),
+      ]
+    ) {
+      assertThrows(
+        () =>
+          new IoCContainer().Use({
+            Name: 'Partner',
+            Requires: [Core],
+            Register: (ioc) => {
+              attempt(ioc);
+            },
+          }),
+        IoCSealedError,
+      );
+    }
   });
 
-  await t.step('registering it again without Replace reports the seal, not a duplicate', () => {
-    const ioc = new IoCContainer().Use(Core);
+  await t.step('the application can change any registration, with a warning', async () => {
+    const events: IoCEvent[] = [];
 
-    assertThrows(() => ioc.RegisterValue($Url, 'app'), IoCSealedError);
+    const ioc = new IoCContainer({ OnEvent: (e) => events.push(e) }).Use(Core);
+
+    ioc.RegisterValue($Url, 'app', { Replace: true });
+
+    assertEquals(await ioc.Resolve($Url), 'app');
+
+    const again = new IoCContainer({ OnEvent: (e) => events.push(e) }).Use(Core);
+
+    again.Decorate($Url, (url) => `${url}!`);
+
+    assertEquals(await again.Resolve($Url), 'core!');
+
+    assert(new IoCContainer({ OnEvent: (e) => events.push(e) }).Use(Core).Unregister($Url));
+
+    const warnings = events.filter((e) => e.Type === 'warning');
+
+    assertEquals(warnings.map((w) => w.Type === 'warning' && w.Code), [
+      'IOC_MODULE_OVERRIDDEN',
+      'IOC_MODULE_OVERRIDDEN',
+      'IOC_MODULE_OVERRIDDEN',
+    ]);
+    assertEquals(
+      warnings[0].Type === 'warning' && warnings[0].Message,
+      "The application replaced Url, registered by module 'Core'.",
+    );
+  });
+
+  await t.step('the application replacing a default, in any order, warns nothing', async () => {
+    const events: IoCEvent[] = [];
+
+    const Framework: IoCModule = {
+      Name: 'Framework',
+      Register: (ioc) => ioc.RegisterValue($Url, 'framework', { Default: true }),
+    };
+
+    const after = new IoCContainer({ OnEvent: (e) => events.push(e) }).Use(Framework);
+
+    after.RegisterValue($Url, 'app');
+
+    const before = new IoCContainer({ OnEvent: (e) => events.push(e) }).RegisterValue($Url, 'app');
+
+    before.Use(Framework);
+
+    assertEquals([await after.Resolve($Url), await before.Resolve($Url)], ['app', 'app']);
+    assertEquals(events.filter((e) => e.Type === 'warning'), []);
+  });
+
+  await t.step('the application still needs Replace to register over it', () => {
+    assertThrows(
+      () => new IoCContainer().Use(Core).RegisterValue($Url, 'app'),
+      Error,
+      'Url is already registered',
+    );
+  });
+
+  await t.step("modules can't change the application's registrations", () => {
+    const err = assertThrows(
+      () =>
+        new IoCContainer().RegisterValue($Url, 'app').Use({
+          Name: 'Partner',
+          Register: (ioc) => ioc.RegisterValue($Url, 'partner', { Replace: true }),
+        }),
+      IoCSealedError,
+    );
+
+    assertEquals(err.Module, undefined);
+    assertEquals(err.message, "Url belongs to the application, so modules can't replace it.");
   });
 
   await t.step('the module itself can change its own registrations', async () => {
@@ -76,7 +157,37 @@ Deno.test('Sealing - module registrations', async (t) => {
     assert(!ioc.Has($Url));
   });
 
-  await t.step('defaults stay open: the app or another module may replace them', async () => {
+  await t.step('a module may replace a default, with a warning', async () => {
+    const events: IoCEvent[] = [];
+
+    const Framework: IoCModule = {
+      Name: 'Framework',
+      Register: (ioc) => ioc.RegisterValue($Url, 'framework', { Default: true }),
+    };
+
+    const Plugin: IoCModule = {
+      Name: 'Plugin',
+      Requires: [Framework],
+      Register: (ioc) => ioc.RegisterValue($Url, 'plugin', { Replace: true }),
+    };
+
+    const ioc = new IoCContainer({ OnEvent: (e) => events.push(e) }).Use(Plugin);
+
+    assertEquals(await ioc.Resolve($Url), 'plugin');
+    assertEquals(
+      events.flatMap((e) => e.Type === 'warning' ? [e.Message] : []),
+      ["Module 'Plugin' replaced the default Url, registered by module 'Framework'."],
+    );
+
+    // The replacement belongs to Plugin now; the application can still replace it.
+    assertEquals(ioc.Describe().Services[0].Module, 'Plugin');
+
+    ioc.RegisterValue($Url, 'app', { Replace: true });
+
+    assertEquals(await ioc.Resolve($Url), 'app');
+  });
+
+  await t.step('decorating a default keeps its owner and keeps it a default', async () => {
     const Framework: IoCModule = {
       Name: 'Framework',
       Register: (ioc) => ioc.RegisterValue($Url, 'framework', { Default: true }),
@@ -88,39 +199,18 @@ Deno.test('Sealing - module registrations', async (t) => {
       Register: (ioc) => ioc.Decorate($Url, (url) => `${url}+plugin`),
     };
 
-    assertEquals(await new IoCContainer().Use(Plugin).Resolve($Url), 'framework+plugin');
+    const ioc = new IoCContainer().Use(Plugin);
 
-    const app = new IoCContainer().Use(Framework).RegisterValue($Url, 'app');
+    assertEquals(await ioc.Resolve($Url), 'framework+plugin');
 
-    assertEquals(await app.Resolve($Url), 'app');
-  });
+    const [url] = ioc.Describe().Services;
 
-  await t.step('the replacement belongs to whoever registered it, and is sealed for others', () => {
-    const Framework: IoCModule = {
-      Name: 'Framework',
-      Register: (ioc) => ioc.RegisterValue($Url, 'framework', { Default: true }),
-    };
+    assertEquals([url.Module, url.Default], ['Framework', true]);
 
-    const Branding: IoCModule = {
-      Name: 'Branding',
-      Requires: [Framework],
-      Register: (ioc) => ioc.RegisterValue($Url, 'branded'),
-    };
+    // Still a default, so the app replaces it without Replace.
+    ioc.RegisterValue($Url, 'app');
 
-    const ioc = new IoCContainer().Use(Branding);
-
-    assertEquals(ioc.Describe().Services[0].Module, 'Branding');
-
-    assertThrows(() => ioc.RegisterValue($Url, 'app', { Replace: true }), IoCSealedError);
-  });
-
-  await t.step('app registrations are not sealed against the app', async () => {
-    const ioc = new IoCContainer().RegisterValue($Url, 'one');
-
-    ioc.RegisterValue($Url, 'two', { Replace: true });
-
-    assertEquals(await ioc.Resolve($Url), 'two');
-    assert(ioc.Unregister($Url));
+    assertEquals(await ioc.Resolve($Url), 'app');
   });
 
   await t.step('a scope may shadow a sealed registration for itself only', async () => {
@@ -132,6 +222,132 @@ Deno.test('Sealing - module registrations', async (t) => {
 
     assertEquals(await scope.Resolve($Url), 'scoped!');
     assertEquals(await ioc.Resolve($Url), 'core');
+  });
+});
+
+Deno.test('Sealing - module views are closed', async (t) => {
+  await t.step('a module view leads nowhere near the container', () => {
+    let view: object | undefined;
+
+    const ioc = new IoCContainer().Use({ Name: 'Peek', Register: (c) => (view = c) });
+
+    assert(view !== ioc);
+    assert(!(view instanceof IoCContainer));
+    assert(Object.getPrototypeOf(Object.getPrototypeOf(view)) === Object.prototype);
+    assertEquals((view as Record<string, unknown>)['registrations'], undefined);
+    assertEquals((view as Record<string, unknown>)['options'], undefined);
+    assertEquals(Object.getOwnPropertySymbols(view!), []);
+  });
+
+  await t.step('options are frozen, so testing mode cannot be switched on later', () => {
+    const ioc = new IoCContainer();
+
+    assertThrows(() => {
+      (ioc as unknown as { options: { Testing: boolean } }).options.Testing = true;
+    });
+  });
+
+  await t.step("a module's factories receive a module view, not the container", async () => {
+    let seen: unknown;
+
+    const $Peek = IoCToken<string, 'Peek'>('Peek');
+
+    const ioc = new IoCContainer().Use({
+      Name: 'Peeker',
+      Register: (c) =>
+        c.RegisterFactory($Peek, (inner) => {
+          seen = inner;
+          return 'ok';
+        }),
+    });
+
+    assertEquals(await ioc.Resolve($Peek), 'ok');
+    assert(!(seen instanceof IoCContainer));
+    await assertRejects(
+      () => (seen as IoCContainer).Dispose(),
+      Error,
+      "Module 'Peeker' called Dispose()",
+    );
+  });
+
+  await t.step('a scope created from a module view still acts as the module', () => {
+    new IoCContainer().Use({
+      Name: 'Scoper',
+      Register: (c) => {
+        const scope = c.CreateScope();
+
+        assertEquals(scope instanceof IoCContainer, false);
+        assertThrows(() => scope.Use(Core), Error, "Module 'Scoper' called Use()");
+      },
+    });
+  });
+});
+
+Deno.test('Sealing - Use() is all or nothing', async (t) => {
+  await t.step('a Register that throws leaves nothing behind, and Use can be retried', async () => {
+    let fail = true;
+
+    const $Other = IoCToken<number, 'Other'>('Other');
+
+    const Flaky: IoCModule = {
+      Name: 'Flaky',
+      Register: (ioc) => {
+        ioc.RegisterValue($Url, 'flaky');
+
+        if (fail) throw new Error('config missing');
+
+        ioc.RegisterValue($Other, 1);
+      },
+    };
+
+    const ioc = new IoCContainer();
+
+    assertThrows(() => ioc.Use(Flaky), Error, 'config missing');
+
+    assert(!ioc.Has($Url));
+    assertEquals(ioc.Describe().Modules, []);
+
+    fail = false;
+
+    ioc.Use(Flaky);
+
+    assertEquals(await ioc.Resolve($Url), 'flaky');
+    assertEquals(await ioc.Resolve($Other), 1);
+  });
+
+  await t.step('the whole call rolls back, including modules it required', () => {
+    const Base: IoCModule = {
+      Name: 'Base',
+      Register: (ioc) => ioc.RegisterValue($Url, 'base'),
+    };
+
+    const Broken: IoCModule = {
+      Name: 'Broken',
+      Requires: [Base],
+      Register: () => {
+        throw new Error('broken');
+      },
+    };
+
+    const ioc = new IoCContainer();
+
+    assertThrows(() => ioc.Use(Broken), Error, 'broken');
+
+    assert(!ioc.Has($Url));
+    assertEquals(ioc.Describe().Modules, []);
+  });
+
+  await t.step('replacements made before the failure are undone too', async () => {
+    const ioc = new IoCContainer().RegisterValue($Url, 'app');
+
+    const Framework: IoCModule = {
+      Name: 'Framework',
+      Register: (c) => c.RegisterValue($Url, 'framework', { Default: true }),
+    };
+
+    ioc.Use(Framework);
+
+    assertEquals(await ioc.Resolve($Url), 'app');
   });
 });
 

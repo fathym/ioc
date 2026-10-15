@@ -2,7 +2,6 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import {
   IoCActivationError,
-  IoCCircularDependencyError,
   IoCResolveTimeoutError,
   IoCSealedError,
   IoCServiceNotFoundError,
@@ -426,14 +425,33 @@ Deno.test('AsyncContext and PendingTimeoutMs', async (t) => {
     return { $A, $B };
   }
 
-  await t.step('by default, a cycle through a captured container throws', async () => {
+  await t.step(
+    'by default, a cycle through a captured container fails at the timeout',
+    async () => {
+      const ioc = new IoCContainer({ PendingTimeoutMs: 50 });
+
+      const { $A } = capturedCycle('IntroAuto', ioc);
+
+      const err = await assertRejects(() => ioc.Resolve($A), IoCResolveTimeoutError);
+
+      assert(err.message.includes('a container captured in a closure'), err.message);
+    },
+  );
+
+  await t.step('the async context keeps resolution paths across await', async () => {
     const ioc = new IoCContainer();
 
-    const { $A } = capturedCycle('IntroAuto', ioc);
+    const $Missing = IoCToken<number>('IntroPathMissing');
+    const $Repo = IoCToken<number>('IntroPathRepo');
 
-    const err = await assertRejects(() => ioc.Resolve($A), IoCCircularDependencyError);
+    ioc.RegisterFactory($Repo, async () => {
+      await tick();
+      return await ioc.Resolve($Missing);
+    });
 
-    assert(err.message.includes('IntroAutoA -> IntroAutoB -> IntroAutoA'), err.message);
+    const err = await assertRejects(() => ioc.Resolve($Repo), IoCServiceNotFoundError);
+
+    assert(err.message.includes('Resolution path: IntroPathRepo.'), err.message);
   });
 
   await t.step('a given AsyncLocalStorage is used instead', async () => {
@@ -451,11 +469,17 @@ Deno.test('AsyncContext and PendingTimeoutMs', async (t) => {
       },
     });
 
-    const { $A } = capturedCycle('IntroAls', ioc);
+    const $Missing = IoCToken<number>('IntroAlsMissing');
+    const $Repo = IoCToken<number>('IntroAlsRepo');
 
-    const err = await assertRejects(() => ioc.Resolve($A), IoCCircularDependencyError);
+    ioc.RegisterFactory($Repo, async () => {
+      await tick();
+      return await ioc.Resolve($Missing);
+    });
 
-    assert(err.message.includes('IntroAlsA -> IntroAlsB -> IntroAlsA'), err.message);
+    const err = await assertRejects(() => ioc.Resolve($Repo), IoCServiceNotFoundError);
+
+    assert(err.message.includes('Resolution path: IntroAlsRepo.'), err.message);
     assert(used);
   });
 

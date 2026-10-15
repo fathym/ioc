@@ -493,20 +493,28 @@ Deno.test('CreateScope - parent disposal', async (t) => {
     const done = root.CreateScope();
     const child = done.CreateScope();
 
-    assertEquals(liveScopes(root), 2);
-    assertEquals(liveScopes(done), 1);
+    // Scopes are tracked once they own something to dispose.
+    assertEquals(liveScopes(root), 0);
 
-    await done.Resolve($Res);
+    await child.Resolve($Res);
+
+    assertEquals(liveScopes(done), 1);
+    assertEquals(liveScopes(root), 1);
+
     await done.Dispose();
 
-    assertEquals(liveScopes(root), 1);
+    assertEquals(liveScopes(root), 0);
     assertEquals(child.State, 'disposed');
 
     await kept.Resolve($Res);
+
+    assertEquals(liveScopes(root), 1);
+
     await root.Dispose();
 
     // Each instance was disposed exactly once.
     assertEquals(log, ['scoped', 'scoped']);
+    assertEquals(kept.State, 'disposed');
     assertEquals(liveScopes(root), 0);
   });
 

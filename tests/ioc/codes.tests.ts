@@ -169,16 +169,24 @@ Deno.test('Error codes', async (t) => {
     // IOC_SEALED: replacing, decorating or unregistering a module's registration from outside.
     const $Owned = IoCToken<number>('CodesOwned');
 
-    const ioc = new IoCContainer().Use({
+    const Owner: IoCModule = {
       Name: 'CodesOwner',
       Register: (m) => m.RegisterValue($Owned, 1),
-    });
+    };
+
+    // From another module in the same container (the application itself may change anything).
+    const asModule = (fn: (m: IoCContainer) => unknown) => () =>
+      new IoCContainer().Use(Owner, {
+        Name: 'CodesOther',
+        Requires: [Owner],
+        Register: (m) => void fn(m),
+      });
 
     for (
       const [action, fn] of [
-        ['replace', () => ioc.RegisterValue($Owned, 2, { Replace: true })],
-        ['decorate', () => ioc.Decorate($Owned, (n) => n + 1)],
-        ['unregister', () => ioc.Unregister($Owned)],
+        ['replace', asModule((m) => m.RegisterValue($Owned, 2, { Replace: true }))],
+        ['decorate', asModule((m) => m.Decorate($Owned, (n) => n + 1))],
+        ['unregister', asModule((m) => m.Unregister($Owned))],
       ] as const
     ) {
       const err = assertThrows(fn, IoCSealedError);

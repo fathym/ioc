@@ -5,8 +5,9 @@ import type { IoCContainer, IoCDependencyKey, IoCExpected, IoCNoKeys } from './i
  * feature contributes services to a host container. Add modules with {@link IoCContainer.Use}.
  *
  * - `Register` adds the module's services. It runs once per container, after the modules it
- *   `Requires`. Registrations made here belong to the module: only the module itself can replace,
- *   decorate or unregister them later (unless they are registered with `Default: true`).
+ *   `Requires`. Registrations made here belong to the module: other modules can't replace,
+ *   decorate or unregister them (unless they are registered with `Default: true`); the
+ *   application can.
  * - `OnStart` runs from {@link IoCContainer.Start}, after every singleton was built. Modules that
  *   don't require each other start at the same time; a module starts after everything it requires.
  * - `OnStop` runs from {@link IoCContainer.Dispose}, in the reverse order, before any instance is
@@ -43,8 +44,7 @@ import type { IoCContainer, IoCDependencyKey, IoCExpected, IoCNoKeys } from './i
  * ```
  *
  * @typeParam TNeeds Type-only: the keys the module needs from elsewhere (see `DefineModule`).
- * @typeParam TProvides Type-only: the keys the module (and the modules it requires) registers
- * (see `DefineModule`). A module written by hand needs and provides nothing, as far as types go.
+ * @typeParam TProvides Type-only: the keys the module registers itself (see `DefineModule`). A module written by hand needs and provides nothing, as far as types go.
  */
 export interface IoCModule<TNeeds = never, TProvides = never> {
   /** A unique, readable name, used in errors, `Describe()` and events. */
@@ -60,6 +60,12 @@ export interface IoCModule<TNeeds = never, TProvides = never> {
    */
   // deno-lint-ignore no-explicit-any
   readonly Needs?: readonly (IoCDependencyKey<any> | readonly [IoCDependencyKey<any>, string])[];
+
+  /**
+   * Overrides the container's `PendingTimeoutMs` for this module's `OnStart` and `OnStop`
+   * (`0` turns it off).
+   */
+  readonly TimeoutMs?: number;
 
   /** Adds the module's registrations. Synchronous: async setup belongs in `OnStart` or factories. */
   // deno-lint-ignore no-explicit-any
@@ -89,7 +95,10 @@ export type IoCModuleTypes<TNeeds, TProvides> = {
   marker(types: { needs: TNeeds; provides: TProvides }): void;
 }['marker'];
 
-/** The keys a module provides, including what the modules it requires provide (type-only). */
+/**
+ * The keys a module itself registers (type-only). What the modules it requires register is theirs:
+ * a module's type never grows with the depth of its requirements, so type-checking stays cheap.
+ */
 export type IoCModuleProvides<M> = M extends {
   readonly '@fathym/ioc/module'?: (types: { needs: infer _N; provides: infer P }) => void;
 } ? P
@@ -104,7 +113,7 @@ export type IoCModuleNeeds<M> = M extends {
 } ? N
   : never;
 
-/** The keys provided by a list of modules (each already including what it requires). */
+/** The keys the listed modules register themselves (type-only). */
 export type IoCModulesProvide<TModules> = TModules extends readonly (infer M)[]
   ? IoCModuleProvides<M>
   : never;
@@ -133,11 +142,17 @@ export interface IoCModuleDefinition<
   /** A unique, readable name, used in errors, `Describe()` and events. */
   readonly Name: string;
 
-  /** Modules that must be registered (and started) before this one; their keys are typed in. */
+  /**
+   * Modules that must be registered (and started) before this one. What they register themselves
+   * is typed in; to depend on a module further down, require it too (or list its keys in `Needs`).
+   */
   readonly Requires?: TRequires;
 
   /** Keys the module needs that someone else registers; they are typed in too. */
   readonly Needs?: TNeeds;
+
+  /** Overrides the container's `PendingTimeoutMs` for this module's `OnStart` and `OnStop`. */
+  readonly TimeoutMs?: number;
 
   /**
    * Adds the module's registrations. Chain them and return the chain: what it returns is what the
@@ -154,7 +169,7 @@ export interface IoCModuleDefinition<
 
 /**
  * Defines a typed module. Inside `Register`, the container is typed with the keys the module
- * `Needs` and the keys its `Requires` provide, so `Deps` can only name those and the module's own
+ * `Needs` and the keys its `Requires` register themselves, so `Deps` can only name those and the module's own
  * earlier registrations. Return the registration chain: its keys become what the module provides.
  * On a {@link IoCContainer.Typed typed container}, `Use(module)` adds those keys, and only
  * compiles when the container already has what the module needs.
@@ -197,10 +212,10 @@ export function DefineModule<
   definition: IoCModuleDefinition<TRequires, TNeeds, TResult>,
 ): IoCModule<
   IoCExpected<TNeeds> | Exclude<IoCModulesNeed<TRequires>, IoCModulesProvide<TRequires>>,
-  Exclude<IoCKeysOf<TResult>, IoCModuleKeys<TRequires, TNeeds>> | IoCModulesProvide<TRequires>
+  Exclude<IoCKeysOf<TResult>, IoCModuleKeys<TRequires, TNeeds>>
 > {
   return definition as unknown as IoCModule<
     IoCExpected<TNeeds> | Exclude<IoCModulesNeed<TRequires>, IoCModulesProvide<TRequires>>,
-    Exclude<IoCKeysOf<TResult>, IoCModuleKeys<TRequires, TNeeds>> | IoCModulesProvide<TRequires>
+    Exclude<IoCKeysOf<TResult>, IoCModuleKeys<TRequires, TNeeds>>
   >;
 }

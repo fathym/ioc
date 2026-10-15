@@ -152,19 +152,21 @@ Deno.test('Concurrency - cycles through a captured container', async (t) => {
     return { $A, $B };
   }
 
-  await t.step('throws by default (the async context follows the chain)', async () => {
-    const ioc = new IoCContainer();
+  await t.step('after an await, it fails at PendingTimeoutMs rather than guessing', async () => {
+    // The async context can't tell code a build awaits from a callback it started, so it never
+    // reports a cycle on its own; the timeout does, naming what is pending.
+    const ioc = new IoCContainer({ PendingTimeoutMs: 50 });
 
     const { $A } = capturedPair('ConcCaptured', ioc);
 
-    const err = await assertRejects(() => within(ioc.Resolve($A)), IoCCircularDependencyError);
+    const err = await assertRejects(() => within(ioc.Resolve($A)), IoCResolveTimeoutError);
 
-    assertEquals(err.code, 'IOC_CIRCULAR_DEPENDENCY');
-    assertEquals(err.Path, ['ConcCapturedA', 'ConcCapturedB', 'ConcCapturedA']);
+    assertEquals(err.code, 'IOC_RESOLVE_TIMEOUT');
+    assert(err.Waiting.includes('ConcCapturedA'), String(err.Waiting));
   });
 
   await t.step('two captured-container resolutions entering at once both reject', async () => {
-    const ioc = new IoCContainer();
+    const ioc = new IoCContainer({ PendingTimeoutMs: 50 });
 
     const { $A, $B } = capturedPair('ConcCapturedPair', ioc);
 
@@ -172,8 +174,48 @@ Deno.test('Concurrency - cycles through a captured container', async (t) => {
 
     for (const r of results) {
       assertEquals(r.status, 'rejected');
-      assert((r as PromiseRejectedResult).reason instanceof IoCCircularDependencyError);
+      assert((r as PromiseRejectedResult).reason instanceof IoCResolveTimeoutError);
     }
+  });
+
+  await t.step('a callback a build started may resolve that build: no false cycle', async () => {
+    const ioc = new IoCContainer();
+
+    const $Server = IoCToken<{ handled: Promise<string> }>('ConcServer');
+
+    ioc.RegisterFactory($Server, async () => {
+      // A request arriving while the server warms up: the handler runs inside the build's
+      // async context, and resolves the server itself.
+      const handled = new Promise<string>((done) => {
+        setTimeout(async () => {
+          const server = await ioc.Resolve($Server);
+
+          done(server ? 'handled' : 'missing');
+        }, 1);
+      });
+
+      await new Promise((r) => setTimeout(r, 5));
+
+      return { handled };
+    });
+
+    const server = await within(ioc.Resolve($Server));
+
+    assertEquals(await within(server.handled), 'handled');
+  });
+
+  await t.step('a cycle through the factory parameter still throws at once', async () => {
+    const ioc = new IoCContainer();
+
+    const $A = IoCToken<number>('ConcParamA');
+    const $B = IoCToken<number>('ConcParamB');
+
+    ioc.RegisterFactory($A, async (c) => (await tick(), (await c.Resolve($B)) + 1));
+    ioc.RegisterFactory($B, async (c) => (await tick(), (await c.Resolve($A)) + 1));
+
+    const err = await assertRejects(() => within(ioc.Resolve($A)), IoCCircularDependencyError);
+
+    assertEquals(err.Path, ['ConcParamA', 'ConcParamB', 'ConcParamA']);
   });
 
   await t.step('a captured-container chain without a cycle still works', async () => {

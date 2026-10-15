@@ -864,3 +864,157 @@ Deno.test('Lifecycle - startup edge cases', async (t) => {
     new IoCContainer({ PendingTimeoutMs: 0 });
   });
 });
+
+Deno.test('Lifecycle - shutdown and timeouts', async (t) => {
+  await t.step('a stuck dispose fails Dispose() at the timeout instead of hanging', async () => {
+    class Stuck {
+      [Symbol.asyncDispose]() {
+        return new Promise<void>(() => {});
+      }
+    }
+
+    const ioc = new IoCContainer({ PendingTimeoutMs: 20 }).RegisterClass(Stuck);
+
+    await ioc.Resolve(Stuck);
+
+    const err = await assertRejects(() => ioc.Dispose());
+
+    assert(isIoCError(err, 'IOC_DISPOSE_FAILED'));
+
+    const [cause] = (err as unknown as AggregateError).errors;
+
+    assert(isIoCError(cause, 'IOC_RESOLVE_TIMEOUT'));
+    assert((cause as Error).message.startsWith('Disposing Stuck did not finish within 20ms'));
+    assertEquals(ioc.State, 'disposed');
+  });
+
+  await t.step('TimeoutMs gives one registration its own limit', async () => {
+    const $Migrate = IoCToken<string, 'Migrate'>('Migrate');
+    const $Quick = IoCToken<string, 'Quick'>('Quick');
+
+    const ioc = new IoCContainer({ PendingTimeoutMs: 10 })
+      .RegisterFactory($Migrate, async () => (await delay(40), 'migrated'), { TimeoutMs: 1000 })
+      .RegisterFactory($Quick, () => new Promise<string>(() => {}));
+
+    assertEquals(await ioc.Resolve($Migrate), 'migrated');
+
+    await assertRejects(() => ioc.Resolve($Quick), Error, 'Quick did not finish within 10ms');
+
+    assertThrows(
+      () =>
+        new IoCContainer().RegisterValue($Quick, 'x').RegisterFactory($Migrate, () => '', {
+          TimeoutMs: -5,
+        }),
+      IoCRegistrationError,
+      'TimeoutMs must be a finite number of milliseconds',
+    );
+  });
+
+  await t.step("a module's TimeoutMs is validated when the module is added", () => {
+    for (const bad of [-5, NaN, Infinity]) {
+      assertThrows(
+        () => new IoCContainer().Use({ Name: 'Bad', TimeoutMs: bad, Register: () => {} }),
+        IoCRegistrationError,
+        'TimeoutMs must be a finite number of milliseconds',
+      );
+    }
+  });
+
+  await t.step("a module's TimeoutMs bounds its OnStart and OnStop", async () => {
+    const ioc = new IoCContainer({ PendingTimeoutMs: 10 }).Use({
+      Name: 'Warmup',
+      TimeoutMs: 1000,
+      Register: () => {},
+      OnStart: () => delay(40),
+    });
+
+    await ioc.Start();
+
+    assertEquals(ioc.State, 'started');
+
+    await ioc.Dispose();
+  });
+
+  await t.step('a build that lands after a failed Start() is disposed, not cached', async () => {
+    const built: Conn[] = [];
+
+    class Conn {
+      public closed = false;
+
+      constructor() {
+        built.push(this);
+      }
+
+      [Symbol.dispose]() {
+        this.closed = true;
+      }
+    }
+
+    let release!: () => void;
+
+    const gate = new Promise<void>((r) => (release = r));
+
+    const ioc = new IoCContainer({ PendingTimeoutMs: 20 }).RegisterFactory(
+      Conn,
+      async () => (await gate, new Conn()),
+    );
+
+    await assertRejects(() => ioc.Start());
+
+    release();
+    await delay(5);
+
+    assertEquals(built.length, 1);
+    assert(built[0].closed, 'the late instance was disposed');
+    assertEquals(ioc.Describe().Services[0].State, 'empty');
+
+    await ioc.Dispose();
+  });
+
+  await t.step("a scope's modules can't start before the parent modules they require", async () => {
+    const events: string[] = [];
+
+    const host = module('Host', events);
+
+    const ioc = new IoCContainer().Use(host);
+
+    const plugin = ioc.CreateScope().Use(module('Plugin', events, { Requires: [host] }));
+
+    const err = await assertRejects(() => plugin.Start(), IoCStartError);
+
+    assertEquals(err.Module, 'Plugin');
+    assert(err.message.includes("requires module 'Host'"), err.message);
+    assert(!events.includes('start:Plugin'));
+
+    await ioc.Start();
+    await plugin.Start();
+
+    assert(events.includes('start:Plugin'));
+
+    await ioc.Dispose();
+  });
+
+  await t.step('Dispose() racing a failing Start() still reports the real failure', async () => {
+    let fail!: (err: Error) => void;
+
+    const ioc = new IoCContainer().Use({
+      Name: 'Broker',
+      Register: () => {},
+      OnStart: () => new Promise((_, reject) => (fail = reject)),
+    });
+
+    const starting = ioc.Start();
+
+    await delay(1);
+
+    const disposing = ioc.Dispose();
+
+    fail(new Error('broker down'));
+
+    const err = await assertRejects(() => starting, IoCStartError);
+
+    assertEquals((err.cause as Error).message, 'broker down');
+
+    await disposing;
+  });
+});

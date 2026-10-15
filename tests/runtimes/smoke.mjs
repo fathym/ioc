@@ -13,6 +13,7 @@ const url = new URL(target, `file://${globalThis.process?.cwd?.() ?? globalThis.
 const {
   IoCCircularDependencyError,
   IoCContainer,
+  IoCResolveTimeoutError,
   IoCSealedError,
   IoCServiceNotFoundError,
   IoCToken,
@@ -120,16 +121,15 @@ try {
 }
 check(validation instanceof IoCValidationError, 'Validate reports missing dependencies');
 
-// Cycles through a captured container throw across `await`, where the runtime offers an async
-// context without an import (Node.js 20.16+/22.3+, Deno, Bun).
-if (typeof globalThis.process?.getBuiltinModule === 'function') {
-  const captured = new IoCContainer();
+// A cycle through a captured container after `await` never hangs: it fails at the timeout.
+{
+  const captured = new IoCContainer({ PendingTimeoutMs: 50 });
   const $X = IoCToken('Smoke/X');
   const $Y = IoCToken('Smoke/Y');
   const tick = () => new Promise((r) => setTimeout(r, 1));
   captured.RegisterFactory($X, async () => (await tick(), await captured.Resolve($Y)));
   captured.RegisterFactory($Y, async () => (await tick(), await captured.Resolve($X)));
-  await rejects(() => captured.Resolve($X), IoCCircularDependencyError, 'captured cycles throw');
+  await rejects(() => captured.Resolve($X), IoCResolveTimeoutError, 'captured cycles time out');
 }
 
 // Modules: layered start, sealing, and disposal reaching child scopes.
@@ -163,11 +163,25 @@ check(
 );
 let sealed;
 try {
-  app.RegisterValue($Url, 'evil', { Replace: true });
+  app.CreateScope().Use({
+    Name: 'Partner',
+    Requires: [Core],
+    Register: (c) => c.Unregister($Url),
+  });
 } catch (err) {
   sealed = err;
 }
-check(sealed instanceof IoCSealedError, 'module registrations are sealed');
+check(sealed === undefined, 'a scope may shadow, never touch, the parent');
+try {
+  new IoCContainer().Use(Core, {
+    Name: 'Partner',
+    Requires: [Core],
+    Register: (c) => c.RegisterValue($Url, 'evil', { Replace: true }),
+  });
+} catch (err) {
+  sealed = err;
+}
+check(sealed instanceof IoCSealedError, 'module registrations are sealed against other modules');
 const tenant = app.CreateScope();
 tenant.RegisterClass(Session, { Lifetime: 'scoped' });
 const leftOpen = await tenant.Resolve(Session);

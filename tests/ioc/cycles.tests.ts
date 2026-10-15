@@ -1,7 +1,13 @@
-import { IoCCircularDependencyError } from '../../src/ioc/errors.ts';
+import { IoCCircularDependencyError, IoCResolveTimeoutError } from '../../src/ioc/errors.ts';
 import { IoCContainer } from '../../src/ioc/ioc.ts';
 import { IoCToken } from '../../src/ioc/IoCToken.ts';
-import { assertEquals, assertInstanceOf, assertRejects, assertStrictEquals } from '../test.deps.ts';
+import {
+  assert,
+  assertEquals,
+  assertInstanceOf,
+  assertRejects,
+  assertStrictEquals,
+} from '../test.deps.ts';
 import { delay, withinTimeout } from './_helpers.ts';
 
 const $A = IoCToken<{ b: unknown }>('A');
@@ -40,7 +46,8 @@ Deno.test('Cycles - detected instead of hanging', async (t) => {
   });
 
   await t.step('cycle through a closure-captured container after an await', async () => {
-    const ioc = new IoCContainer();
+    // Only presumed by the async context, so it surfaces as a timeout naming what's pending.
+    const ioc = new IoCContainer({ PendingTimeoutMs: 50 });
 
     ioc.RegisterFactory($A, async () => {
       await delay(1);
@@ -52,11 +59,11 @@ Deno.test('Cycles - detected instead of hanging', async (t) => {
     });
 
     const err = await withinTimeout(
-      assertRejects(() => ioc.Resolve($A), IoCCircularDependencyError),
+      assertRejects(() => ioc.Resolve($A), IoCResolveTimeoutError),
     );
 
-    assertEquals(err.code, 'IOC_CIRCULAR_DEPENDENCY');
-    assertEquals(err.Path, ['A', 'B', 'A']);
+    assertEquals(err.code, 'IOC_RESOLVE_TIMEOUT');
+    assert(err.Waiting.includes('A'), String(err.Waiting));
   });
 
   await t.step('transient self-dependency', async () => {

@@ -9,9 +9,6 @@ export const IOC_CONTEXT: unique symbol = Symbol('@fathym/ioc/context');
 /** On a view: the real container the view was created from. */
 export const IOC_SELF: unique symbol = Symbol('@fathym/ioc/self');
 
-/** On a module view: the module whose `Register`, `OnStart` or `OnStop` is running. */
-export const IOC_MODULE: unique symbol = Symbol('@fathym/ioc/module');
-
 /**
  * Who owns (and so disposes) each disposable instance: the first container that created it, or
  * {@link IOC_EXTERNAL} for values handed in with `RegisterValue`. A decorator or alias factory
@@ -79,6 +76,12 @@ export interface IoCResolveFrame {
   settled: boolean;
   /** Set when the factory threw or rejected: the build this frame ran is abandoned. */
   failed?: { error: unknown };
+  /**
+   * Set on the stand-in frame for a chain recovered from the async context (a captured container
+   * used after an `await`, or a callback started by a factory). Such a chain is only presumed: the
+   * build it points at may not be waiting on this resolve.
+   */
+  inferred?: boolean;
   /** The registration whose factory this frame runs. */
   reg?: IoCRegistration;
 }
@@ -99,6 +102,8 @@ export interface IoCRegistration {
   readonly label: string;
   /** Declared constructor dependencies (`RegisterClass(…, { Deps })`), used by `Validate()`. */
   readonly deps?: readonly IoCDependencyRecord[];
+  /** Overrides the container's `PendingTimeoutMs` for this service (`TimeoutMs`). */
+  readonly timeoutMs?: number;
   /** Built on first resolve only, never by `Start()`/`Activate()` (`OnDemand: true`). */
   readonly onDemand?: boolean;
   /** A framework default (`Default: true`): it yields to any other registration of its key. */
@@ -224,13 +229,27 @@ export function isHolder(key: object): key is IoCHolder {
   return typeof (key as IoCHolder).state === 'string';
 }
 
-/** The innermost pending holder being built along the active part of a resolution chain. */
+/**
+ * The innermost pending holder being built along the known part of a resolution chain (up to the
+ * first link recovered from the async context, which is only presumed).
+ */
 export function nearestHolder(frame: IoCResolveFrame | undefined): IoCHolder | undefined {
-  for (let f = frame; f; f = f.parent) {
+  for (let f = frame; f && !f.inferred; f = f.parent) {
     if (!f.settled && isHolder(f.key) && f.key.state === 'pending') return f.key;
   }
 
   return undefined;
+}
+
+/** True when the chain from `frame` up to the frame building `key` passes a presumed link. */
+export function crossesInferred(frame: IoCResolveFrame | undefined, key: object): boolean {
+  for (let f = frame; f; f = f.parent) {
+    if (f.inferred) return true;
+
+    if (!f.settled && f.key === key) return false;
+  }
+
+  return false;
 }
 
 /** Records that `holder`'s build started beneath the build of `parent` (same chain). */
@@ -252,11 +271,14 @@ export function releaseBuild(holder: IoCHolder): void {
   holder.under = undefined;
 }
 
-/** The pending holders being built along the active part of a resolution chain. */
+/**
+ * The pending holders being built along the known part of a resolution chain (up to the first
+ * link recovered from the async context, which is only presumed).
+ */
 export function activeHolders(frame: IoCResolveFrame | undefined): IoCHolder[] {
   const holders: IoCHolder[] = [];
 
-  for (let f = frame; f; f = f.parent) {
+  for (let f = frame; f && !f.inferred; f = f.parent) {
     if (!f.settled && isHolder(f.key) && f.key.state === 'pending') holders.push(f.key);
   }
 
@@ -333,7 +355,7 @@ export function framePath(frame: IoCResolveFrame | undefined): string[] {
   const path: string[] = [];
 
   for (let f = frame; f; f = f.parent) {
-    if (!f.settled) path.unshift(f.label);
+    if (!f.settled && !f.inferred) path.unshift(f.label);
   }
 
   return path;
@@ -360,12 +382,6 @@ export function labelFor(key: IoCKey, name: string): string {
  * chain; nothing is ever assigned on it. A view made from a module view keeps its module.
  */
 export function createView<T extends object>(container: T, frame: IoCResolveFrame): T {
-  const module = (container as Indexable)[IOC_MODULE];
-
-  if (module) {
-    return Object.create(container, { [IOC_CONTEXT]: { value: frame } }) as T;
-  }
-
   const self = (container as Indexable)[IOC_SELF] ?? container;
 
   let View = viewConstructors.get(self);
@@ -388,24 +404,70 @@ export function createView<T extends object>(container: T, frame: IoCResolveFram
 
 const viewConstructors = new WeakMap<object, new (frame: IoCResolveFrame) => object>();
 
-/**
- * Creates a view of `container` that acts as `module`: registrations made through it are
- * recorded as the module's, and the module may change them later.
- */
-export function createModuleView<T extends object>(container: T, module: { Name: string }): T {
-  const self = (container as Indexable)[IOC_SELF] ?? container;
+let activeModule: { readonly Name: string } | undefined;
 
-  return Object.create(self, {
-    [IOC_SELF]: { value: self },
-    [IOC_MODULE]: { value: module },
-  }) as T;
+/**
+ * The module a registration call is being made for: set (synchronously) while a module view
+ * forwards a call to its container, so the registration records the module as its owner.
+ */
+export function currentModule(): { readonly Name: string } | undefined {
+  return activeModule;
+}
+
+/** Runs `fn` (synchronously) as `module`; see {@link currentModule}. */
+export function asModule<T>(module: { readonly Name: string } | undefined, fn: () => T): T {
+  const previous = activeModule;
+
+  activeModule = module;
+
+  try {
+    return fn();
+  } finally {
+    activeModule = previous;
+  }
+}
+
+let journal: (() => void)[] | undefined;
+
+/** Records how to undo a registration change while a module's `Register` runs (atomic `Use`). */
+export function recordUndo(undo: () => void): void {
+  journal?.push(undo);
+}
+
+/**
+ * Runs `fn`, and if it throws, undoes every registration change it made (newest first) before
+ * rethrowing, so a module's `Register` either applies completely or not at all.
+ */
+export function atomically<T>(fn: () => T): T {
+  const outer = journal;
+
+  const mine: (() => void)[] = [];
+
+  journal = mine;
+
+  try {
+    const result = fn();
+
+    outer?.push(...mine);
+
+    return result;
+  } catch (err) {
+    for (const undo of mine.reverse()) undo();
+
+    throw err;
+  } finally {
+    journal = outer;
+  }
 }
 
 /** Records `result` into `holder`, memoizing successes and resetting on rejection (retry). */
 export function settleInto(holder: IoCHolder, result: unknown): unknown {
   if (result instanceof Promise) {
-    const promise = result.then(
+    const promise: Promise<unknown> = result.then(
       (value) => {
+        // Abandoned meanwhile (a failed Start() forgot it): the holder isn't this build's anymore.
+        if (holder.promise !== promise) return value;
+
         holder.state = 'ready';
         holder.value = value;
         holder.promise = undefined;
@@ -414,9 +476,11 @@ export function settleInto(holder: IoCHolder, result: unknown): unknown {
         return value;
       },
       (err) => {
-        holder.state = 'empty';
-        holder.promise = undefined;
-        releaseBuild(holder);
+        if (holder.promise === promise) {
+          holder.state = 'empty';
+          holder.promise = undefined;
+          releaseBuild(holder);
+        }
 
         throw err;
       },

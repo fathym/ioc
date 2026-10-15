@@ -1,8 +1,4 @@
-import {
-  IoCScopeRequiredError,
-  IoCSealedError,
-  IoCServiceNotFoundError,
-} from '../../src/ioc/errors.ts';
+import { IoCScopeRequiredError, IoCServiceNotFoundError } from '../../src/ioc/errors.ts';
 import { IoCContainer } from '../../src/ioc/ioc.ts';
 import type { IoCModule } from '../../src/ioc/IoCModule.ts';
 import { IoCToken } from '../../src/ioc/IoCToken.ts';
@@ -14,7 +10,6 @@ import {
   assertNotStrictEquals,
   assertRejects,
   assertStrictEquals,
-  assertThrows,
 } from '../test.deps.ts';
 
 class Session {
@@ -161,12 +156,10 @@ Deno.test('Scoped registrations', async (t) => {
       },
     };
 
-    const source = new IoCContainer({ Testing: true }).Use(Sessions);
+    const source = new IoCContainer().Use(Sessions);
     const target = new IoCContainer().Use(Sessions);
 
-    // Outside testing mode, the app may not remove what a module registered.
-    assertThrows(() => target.Unregister(Session), IoCSealedError);
-
+    // The application may remove what a module registered; only its own container changes.
     assert(source.Unregister(Session));
 
     await using sourceScope = source.CreateScope();

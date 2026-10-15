@@ -47,12 +47,28 @@ type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends (<T>() => T extends B 
 function assertType<_T extends true>(): void {}
 
 Deno.test('Typed modules - types', async (t) => {
-  await t.step('a module provides what it registers plus what it requires', () => {
+  await t.step('a module provides what it registers itself, not what it requires', () => {
     assertType<Equal<IoCModuleProvides<typeof Config>, typeof $Url>>();
-    assertType<Equal<IoCModuleProvides<typeof DbModule>, typeof Db | typeof $Url>>();
-    assertType<
-      Equal<IoCModuleProvides<typeof RepoModule>, typeof Repo | typeof Db | typeof $Url>
-    >();
+    assertType<Equal<IoCModuleProvides<typeof DbModule>, typeof Db>>();
+    assertType<Equal<IoCModuleProvides<typeof RepoModule>, typeof Repo>>();
+  });
+
+  await t.step('Register sees what direct requirements register, not theirs', () => {
+    DefineModule({
+      Name: 'Deep',
+      Requires: [RepoModule],
+      // @ts-expect-error $Url comes from Config, two levels down: require it to depend on it
+      Register: (ioc) => ioc.RegisterFactory($Port, (_c, url) => url.length, { Deps: [$Url] }),
+    });
+
+    DefineModule({
+      Name: 'Explicit',
+      Requires: [RepoModule, Config],
+      Register: (ioc) =>
+        ioc.RegisterFactory(Db, (_c, repo, url) => new Db(`${url}:${repo.port}`), {
+          Deps: [Repo, $Url],
+        }),
+    });
   });
 
   await t.step('a module needs what it lists in Needs', () => {
@@ -81,7 +97,7 @@ Deno.test('Typed modules - types', async (t) => {
     const ioc = new IoCContainer()
       .Typed()
       .RegisterValue($Port, 8080)
-      .Use(RepoModule);
+      .Use(RepoModule, Config);
 
     class Service {
       constructor(public repo: Repo, public url: string) {}

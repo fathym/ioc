@@ -258,9 +258,9 @@ export class IoCDuplicateRegistrationError extends IoCError {
 }
 
 /**
- * Thrown when code replaces, decorates or unregisters a registration that a module made, from
- * outside that module. Modules decide what may be replaced: registrations made with
- * `Default: true` can be. `Override()` throws it too, except on a container created with
+ * Thrown when a module replaces, decorates or unregisters a registration it doesn't own: another
+ * module's (unless it is a default) or the application's. The application itself may change any
+ * registration. `Override()` throws it too, except on a container created with
  * `{ Testing: true }`.
  */
 export class IoCSealedError extends IoCError {
@@ -274,7 +274,7 @@ export class IoCSealedError extends IoCError {
    * Creates the error.
    *
    * @param Service The registration that was to be changed.
-   * @param Module The module that owns it, if a module does.
+   * @param Module The module that owns it; undefined when the application owns it.
    * @param Action What was attempted (`replace`, `decorate`, `unregister`, `override`).
    */
   constructor(
@@ -283,12 +283,14 @@ export class IoCSealedError extends IoCError {
     public readonly Action: 'replace' | 'decorate' | 'unregister' | 'override',
   ) {
     super(
-      Module
-        ? `${Service} belongs to module '${Module}', so only that module can ${Action} it. ` +
-          `If it should be replaceable, register it with Default: true in '${Module}'; in ` +
-          `tests, use a container created with { Testing: true }.`
-        : `Override() is for tests: create the container with { Testing: true } to use it on ` +
-          `${Service}, or register a replacement with Replace: true.`,
+      Action === 'override'
+        ? `Override() is for tests: create the container with { Testing: true } to use it on ` +
+          `${Service}, or register a replacement with Replace: true.`
+        : Module
+        ? `${Service} belongs to module '${Module}', so other modules can't ${Action} it. ` +
+          `If other modules should be able to, register it with Default: true in ` +
+          `'${Module}'; the application can always replace it.`
+        : `${Service} belongs to the application, so modules can't ${Action} it.`,
     );
   }
 }

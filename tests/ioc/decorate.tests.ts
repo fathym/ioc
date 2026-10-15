@@ -192,31 +192,44 @@ Deno.test('Decorate', async (t) => {
     assertEquals((await ioc.Resolve($Greeter)).greet('ok'), 'ok');
   });
 
-  await t.step('a module registration can only be decorated by that module', async () => {
-    const Greetings = {
-      Name: 'Greetings',
-      Register: (ioc: IoCContainer) => {
-        ioc.RegisterFactory($Greeter, () => ({ greet: (n) => `hey ${n}` }));
-        ioc.Decorate($Greeter, exclaim);
-      },
-    };
+  await t.step(
+    'a module registration can only be decorated by that module or the app',
+    async () => {
+      const Greetings = {
+        Name: 'Greetings',
+        Register: (ioc: IoCContainer) => {
+          ioc.RegisterFactory($Greeter, () => ({ greet: (n) => `hey ${n}` }));
+          ioc.Decorate($Greeter, exclaim);
+        },
+      };
 
-    const ioc = new IoCContainer().Use(Greetings);
+      const ioc = new IoCContainer().Use(Greetings);
 
-    assertEquals((await ioc.Resolve($Greeter)).greet('m'), 'hey m!');
+      assertEquals((await ioc.Resolve($Greeter)).greet('m'), 'hey m!');
 
-    const err = assertThrows(() => ioc.Decorate($Greeter, shout), IoCSealedError);
+      const err = assertThrows(
+        () =>
+          new IoCContainer().Use({
+            Name: 'Other',
+            Requires: [Greetings],
+            Register: (c: IoCContainer) => {
+              c.Decorate($Greeter, shout);
+            },
+          }),
+        IoCSealedError,
+      );
 
-    assertEquals([err.Module, err.Action], ['Greetings', 'decorate']);
+      assertEquals([err.Module, err.Action], ['Greetings', 'decorate']);
 
-    // A scope may decorate it for itself: the parent's registration is untouched.
-    const scope = ioc.CreateScope();
+      // A scope may decorate it for itself: the parent's registration is untouched.
+      const scope = ioc.CreateScope();
 
-    scope.Decorate($Greeter, shout);
+      scope.Decorate($Greeter, shout);
 
-    assertEquals((await scope.Resolve($Greeter)).greet('m'), 'HEY M!');
-    assertEquals((await ioc.Resolve($Greeter)).greet('m'), 'hey m!');
-  });
+      assertEquals((await scope.Resolve($Greeter)).greet('m'), 'HEY M!');
+      assertEquals((await ioc.Resolve($Greeter)).greet('m'), 'hey m!');
+    },
+  );
 
   await t.step('defaults and testing containers can be decorated from outside', async () => {
     const Defaults = {

@@ -379,14 +379,20 @@ Deno.test('IoC Workbench', async (t) => {
 
     ioc.RegisterFactory(TestDefaultClass, () => new TestDefaultClass());
 
-    ioc.RegisterFactory(TestParamsClass, () => new TestParamsClass('WorldA'));
+    // The app's own registrations are sealed against modules; as defaults, a module may replace
+    // them.
+    ioc.RegisterFactory(TestParamsClass, () => new TestParamsClass('WorldA'), { Default: true });
 
     ioc.RegisterFactory(TestParamsClass, () => new TestParamsClass('WorldA'), {
       Lifetime: 'transient',
       Name: 'test',
+      Default: true,
     });
 
-    ioc.RegisterFactory($ITestClass, () => new TestDefaultClass(), { Name: 'test' });
+    ioc.RegisterFactory($ITestClass, () => new TestDefaultClass(), {
+      Name: 'test',
+      Default: true,
+    });
 
     ioc.Use(Shared);
 
