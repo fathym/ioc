@@ -1,7 +1,7 @@
 /**
  * Modules and lifecycle: typed modules with DefineModule, a framework default the app replaces,
- * a sealed registration nobody else can change, modules that start by layer, a failed Start()
- * that cleans up and is retried, and Dispose() stopping everything in reverse.
+ * a sealed registration no other module can change, modules that start by layer, a failed
+ * Start() that cleans up and is retried, and Dispose() stopping everything in reverse.
  *
  * Run: deno run examples/modules-lifecycle.ts
  */
@@ -30,7 +30,8 @@ const Config = DefineModule({
   Register: (ioc) => ioc.RegisterValue($DbUrl, 'postgres://localhost/app', { Default: true }),
 });
 
-// Not a default: sealed. Only the Database module can replace, decorate or unregister Db.
+// Not a default: sealed. No other module can replace, decorate or unregister Db (the
+// application could, and the container would report it as an IOC_MODULE_OVERRIDDEN warning).
 const Database = DefineModule({
   Name: 'Database',
   Requires: [Config],
@@ -71,8 +72,15 @@ await using ioc = new IoCContainer()
   .Use(Server) // adds Config, Cache, Database, then Server
   .RegisterValue($DbUrl, 'postgres://db.internal/app'); // replaces Config's default
 
+// Another module trying to replace Db is refused, and Use() adds none of it.
+const FakeDb = DefineModule({
+  Name: 'FakeDb',
+  Requires: [Database],
+  Register: (ioc) => ioc.RegisterValue(Db, new Db('memory://'), { Replace: true }),
+});
+
 try {
-  ioc.RegisterClass(Db, { Deps: [$DbUrl], Replace: true });
+  ioc.Use(FakeDb);
 } catch (err) {
   if (!isIoCError(err, 'IOC_SEALED')) throw err;
   console.log(`Sealed: ${err.message}`);

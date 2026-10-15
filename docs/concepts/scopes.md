@@ -2,7 +2,7 @@
 FrontmatterVersion: 1
 DocumentType: Guide
 Title: Scopes
-Summary: What a scope is (a cheap child container you create), how lookups, overrides and lifetimes behave in it, declared scope levels and how they nest, Isolate, and how disposing a parent disposes its live scopes.
+Summary: What a scope is (a cheap child container you create), how lookups, overrides and lifetimes behave in it, declared scope levels and how they nest, Isolate, which scopes a parent tracks, and how disposing a parent disposes them.
 Created: 2026-10-13
 Updated: 2026-10-15
 Owners:
@@ -45,8 +45,9 @@ When you resolve from a scope, the scope looks for the key and name in its own r
 first, then in its parent's, and so on up the tree. **Nearest wins.** Nothing is copied when a
 scope is created, so creating thousands of scopes is cheap.
 
-The parent holds its live scopes **weakly**: it can dispose them when it is disposed itself, but
-a scope you drop without disposing can still be garbage-collected.
+A scope that owns nothing to dispose isn't tracked by its parent at all: drop it and it is
+garbage-collected. Once a scope owns something (an instance, modules, or scopes of its own), the
+parent keeps it until it is disposed (see [disposing scopes](#disposing-scopes)).
 
 ## What each lifetime does in a scope
 
@@ -87,8 +88,8 @@ factory receives the scope, so it sees the scope's `$Greeting`.
 - **Overrides reach transient and scoped services**, and anything resolved directly from the
   scope. A **singleton** is always built by the container that registered it, so it never sees a
   scope's overrides. One shared instance can't depend on one request.
-- **Sealing doesn't apply to scopes.** A scope may shadow a registration a module sealed, because
-  it never changes the parent. See [sealing](./keys-and-registrations.md#sealing-modules-own-their-registrations).
+- **Sealing doesn't apply to scopes.** A scope may shadow any registration of its parent, a
+  module's included, because it never changes the parent. See [sealing](./keys-and-registrations.md#sealing-modules-own-their-registrations).
 
 ## Scope levels
 
@@ -185,8 +186,17 @@ longer-lived service depends on a shorter-lived one, `Validate()` reports it so 
 the instances it created: its scoped instances and the singletons registered on the scope itself.
 It never disposes the parent's singletons.
 
-Disposing a parent also disposes its **live** scopes, deepest first, before its own instances.
-A server that shuts down while requests are in flight still closes every request's resources.
+Disposing a parent also disposes the scopes it tracks, deepest first, before its own instances.
+A parent tracks a scope once the scope owns something to dispose (an instance, modules, or scopes
+of its own), and holds it until it is disposed. So:
+
+- A server that shuts down while requests are in flight still closes every request's resources.
+- A scope that owns resources and is dropped without `Dispose()` never leaks them silently: it
+  stays in memory until the parent is disposed, which then disposes it. Forgetting `await using`
+  costs memory until shutdown, not connections.
+- A scope that owns nothing (it only resolved singletons, say) is never tracked, and costs
+  nothing once dropped.
+
 Disposing each scope where you create it remains the rule; the parent's sweep is the safety net.
 See [disposal](./disposal.md).
 

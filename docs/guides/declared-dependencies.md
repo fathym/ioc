@@ -218,8 +218,9 @@ key was declared with `Expect()` and where to register it.
 ### Modules
 
 A module defined with `DefineModule` gets the same checks inside its `Register`: the container
-there is typed with the keys its `Requires` provide and the keys it `Needs`. What `Register`
-returns is what the module provides, and `Use()` adds it to the app's typed container:
+there is typed with the keys it `Needs` and the keys its **direct** `Requires` register
+themselves. What `Register` returns is what the module provides (only what it registers itself),
+and `Use()` adds it to the app's typed container:
 
 ```ts
 import { DefineModule, IoCContainer, IoCToken } from '@fathym/ioc';
@@ -252,14 +253,16 @@ const Notes = DefineModule({
 });
 
 // main.ts
-const ioc = new IoCContainer().Typed().Use(Notes); // adds Core, then Notes
+const ioc = new IoCContainer().Typed().Use(Notes); // adds Core, then Notes; types in NotesRepo
 
 console.log((await ioc.Resolve(NotesRepo)).config.table); // notes
 ```
 
-Without `Requires: [Core]`, `Deps: [Config, $Db]` in `Notes` doesn't compile. A key the
-application registers goes in `Needs`, and then `Use(Notes)` only compiles on a container that
-has it. See [modules and lifecycle](./modules-and-lifecycle.md#typed-modules).
+Without `Requires: [Core]`, `Deps: [Config, $Db]` in `Notes` doesn't compile. Provides are not
+transitive: a module that requires `Notes` sees `NotesRepo`, not `Config`, so it requires `Core`
+too if it needs `Config`. Likewise `Use(Notes)` types in `NotesRepo` only; `Use(Core, Notes)` to
+resolve `Config` with types at the app. A key the application registers goes in `Needs`, and
+then `Use(Notes)` only compiles on a container that has it. See [modules and lifecycle](./modules-and-lifecycle.md#typed-modules).
 
 ## Where dependencies come from
 

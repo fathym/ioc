@@ -22,24 +22,25 @@ Search this page for the text of your error. Every message the container can pro
 here, and CI fails if a new one is added without an entry. For problems that don't throw, see
 [troubleshooting](../troubleshooting.md).
 
-| Error class                     | Code                                          | Messages                                                                                                                                                                              |
-| ------------------------------- | --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `IoCServiceNotFoundError`       | `IOC_SERVICE_NOT_FOUND`                       | [No service is registered for …](#no-service-is-registered-for-)                                                                                                                      |
-| `IoCCircularDependencyError`    | `IOC_CIRCULAR_DEPENDENCY`                     | [Circular dependency detected: …](#circular-dependency-detected-a---b---a)                                                                                                            |
-| `IoCValidationError`            | `IOC_VALIDATION_FAILED`                       | [IoC validation failed: …](#ioc-validation-failed), with [five kinds of problem](#validation-problems)                                                                                |
-| `IoCContainerDisposedError`     | `IOC_CONTAINER_DISPOSED`                      | [The IoC container has been disposed.](#the-ioc-container-has-been-disposed)                                                                                                          |
-| `IoCActivationError`            | `IOC_ACTIVATION_FAILED`                       | [IoC activation failed for: …](#ioc-activation-failed-for-)                                                                                                                           |
-| `IoCDisposeError`               | `IOC_DISPOSE_FAILED`                          | [Errors occurred while disposing …](#errors-occurred-while-disposing-the-ioc-container)                                                                                               |
-| `IoCResolveTimeoutError`        | `IOC_RESOLVE_TIMEOUT`                         | [… did not finish within …ms](#-did-not-finish-within-ms)                                                                                                                             |
-| `IoCScopeRequiredError`         | `IOC_SCOPE_REQUIRED`                          | [Scoped service … was resolved outside a scope](#scoped-service--was-resolved-outside-a-scope)                                                                                        |
-| `IoCDuplicateRegistrationError` | `IOC_DUPLICATE_REGISTRATION`                  | [… is already registered](#-is-already-registered)                                                                                                                                    |
-| `IoCSealedError`                | `IOC_SEALED`                                  | [… belongs to module '…'](#-belongs-to-module--so-only-that-module-can--it), [Override() is for tests](#override-is-for-tests-create-the-container-with--testing-true--to-use-it-on-) |
-| `IoCLevelError`                 | `IOC_INVALID_LEVEL`                           | [Scope level errors](#scope-level-errors)                                                                                                                                             |
-| `IoCModuleCycleError`           | `IOC_MODULE_CYCLE`                            | [Module dependency cycle: …](#module-dependency-cycle-a---b---a)                                                                                                                      |
-| `IoCStartError`                 | `IOC_START_FAILED`                            | [Module '…' failed to start: …](#module--failed-to-start-)                                                                                                                            |
-| `IoCNotIsolatableError`         | `IOC_NOT_ISOLATABLE`                          | [… can't be isolated: …](#-cant-be-isolated-)                                                                                                                                         |
-| `IoCRegistrationError`          | `IOC_INVALID_REGISTRATION`, `IOC_INVALID_KEY` | [Registration and usage mistakes](#registration-errors)                                                                                                                               |
-| TypeScript                      | —                                             | [Compile errors](#typescript-errors)                                                                                                                                                  |
+| Error class                     | Code                                          | Messages                                                                                                                                                                                                                                                              |
+| ------------------------------- | --------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `IoCServiceNotFoundError`       | `IOC_SERVICE_NOT_FOUND`                       | [No service is registered for …](#no-service-is-registered-for-)                                                                                                                                                                                                      |
+| `IoCCircularDependencyError`    | `IOC_CIRCULAR_DEPENDENCY`                     | [Circular dependency detected: …](#circular-dependency-detected-a---b---a)                                                                                                                                                                                            |
+| `IoCValidationError`            | `IOC_VALIDATION_FAILED`                       | [IoC validation failed: …](#ioc-validation-failed), with [five kinds of problem](#validation-problems)                                                                                                                                                                |
+| `IoCContainerDisposedError`     | `IOC_CONTAINER_DISPOSED`                      | [The IoC container has been disposed.](#the-ioc-container-has-been-disposed)                                                                                                                                                                                          |
+| `IoCActivationError`            | `IOC_ACTIVATION_FAILED`                       | [IoC activation failed for: …](#ioc-activation-failed-for-)                                                                                                                                                                                                           |
+| `IoCDisposeError`               | `IOC_DISPOSE_FAILED`                          | [Errors occurred while disposing …](#errors-occurred-while-disposing-the-ioc-container)                                                                                                                                                                               |
+| `IoCResolveTimeoutError`        | `IOC_RESOLVE_TIMEOUT`                         | [… did not finish within …ms](#-did-not-finish-within-ms)                                                                                                                                                                                                             |
+| `IoCScopeRequiredError`         | `IOC_SCOPE_REQUIRED`                          | [Scoped service … was resolved outside a scope](#scoped-service--was-resolved-outside-a-scope)                                                                                                                                                                        |
+| `IoCDuplicateRegistrationError` | `IOC_DUPLICATE_REGISTRATION`                  | [… is already registered](#-is-already-registered)                                                                                                                                                                                                                    |
+| `IoCSealedError`                | `IOC_SEALED`                                  | [… belongs to module '…'](#-belongs-to-module--so-other-modules-cant--it), [… belongs to the application](#-belongs-to-the-application-so-modules-cant--it), [Override() is for tests](#override-is-for-tests-create-the-container-with--testing-true--to-use-it-on-) |
+| `IoCLevelError`                 | `IOC_INVALID_LEVEL`                           | [Scope level errors](#scope-level-errors)                                                                                                                                                                                                                             |
+| `IoCModuleCycleError`           | `IOC_MODULE_CYCLE`                            | [Module dependency cycle: …](#module-dependency-cycle-a---b---a)                                                                                                                                                                                                      |
+| `IoCStartError`                 | `IOC_START_FAILED`                            | [Module '…' failed to start: …](#module--failed-to-start-)                                                                                                                                                                                                            |
+| `IoCNotIsolatableError`         | `IOC_NOT_ISOLATABLE`                          | [… can't be isolated: …](#-cant-be-isolated-)                                                                                                                                                                                                                         |
+| `IoCRegistrationError`          | `IOC_INVALID_REGISTRATION`, `IOC_INVALID_KEY` | [Registration and usage mistakes](#registration-errors)                                                                                                                                                                                                               |
+| TypeScript                      | —                                             | [Compile errors](#typescript-errors)                                                                                                                                                                                                                                  |
+| `warning` events (not thrown)   | `IoCWarningCode`                              | [Warnings](#warnings)                                                                                                                                                                                                                                                 |
 
 All error classes are exported from `@fathym/ioc`. Each one has a stable `code`; match on the code
 rather than the message, which may gain detail. `isIoCError(err, 'IOC_SERVICE_NOT_FOUND')` checks
@@ -123,7 +124,11 @@ Related: [keys and registrations](../concepts/keys-and-registrations.md),
 
 `IoCCircularDependencyError`, thrown when building a service would require the service itself,
 directly or through other services, including when two resolutions running at the same time wait
-on each other.
+on each other. The container sees the cycle when the services resolve each other through the
+factory's parameter (the `ioc` it receives), through `Deps`, or through a captured container
+before the factory's first `await`. A cycle through a container captured in a closure _after_
+an `await` isn't reported here: it fails at `PendingTimeoutMs` with an
+[`IoCResolveTimeoutError`](#-did-not-finish-within-ms) instead.
 
 | Part          | Means                                                                |
 | ------------- | -------------------------------------------------------------------- |
@@ -151,7 +156,7 @@ problem found, one per line:
 ```text
 IoC validation failed:
   - Repo depends on Config, which is not registered.
-  - singleton Cache depends on request-scoped Session; it would keep one instance for its whole life. Give Cache a shorter lifetime, or inject IoCLazy(...) and resolve it per use.
+  - singleton Cache depends on request-scoped Session; it would keep one instance for its whole life. Give Cache a lifetime no longer than Session's, or resolve Session where it is used, from the scope at hand.
 ```
 
 The `Problems` property holds the lines as an array, and `Issues` holds each problem as
@@ -169,14 +174,18 @@ scope, declare it with `Expect(Y)`.
 #### `captive`: singleton X depends on scoped Y; it would keep one instance for its whole life.
 
 ```text
-tenant-scoped Tenant depends on request-scoped Session (through Helper); it would keep one instance for its whole life. Give Tenant a shorter lifetime, or inject IoCLazy(...) and resolve it per use.
+tenant-scoped Tenant depends on request-scoped Session (through Helper); it would keep one instance for its whole life. Give Tenant a lifetime no longer than Session's, or resolve Session where it is used, from the scope at hand.
 ```
 
 A [captive dependency](../guides/guidelines.md#captive-dependency): a longer-lived service holds on
 to a shorter-lived one, directly or `(through …)` transients. Lifetimes rank from longest to
 shortest: singleton, each declared level in order (`tenant-scoped`, `request-scoped`), then
-`scoped` without a level. **Fix:** give `X` a shorter lifetime, or inject
-`IoCLazy(Y)` and resolve it each time it is used, from the right scope.
+`scoped` without a level.
+
+**Fix:** give `X` a lifetime no longer than `Y`'s (make it scoped, or bind it to `Y`'s level), or
+stop holding `Y`: resolve it where it is used, from the scope at hand (for example a request
+handler resolving `Y` from its request scope). Injecting `IoCLazy(Y)` doesn't fix a captive: the
+resolver still resolves from the container that built `X`.
 
 #### `cycle`: Circular dependency: A -> B -> A.
 
@@ -227,7 +236,8 @@ console.log(ioc.Validate()); // []
 
 `IoCContainerDisposedError`, thrown when a container or scope is used after `Dispose()` (or after
 its `await using` block ended), or after any of its parents was disposed. `Start()` also rejects
-with it when `Dispose()` is called while it runs.
+with it when `Dispose()` is called while it runs, unless a module had already failed to start:
+then `Start()` reports that failure as an [`IoCStartError`](#module--failed-to-start-).
 
 **Likely causes:**
 
@@ -261,9 +271,12 @@ threw. Every step still runs, and `errors` holds each error in the order it happ
 
 1. errors thrown by modules' `OnStop` (and `OnStop` timeouts);
 2. errors from disposing the live child scopes;
-3. errors thrown by this container's disposers, last created first.
+3. errors thrown by this container's disposers, last created first, including a disposer still
+   pending after `PendingTimeoutMs`, as an [`IoCResolveTimeoutError`](#-did-not-finish-within-ms)
+   for `Disposing …`.
 
-See [disposal](../concepts/disposal.md#order-and-errors).
+A stuck disposer doesn't hang shutdown: it fails after the timeout and the next one runs. See
+[disposal](../concepts/disposal.md#order-and-errors).
 
 ---
 
@@ -273,11 +286,34 @@ See [disposal](../concepts/disposal.md#order-and-errors).
 Report did not finish within 30000ms; still pending: Report, Db. Something it awaits may never settle (a connection, a lock), or factories may wait on each other through a container captured in a closure; resolve through the factory's parameter. Raise PendingTimeoutMs if it is just slow.
 ```
 
+The advice at the end depends on what timed out. A disposer:
+
+```text
+Disposing Pool did not finish within 30000ms. Its cleanup (Symbol.asyncDispose, or the Dispose option) may never settle.
+```
+
+A module's `OnStart` or `OnStop`:
+
+```text
+Module 'Server' OnStart did not finish within 30000ms. Something it awaits may never settle (a connection, a lock); set the module's TimeoutMs if it is just slow.
+```
+
+A service with its own `TimeoutMs`:
+
+```text
+Migrate did not finish within 600000ms; still pending: Migrate. Something it awaits may never settle; raise its TimeoutMs if it is just slow.
+```
+
 `IoCResolveTimeoutError` (`IOC_RESOLVE_TIMEOUT`). A `Resolve`, a build during
-`Start()`/`Activate()`, or a module's `OnStart` or `OnStop` was still pending after
-`PendingTimeoutMs` (30 seconds unless configured). From `Activate()` it arrives inside
-`IoCActivationError`; from `OnStart`, as `IoCStartError`'s `cause`. For a module, the service is
-named `Module 'Server' OnStart`.
+`Start()`/`Activate()`, a module's `OnStart` or `OnStop`, or an instance's disposer was still
+pending after `PendingTimeoutMs` (30 seconds unless configured), or after the `TimeoutMs` of the
+registration or module. Where it arrives:
+
+- from `Resolve`: thrown as is, named after the service;
+- from `Activate()`: inside `IoCActivationError`;
+- from `OnStart`: as `IoCStartError`'s `cause`, named `Module 'Server' OnStart`;
+- from `OnStop` and disposers: inside `IoCDisposeError`, named `Module 'Server' OnStop` or
+  `Disposing Pool` (in `IoCStartError`'s `RollbackErrors` when a failed `Start()` rolls back).
 
 | Property    | Means                                                                      |
 | ----------- | -------------------------------------------------------------------------- |
@@ -287,14 +323,19 @@ named `Module 'Server' OnStart`.
 
 **Likely causes:**
 
-- **Something that never settles,** for example a connection that waits forever. The build is not
-  cancelled; if it finishes later, later resolves get its value.
-- **A cycle the container can't see:** factories waiting on each other through a container
-  captured in a closure, on a runtime without `AsyncLocalStorage` (or with `AsyncContext: false`).
-  **Fix:** resolve through the factory's parameter (`(c) => c.Resolve(…)`) or through `Deps`, so
-  the container can follow the path and throw `IoCCircularDependencyError` instead. See
+- **Something that never settles,** for example a connection that waits forever, or a disposer
+  that never returns. The build is not cancelled; if it finishes later, later resolves get its
+  value. (A build abandoned by a failed `Start()` is disposed when it finishes, never cached.)
+- **A cycle the container can't report:** factories waiting on each other through a container
+  captured in a closure, after an `await` (or from a callback a factory started, such as a timer
+  or a request handler). The container can't tell such a call from code the build awaits, so it
+  waits rather than guess. **Fix:** resolve through the factory's parameter (`(c) => c.Resolve(…)`)
+  or through `Deps`, so the container follows the path and throws
+  [`IoCCircularDependencyError`](#circular-dependency-detected-a---b---a) at once. See
   [cycles and errors](../concepts/cycles-and-errors.md).
-- **It is just slow.** **Fix:** raise `PendingTimeoutMs`, or set it to `0` to turn the timeout off.
+- **It is just slow.** **Fix:** give that one service or module more time with its `TimeoutMs`
+  option (a migration, a cold connection), or raise `PendingTimeoutMs` for everything; `0` turns
+  either off.
 
 ---
 
@@ -327,28 +368,45 @@ Clock is already registered; pass Replace: true to override it, or Default: true
 registered twice in one container, so the first registration would be silently replaced.
 **Fix:** pass `Replace: true` when the replacement is intended; framework code registering
 replaceable services passes `Default: true`. A scope may register the same key as its parent
-without either: that shadows the parent for the scope only.
+without either: that shadows the parent for the scope only. When the caller may not change the
+existing registration at all (a module registering over another module's service), it gets
+[`IoCSealedError`](#-belongs-to-module--so-other-modules-cant--it) instead.
 
 ---
 
-## … belongs to module '…', so only that module can … it.
+## … belongs to module '…', so other modules can't … it.
 
 ```text
-Clock belongs to module 'Platform', so only that module can replace it. If it should be replaceable, register it with Default: true in 'Platform'; in tests, use a container created with { Testing: true }.
+Url belongs to module 'Core', so other modules can't replace it. If other modules should be able to, register it with Default: true in 'Core'; the application can always replace it.
 ```
 
-`IoCSealedError` (`IOC_SEALED`). A module registered the service, and code outside that module
-tried to `replace`, `decorate` or `unregister` it in the same container. A module's registrations
-are sealed, so a plugin or the app can't change them by accident. `Service`, `Module` and `Action`
-hold the details.
+`IoCSealedError` (`IOC_SEALED`). One module tried to `replace`, `decorate` or `unregister` a
+registration that another module made, in the same container, and that registration isn't a
+default. A module's registrations are sealed against other modules, so a plugin can't change a
+framework's services by accident. The application (code that isn't a module) may change them; see
+[sealing](./api.md#sealing). `Service`, `Module` (the owner) and `Action` hold the details.
 
 **Fix, depending on who should decide:**
 
-- **The module wants it replaceable:** register it with `Default: true` in the module.
+- **The owning module wants it replaceable:** register it with `Default: true` in that module.
+  Other modules may then replace it (with an `IOC_DEFAULT_REPLACED` [warning](#warnings)).
+- **The application should decide:** replace it from the composition root, outside any module,
+  with `Replace: true` (an `IOC_MODULE_OVERRIDDEN` [warning](#warnings) records it).
 - **Only one request, tenant or plugin needs a different one:** register it on a scope created for
   it; the scope shadows the module's registration without changing it.
 - **A test:** create the container with `new IoCContainer({ Testing: true })`, which lifts sealing.
-- **The module itself needs to change it:** do it in the module's `Register`.
+
+### … belongs to the application, so modules can't … it.
+
+```text
+Url belongs to the application, so modules can't replace it.
+```
+
+`IoCSealedError` (`IOC_SEALED`, `Module` is `undefined`). A module tried to replace, decorate or
+unregister a registration the application made (outside any module), and it isn't a default. The
+application composes the modules, so its registrations win. **Fix:** if the application means to
+let modules supply this service, register it with `Default: true` (or not at all); otherwise
+remove the module's registration.
 
 ### Override() is for tests: create the container with { Testing: true } to use it on …
 
@@ -406,6 +464,14 @@ Module 'Server' failed to start: port in use (and 1 more module(s) in the same l
 ```
 
 `IoCStartError` (`IOC_START_FAILED`) from `Start()`. A module's `OnStart` threw (or timed out).
+It is also thrown, before anything is built, when a scope's module requires a module of a parent
+container that hasn't started:
+
+```text
+Module 'Plugin' failed to start: it requires module 'Host', which belongs to a parent container that hasn't started; start the parent first
+```
+
+**Fix:** `await ioc.Start()` on the parent before `scope.Start()`.
 
 | Property         | Means                                                                                       |
 | ---------------- | ------------------------------------------------------------------------------------------- |
@@ -502,10 +568,17 @@ A transient or scoped registration was given `OnDemand: true`. Those lifetimes a
 `new IoCContainer({ Levels })` was given a level twice, or an empty name. **Fix:** list each level
 once, outermost first: `Levels: ['tenant', 'request']`.
 
-### PendingTimeoutMs must be a finite number of milliseconds (0 turns it off).
+### … must be a number of milliseconds from 0 (off) to 2147483647 (about 24.8 days).
 
-`new IoCContainer({ PendingTimeoutMs })` was given a negative number, `NaN` or `Infinity`.
-**Fix:** pass a number of milliseconds, or `0` to turn the timeout off.
+```text
+PendingTimeoutMs must be a number of milliseconds from 0 (off) to 2147483647 (about 24.8 days).
+TimeoutMs must be a number of milliseconds from 0 (off) to 2147483647 (about 24.8 days).
+```
+
+`new IoCContainer({ PendingTimeoutMs })`, a registration's `TimeoutMs` option, or the `TimeoutMs`
+of a module passed to `Use()` was given a negative number, `NaN`, `Infinity`, or more than
+2147483647 (timers overflow above that and would fire at once). **Fix:** pass a number of
+milliseconds, or `0` to turn the timeout off.
 
 ### A module needs a Name and a Register(ioc) function.
 
@@ -528,12 +601,15 @@ every module before `Start()`. To load plugins later, create a scope for them
 Module 'Plugin' called Use(), which only the application can call. List the modules a module needs in its Requires instead.
 Module 'Plugin' called Expect(), which only the application can call. Declare the keys a module needs from elsewhere in its Needs instead.
 Module 'Plugin' called Start(), which only the application can call. Modules receive a view of the container for registering and resolving.
+Module 'Plugin' called Dispose(), which only the application can call. Modules receive a view of the container for registering and resolving.
 ```
 
-A module's `Register`, `OnStart` or `OnStop` called `Use`, `Expect`, `Start`, `Dispose` or `Override` on
-the container it received. That container is a [module view](./api.md#the-module-view): it
-registers and resolves, and leaves the lifecycle to the application. **Fix:** list required
-modules in `Requires` and keys the module expects from elsewhere in `Needs`; let the application start and dispose the container; override in tests
+A module's `Register`, `OnStart` or `OnStop`, or a factory or decorator the module registered,
+called `Use`, `Expect`, `Start`, `Activate`, `Dispose` or `Override` on the container it received.
+That container is a [module view](./api.md#the-module-view): it registers and resolves, and
+leaves the lifecycle to the application. (`Start`, `Activate` and `Dispose` reject with it rather
+than throw.) **Fix:** list required modules in `Requires` and keys the module expects from
+elsewhere in `Needs`; let the application start and dispose the container; override in tests
 with a `Testing: true` container.
 
 ### Isolate() works on scopes; call it on a container created with CreateScope().
@@ -620,6 +696,22 @@ dependency per parameter.
 
 **Means:** `RegisterValue($Db, value)` with a value of the wrong type. **Fix:** register a value
 that matches the token's type.
+
+---
+
+## Warnings
+
+Some problems can't be thrown to anyone, or aren't errors. The container reports them to the
+`OnEvent` option as `{ Type: 'warning', Code, Message, Service? }` (see
+[OnEvent and IoCEvent](./api.md#onevent-and-iocevent)). Match on `Code`.
+
+| `Code`                    | Message                                                                                                                                                                        | What to do                                                                                                                                                                                           |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `IOC_MODULE_OVERRIDDEN`   | `The application replaced Url, registered by module 'Core'.` (or `decorated`, `unregistered`)                                                                                  | Nothing, if the override is intended: the application may change any module's registration. The warning keeps overrides of non-default registrations visible in logs (replacing a default is silent) |
+| `IOC_DEFAULT_REPLACED`    | `Module 'Plugin' replaced the default Url, registered by module 'Framework'.` (or `decorated`, `unregistered`; without the `registered by` part for the application's default) | Nothing, if intended: defaults exist to be replaced. If two modules replace the same default, decide which one wins and remove the other's registration                                              |
+| `IOC_MODULE_DUPLICATE`    | `Two different modules are named 'Metrics'; both were added.`                                                                                                                  | Give each module a unique `Name`; errors, `Describe()` and events tell modules apart by name                                                                                                         |
+| `IOC_ROLLBACK_FAILED`     | `Cleaning up after a failed Start() failed: …`                                                                                                                                 | Look at the disposer or `OnStop` that threw; the `Start()` error itself is thrown as usual                                                                                                           |
+| `IOC_LATE_DISPOSE_FAILED` | `An instance that finished building after Dispose() failed to dispose: …`, or `Pool, built after a failed Start() gave up on it, failed to dispose: …`                         | A build outlived its container (or a failed `Start()`), and its disposer threw. Fix the disposer; look for builds that hang (they also show up as timeouts)                                          |
 
 ## What's Next
 

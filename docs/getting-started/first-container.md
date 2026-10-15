@@ -73,8 +73,8 @@ Three things to notice:
 1. **`Resolve($AppName)` returns a `string`.** The token carries the type, so there is no generic
    to write and nothing to cast.
 2. **The factory receives the container (`c`).** Resolve dependencies through that parameter,
-   not through a captured `ioc`. It's what makes scopes, overrides and cycle detection work
-   later.
+   not through a captured `ioc`. It's what makes scopes, overrides and immediate cycle detection
+   work later.
 3. **You never called `new Clock()`.** The container did.
 
 > **Note:** Every `IoCToken()` call creates a new, unique key; the name is only a label for

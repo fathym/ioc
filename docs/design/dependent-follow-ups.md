@@ -76,13 +76,13 @@ References:
 
 ## cli
 
-| # | Kind   | Change                                                                                                                                                  | Why                                                                    |
-| - | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
-| 1 | Must   | Command and group containers become `CreateScope({ Level: 'command' })` (declare the levels on the root) instead of `CopyTo` copies                     | `CopyTo` is gone                                                       |
-| 2 | Must   | `OnBootInit` registrations made with `Register(symbol, factory)` become `RegisterFactory($Token, factory)`, with `Default: true` for framework defaults | `Register` and symbol keys are gone; a CLI's own registration must win |
-| 3 | Must   | Test helpers that build the CLI's container accept `Testing: true` for tests that override services                                                     | `Override()` only works on testing containers                          |
-| 4 | Should | Call `Dispose()` (or `await using`) when the CLI exits, including on signals; parent disposal now also disposes live command scopes                     | Resources never closed                                                 |
-| 5 | Should | Factories resolve through their parameter (`(c) => c.Resolve(...)`) or `Deps`, not the captured container                                               | Clearer cycles and resolution paths                                    |
+| # | Kind   | Change                                                                                                                                                  | Why                                                                                                                                 |
+| - | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| 1 | Must   | Command and group containers become `CreateScope({ Level: 'command' })` (declare the levels on the root) instead of `CopyTo` copies                     | `CopyTo` is gone                                                                                                                    |
+| 2 | Must   | `OnBootInit` registrations made with `Register(symbol, factory)` become `RegisterFactory($Token, factory)`, with `Default: true` for framework defaults | `Register` and symbol keys are gone; a CLI's own registration must win                                                              |
+| 3 | Must   | Test helpers that build the CLI's container accept `Testing: true` for tests that override services                                                     | `Override()` only works on testing containers                                                                                       |
+| 4 | Should | Call `Dispose()` (or `await using`) when the CLI exits, including on signals; parent disposal now also disposes live command scopes                     | Resources never closed                                                                                                              |
+| 5 | Should | Factories resolve through their parameter (`(c) => c.Resolve(...)`) or `Deps`, not the captured container                                               | A cycle through a captured container after `await` only fails at `PendingTimeoutMs` (30 s); through the parameter it throws at once |
 
 ## eac and eac-runtime
 

@@ -70,39 +70,72 @@ that share a container upgrade together.
 - **Always lazy:** nothing is built at registration; `Start()` or `Activate()` builds every
   singleton. Values count as built at once.
 - **`PendingTimeoutMs` defaults to 30 000** (`0` turns it off). It bounds every pending resolve,
-  every build in `Start()`/`Activate()`, and each `OnStart` and `OnStop`.
-- **Async context is automatic** where `AsyncLocalStorage` exists (Node.js, Deno, Bun), so a cycle
-  through a container captured in a closure throws `IOC_CIRCULAR_DEPENDENCY` instead of hanging.
-  `AsyncContext: false` turns it off.
-- **Module registrations are sealed:** only the module that made a registration can replace,
-  decorate or unregister it, unless it is a `Default`. Others get `IoCSealedError`.
-- **Modules receive a module view** in `Register`, `OnStart` and `OnStop`: it registers as the
-  module and can't call `Use`, `Expect`, `Start`, `Dispose` or `Override`.
+  every build in `Start()`/`Activate()`, each `OnStart` and `OnStop`, and each disposer, so a
+  stuck `Symbol.asyncDispose` fails `Dispose()` with a timeout inside `IoCDisposeError` instead of
+  hanging shutdown.
+- **Async context is automatic** where the runtime offers `AsyncLocalStorage` through
+  `process.getBuiltinModule` (Deno, Bun, Node.js 20.16+); `AsyncContext: false` turns it off. It
+  gives resolution paths in errors and observed dependencies across `await`, and never reports a
+  cycle: a cycle through a container captured in a closure, after an `await` (or from a callback a
+  factory started), fails at `PendingTimeoutMs` with `IoCResolveTimeoutError`, naming what is
+  pending. 0.1 with an `AsyncContext` threw `IOC_CIRCULAR_DEPENDENCY` there, which could also
+  break valid code. Cycles through a factory's parameter, through `Deps`, or before a factory's
+  first `await` still throw `IOC_CIRCULAR_DEPENDENCY` at once.
+- **Registrations are sealed between modules, and the application outranks modules.** Every
+  registration records whether a module or the application made it. The application may replace,
+  decorate or unregister any registration (a module's non-default one emits an
+  `IOC_MODULE_OVERRIDDEN` warning; a default changes silently). A
+  module may change its own registrations and any `Default` (someone else's emits
+  `IOC_DEFAULT_REPLACED`), but not another module's or the application's other registrations:
+  those throw `IoCSealedError` (`IOC_SEALED`). `Decorate` keeps the original's owner and default
+  flag. Sealing is a guardrail against mistakes, not a security boundary.
+- **Modules work through a closed module view:** `Register`, `OnStart`, `OnStop`, and every
+  factory and decorator a module registers, receive a separate object (not an `IoCContainer`)
+  that registers as the module and resolves normally. `Use`, `Expect`, `Start`, `Activate`,
+  `Dispose` and `Override` throw on it. Factories the application registers still receive a plain
+  view of the container. Container options are frozen.
 - **`Override()` only works on a container created with `{ Testing: true }`** (and its scopes),
   which also lifts sealing.
 - **Scope levels must be declared** with the `Levels` option, outermost first; undeclared or
   wrongly nested levels throw `IoCLevelError`. `ScopeLevel` implies `Lifetime: 'scoped'`.
 - **`Start()` starts modules by layer:** after the modules they require, independent modules
   concurrently; stop runs in reverse. A failed `Start()` stops the started modules, disposes and
-  forgets everything it built, returns to `idle`, and can be retried.
+  forgets everything it built, returns to `idle`, and can be retried; a build still running then
+  (it timed out) is abandoned, and disposed if it finishes later. `Dispose()` during `Start()`
+  makes `Start()` reject with `IOC_CONTAINER_DISPOSED`, or with the `IoCStartError` of a module
+  that had already failed.
 - **`Dispose()` disposes live child scopes** (deepest first) after stopping modules and before its
-  own instances. Parents hold scopes weakly, so undisposed scopes can still be garbage-collected.
+  own instances. A parent tracks a scope once the scope owns something to dispose (an instance,
+  modules, or scopes of its own) and holds it until it is disposed; scopes that own nothing aren't
+  tracked and are garbage-collected when dropped.
+- **A scope's modules start after the parent's.** `scope.Start()` throws `IoCStartError` when a
+  module it added requires a module of a parent that hasn't started.
+- **Node.js 20.16 is the minimum Node.js version** (for `process.getBuiltinModule`).
 - **`IoCServiceNotFoundError`** has `Key` instead of `Symbol`, and its message reads
   `No service is registered for …`.
 - **`Validate()`** reports `captive` dependencies across scope levels and through transients.
+  The message advises a shorter lifetime, or resolving the service where it is used.
 
 ### Added
 
 - **`IoCSealedError`** (`IOC_SEALED`) and **`IoCLevelError`** (`IOC_INVALID_LEVEL`).
 - **`DefineModule({ Name, Requires, Needs, Register })`:** typed modules. `Register`'s container is
-  typed with what the module needs; the chain it returns is what it provides; `Use()` on a typed
-  container adds those keys and doesn't compile when a module's needs are unmet.
+  typed with the module's `Needs` and what its direct `Requires` register themselves; the chain it
+  returns is what it provides (non-transitive: only its own keys); `Use()` on a typed container
+  adds those keys and doesn't compile when a module's needs are unmet. Type-checking grows
+  linearly with the number of modules, however deep the `Requires` graph.
+- **`Use()` is all or nothing:** if a module's `Register` throws, every registration and module
+  that call added (requirements included) is undone, so `Use()` can be retried.
+- **`TimeoutMs`** on `RegisterClass` and `RegisterFactory` overrides `PendingTimeoutMs` for one
+  service's builds and resolves (a slow migration), and **`IoCModule.TimeoutMs`** (also in
+  `DefineModule`) for one module's `OnStart` and `OnStop`. Invalid values (negative, `NaN`,
+  `Infinity`) throw `IoCRegistrationError` at registration or at `Use()`.
 - **`IoCModule.Needs`:** keys a module expects someone else to register. `Validate()` reports an
   `undeclared` issue when a module depends on another module's service without `Requires` or
   `Needs`.
 - **Container options `Levels`, `OnEvent` and `Testing`.** `OnEvent` receives `build`, `resolve`,
   `start`, `stop` and `warning` events (`IoCEvent`, `IoCWarningCode`), including the new
-  `IOC_ROLLBACK_FAILED` warning.
+  `IOC_ROLLBACK_FAILED`, `IOC_MODULE_OVERRIDDEN` and `IOC_DEFAULT_REPLACED` warnings.
 - **`ioc.State`** (`'idle' | 'starting' | 'started' | 'stopping' | 'disposed'`), and in
   `Describe()`: the container's `State`, each service's `BuildMs`, and each module's `Layer` and
   `StartMs`.
@@ -117,8 +150,8 @@ that share a container upgrade together.
 - Two packages declaring tokens with the same description no longer share (and overwrite) one
   global key.
 - Two different classes with the same name no longer resolve each other's registrations.
-- A cycle through a captured container after `await` no longer hangs on runtimes with
-  `AsyncLocalStorage`, even when nobody passed the `AsyncContext` option.
+- A cycle through a captured container after `await` no longer hangs forever: it fails at
+  `PendingTimeoutMs`, naming what is pending.
 - A failed `Start()` no longer leaves services built during it alive.
 - Scopes still alive when their parent is disposed no longer keep their instances undisposed.
 

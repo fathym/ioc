@@ -28,7 +28,7 @@ References:
    registration fails CI, not production.
 3. **Each test gets a fresh container,** or a scope of a shared one.
 4. **Fakes replace keys,** never the container: `Override(key, fake)`, which only a testing
-   container allows, and which ignores module sealing. The code under test receives a real
+   container allows, and which ignores every sealing rule. The code under test receives a real
    container, so lifetimes, scopes and disposal behave as in production.
 
 Hand-written objects that imitate a container (`{ Resolve: async () => fake }`) skip everything

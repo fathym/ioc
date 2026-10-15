@@ -858,7 +858,7 @@ Deno.test('Lifecycle - startup edge cases', async (t) => {
     assertThrows(
       () => new IoCContainer({ PendingTimeoutMs: -1 }),
       IoCRegistrationError,
-      'PendingTimeoutMs must be a finite number of milliseconds',
+      'PendingTimeoutMs must be a number of milliseconds from 0 (off) to 2147483647',
     );
 
     new IoCContainer({ PendingTimeoutMs: 0 });
@@ -884,7 +884,11 @@ Deno.test('Lifecycle - shutdown and timeouts', async (t) => {
     const [cause] = (err as unknown as AggregateError).errors;
 
     assert(isIoCError(cause, 'IOC_RESOLVE_TIMEOUT'));
-    assert((cause as Error).message.startsWith('Disposing Stuck did not finish within 20ms'));
+    assertEquals(
+      (cause as Error).message,
+      'Disposing Stuck did not finish within 20ms. Its cleanup (Symbol.asyncDispose, or the ' +
+        'Dispose option) may never settle.',
+    );
     assertEquals(ioc.State, 'disposed');
   });
 
@@ -900,22 +904,35 @@ Deno.test('Lifecycle - shutdown and timeouts', async (t) => {
 
     await assertRejects(() => ioc.Resolve($Quick), Error, 'Quick did not finish within 10ms');
 
+    const $Slow = IoCToken<string, 'Slow'>('Slow');
+
+    const own = new IoCContainer().RegisterFactory($Slow, () => new Promise<string>(() => {}), {
+      TimeoutMs: 10,
+    });
+
+    await assertRejects(
+      () => own.Resolve($Slow),
+      Error,
+      'Slow did not finish within 10ms; still pending: Slow. Something it awaits may never ' +
+        'settle; raise its TimeoutMs if it is just slow.',
+    );
+
     assertThrows(
       () =>
         new IoCContainer().RegisterValue($Quick, 'x').RegisterFactory($Migrate, () => '', {
           TimeoutMs: -5,
         }),
       IoCRegistrationError,
-      'TimeoutMs must be a finite number of milliseconds',
+      'TimeoutMs must be a number of milliseconds from 0 (off) to 2147483647',
     );
   });
 
   await t.step("a module's TimeoutMs is validated when the module is added", () => {
-    for (const bad of [-5, NaN, Infinity]) {
+    for (const bad of [-5, NaN, Infinity, 2 ** 31]) {
       assertThrows(
         () => new IoCContainer().Use({ Name: 'Bad', TimeoutMs: bad, Register: () => {} }),
         IoCRegistrationError,
-        'TimeoutMs must be a finite number of milliseconds',
+        'TimeoutMs must be a number of milliseconds from 0 (off) to 2147483647',
       );
     }
   });

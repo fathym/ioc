@@ -102,8 +102,10 @@ Nothing is built when you register it. Singletons are built on first resolve, or
 
 - **Registering a key and name twice throws** `IoCDuplicateRegistrationError`. Say `Replace: true`
   if you meant it, or `Default: true` for a default others may replace.
-- **A module's registrations are sealed.** Replacing one from outside the module throws
-  `IoCSealedError` unless the module registered it with `Default: true`. See
+- **A module's registrations are sealed against other modules.** Another module replacing one
+  throws `IoCSealedError` unless the owner registered it with `Default: true`. The application
+  may replace any registration (`Replace: true`); when it replaces a module's non-default one,
+  the container emits an `IOC_MODULE_OVERRIDDEN` warning. See
   [sealing](../concepts/keys-and-registrations.md#sealing-modules-own-their-registrations).
 - **Keys are tokens or classes.** A string or a symbol throws `IoCRegistrationError`
   (`IOC_INVALID_KEY`). Declare each token once and import it.

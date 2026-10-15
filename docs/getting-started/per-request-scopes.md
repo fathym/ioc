@@ -62,8 +62,9 @@ await server.shutdown();
 ## What just happened
 
 - **`CreateScope()` makes a cheap child container.** It can resolve everything the root can.
-  Nothing is copied. The root holds it weakly: it disposes the scope if the scope is still live
-  when the root is disposed, and never keeps a forgotten scope alive.
+  Nothing is copied. Once the scope owns something to dispose (here, its `RequestContext`), the
+  root keeps track of it until it is disposed, so even a forgotten scope is closed when the root
+  is disposed. A scope that owns nothing isn't tracked at all.
 - **`scoped` services get one instance per scope.** Every service in this request shares the same
   `RequestContext`; the next request gets a new one.
 - **Registrations on a scope stay in that scope.** `$Request` exists only inside this request's

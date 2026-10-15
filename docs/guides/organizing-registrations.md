@@ -110,7 +110,9 @@ console.log((await createApp('prod').Resolve($Storage)).kind); // kv
 ```
 
 When the default comes from a module, the module registers it with `Default: true`, and the app
-simply registers its own: no `Replace` needed. A module's other registrations are sealed; see
+simply registers its own: no `Replace` needed. A module's other registrations are sealed against
+other modules (the application may still replace them with `Replace: true`, and gets a warning
+saying so); see
 [modules and lifecycle](./modules-and-lifecycle.md#sealing-and-defaults).
 
 ## The startup sequence
@@ -145,7 +147,7 @@ const ioc = new IoCContainer()
 // 2. Validate the wiring, build every singleton, start the modules (in layers).
 await ioc.Start(); // listening on 0
 
-// 3. On shutdown: OnStop, then live scopes, then every instance the container created.
+// 3. On shutdown: OnStop, then child scopes, then every instance the container created.
 async function shutdown() {
   await ioc.Dispose(); // closed
 }

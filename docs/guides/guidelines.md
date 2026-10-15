@@ -23,7 +23,7 @@ References:
 | --------------------------------------------------------------------------------- | ---------------------------------------------------- | --------------- |
 | [Captive dependency](#captive-dependency)                                         | A singleton holds one request's (or one test's) data | `Validate()`    |
 | [A token per call site](#a-token-per-call-site)                                   | "No service is registered" for a registered service  | A test          |
-| [Captured container in a factory](#captured-container-in-a-factory)               | Scope and test overrides ignored                     | Code review     |
+| [Captured container in a factory](#captured-container-in-a-factory)               | Overrides ignored; cycles end in a timeout           | Code review     |
 | [Service locator in business code](#service-locator-in-business-code)             | Hidden dependencies; hard-to-write tests             | Code review     |
 | [Thenable service value](#thenable-service-value)                                 | You get the awaited result, not the object           | A test          |
 | [Factory returning a shared resource](#factory-returning-a-shared-resource)       | A connection you didn't create gets closed           | A disposal test |
@@ -98,12 +98,15 @@ console.log((await ioc.Resolve($Config)).url); // kv://local
 
 ## Captured container in a factory
 
-**Symptom:** a test or scope override is ignored.
+**Symptom:** a test or scope override is ignored, or two services wait for each other until
+`IoCResolveTimeoutError` after `PendingTimeoutMs`.
 
 **Why:** the factory resolves through a container variable it closed over, instead of the
 container it was given. A captured container is always the root, so it ignores the scope the
-factory was resolved from. (Cycles through it are still detected, by the automatic async
-context.)
+factory was resolved from. And after the factory's first `await`, the container can't tell a
+cycle through it from a callback the factory started, so a real cycle there isn't reported as
+one: it fails at the pending timeout instead of at once
+([cycles and errors](../concepts/cycles-and-errors.md#resolve-through-the-factorys-parameter)).
 
 ```ts
 import { IoCContainer, IoCToken } from '@fathym/ioc';

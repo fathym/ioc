@@ -71,13 +71,17 @@ scope.
 
 ## I can't replace a service a module registered
 
-What a module registers belongs to it: only that module can replace, decorate or unregister it.
-Anyone else gets `IoCSealedError`, naming the module. Choose the fix that matches your intent:
+What a module registers belongs to it. Another module replacing, decorating or unregistering it
+gets `IoCSealedError`, naming the owner. (A module also can't change what the application
+registered.) Choose the fix that matches your intent:
 
+- **Do it from the application.** Code that isn't a module may replace any registration with
+  `Replace: true`. The container emits an `IOC_MODULE_OVERRIDDEN` warning, so the change is
+  visible in logs.
 - **The module should allow it.** Register the service in the module with `Default: true`; then
   any registration replaces it.
 - **You are writing a test.** Create the container with `new IoCContainer({ Testing: true })`.
-  It lifts sealing and enables `Override()`.
+  It lifts sealing and enables `Override()` (outside it, `Override()` throws `IoCSealedError`).
 - **You only need it in one scope.** Register the replacement on a scope; it shadows the parent's
   registration there and changes nothing else.
 
@@ -97,11 +101,16 @@ results). Wrap the object: `RegisterValue($Query, { query })`. See
 
 ## My factory's `ioc` isn't `===` my container
 
-Every factory receives a **view** of the container. It shares all the container's state and is an
-`IoCContainer`, but it isn't the same object: it carries the resolution path that powers cycle
-detection. Resolve through it, and don't compare containers by identity. A module's `Register`,
-`OnStart` and `OnStop` receive a module view too: it registers as the module, and it can't call
-`Use`, `Start`, `Dispose` or `Override`.
+Every factory receives a **view** of the container. A factory the application registers gets a
+plain view: it shares all the container's state and is an `IoCContainer`, but it isn't the same
+object: it carries the resolution path that powers cycle detection. Resolve through it, and don't
+compare containers by identity.
+
+A module's `Register`, `OnStart`, `OnStop`, and the factories and decorators it registers,
+receive a **module view** instead: a separate object (not an `IoCContainer`) that registers as the
+module and resolves normally, but throws `IoCRegistrationError` on `Use`, `Start`, `Activate`,
+`Dispose`, `Override` and `Expect`. See
+[modules and lifecycle](./guides/modules-and-lifecycle.md#the-module-view).
 
 ## Disposal didn't run
 
@@ -109,7 +118,7 @@ detection. Resolve through it, and don't compare containers by identity. A modul
 - **It was registered with `RegisterValue`.** Values are never disposed, unless you pass a
   `Dispose` callback.
 - **The container or scope was never disposed.** Use `await using`, or call `Dispose()`.
-  Disposing a container also disposes its live child scopes.
+  Disposing a container also disposes every child scope that owns something to dispose.
 - **It doesn't implement `Symbol.dispose` or `Symbol.asyncDispose`.** Pass a `Dispose` callback
   in the registration.
 
@@ -128,16 +137,19 @@ started first, add that module to its `Requires`. `Describe().Modules` shows eac
 
 ## Startup takes 30 seconds, then fails
 
-Every pending resolve, every build in `Start()` and every `OnStart`/`OnStop` is bounded by
-`PendingTimeoutMs` (30 seconds by default). When it expires you get an `IoCResolveTimeoutError`
+Every pending resolve, every build in `Start()`, every `OnStart`/`OnStop` and every disposer in
+`Dispose()` is bounded by `PendingTimeoutMs` (30 seconds by default). When it expires you get an `IoCResolveTimeoutError`
 listing what was still pending. Common causes:
 
 - **Something the factory awaits never settles,** such as a connection or a lock.
-- **Two factories wait for each other through a container captured in a closure,** on a runtime
-  without `AsyncLocalStorage` (browsers). On Deno, Node.js and Bun the container follows the
-  chain across `await` and throws `IoCCircularDependencyError` instead. Resolve through the
-  factory's parameter either way. See [cycles and errors](./concepts/cycles-and-errors.md).
-- **It is just slow.** Raise `PendingTimeoutMs`, or set it to `0` to turn the timeout off.
+- **Two factories wait for each other through a container captured in a closure,** after an
+  `await` (or from a callback they started). The container doesn't report that as a cycle, since
+  it can't tell it from a callback that merely runs later; it fails here instead. Resolve through
+  the factory's parameter: then the cycle throws `IoCCircularDependencyError` at once. See
+  [cycles and errors](./concepts/cycles-and-errors.md#resolve-through-the-factorys-parameter).
+- **It is just slow.** Give that service or module its own `TimeoutMs` (a migration, a cache
+  warm-up), or raise `PendingTimeoutMs`; `0` turns a timeout off. See
+  [async resolution](./concepts/async-resolution.md#the-pending-timeout).
 
 ## My `Deps` doesn't compile on a typed container
 

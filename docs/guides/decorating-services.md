@@ -91,10 +91,11 @@ console.log(upstreamCalls); // 1
 - **On a scope, it affects only that scope.** That makes it the cleanest way to spy in tests (see
   [testing](./testing.md#3-fake-vs-spy)).
 - **Named registrations** are decorated by passing `{ Name }`.
-- **A module's registrations are sealed.** Only the module that registered a service may decorate
-  it in that container, unless the module registered it with `Default: true`; anyone else gets
-  `IoCSealedError`. A scope may always decorate, because that never changes the parent, and a
-  `{ Testing: true }` container lifts sealing.
+- **A module's registrations are sealed against other modules.** Another module decorating one
+  gets `IoCSealedError`, unless it is a default (`Default: true`); decorating a default keeps its
+  owner, and it stays a default. The application may decorate anything (decorating a module's
+  registration emits an `IOC_MODULE_OVERRIDDEN` warning). A scope may always decorate, because
+  that never changes the parent, and a `{ Testing: true }` container lifts sealing.
 
 ## Pitfalls
 

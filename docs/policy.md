@@ -95,13 +95,17 @@ announced the same way, and may also emit an `OnEvent` warning when it is used.
 | Runtime    | Supported versions | Checked in CI                                   |
 | ---------- | ------------------ | ----------------------------------------------- |
 | Deno       | 2.x                | Full test suite, docs examples                  |
-| Node.js    | 20, 22, 24         | Smoke test against the npm build                |
+| Node.js    | 20.16+, 22, 24     | Smoke test against the npm build                |
 | Bun        | 1.x                | Smoke test against the npm build and the source |
 | TypeScript | 5.4 and later      | A consumer type-checked with TypeScript 5.4     |
 
 The package has no runtime dependencies. The container never imports `node:async_hooks`; where
-the runtime offers `AsyncLocalStorage` (all of the above), it is used to follow resolution chains
-across `await`. Other ES2022 runtimes, browsers included, may work but aren't tested.
+the runtime offers `AsyncLocalStorage` through `process.getBuiltinModule` (all of the above), it
+is used to follow resolution chains across `await`. **Node.js 20 needs 20.16 or later** for that:
+`process.getBuiltinModule` arrived in 20.16, and on older 20.x releases the automatic async context
+is silently off (pass your own `AsyncLocalStorage` with the `AsyncContext` option there). The
+supported minimum is therefore Node.js 20.16. Other ES2022 runtimes, browsers included, may work
+but aren't tested.
 
 ### Dropping a runtime version
 

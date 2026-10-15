@@ -9,9 +9,10 @@
  *   `Start()` runs), and fails anything still pending after 30 seconds instead of hanging.
  * - **Keys are references:** an {@link IoCToken} is a unique key, and a class key is the class
  *   itself. Share a service by exporting its token; keep it private by not exporting it.
- * - **Sealed, typed modules:** only the module that registered a service can replace it, unless
- *   it registered it with `Default: true`. {@link DefineModule} types a module's needs and what it
- *   provides, and `Use()` on a {@link IoCContainer.Typed typed container} checks them.
+ * - **Sealed, typed modules:** a module's registrations can't be replaced by other modules, unless
+ *   registered with `Default: true`; the application may replace anything (with a warning).
+ *   {@link DefineModule} types a module's needs and what it provides, and `Use()` on a
+ *   {@link IoCContainer.Typed typed container} checks them.
  * - **Lifecycle at scale:** {@link IoCContainer.Start} validates, builds every singleton and
  *   starts modules by layer; a failed start cleans up and can be retried; `Dispose()` (or
  *   `await using`) stops modules, then disposes scopes and instances in reverse.

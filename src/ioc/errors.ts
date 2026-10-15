@@ -451,18 +451,22 @@ export class IoCResolveTimeoutError extends IoCError {
    * @param Service The service being resolved.
    * @param TimeoutMs The timeout that expired.
    * @param Waiting The pending builds it was waiting on, itself first when it is one.
+   * @param Hint What to check, when the container knows better than the general advice.
    */
   constructor(
     public readonly Service: string,
     public readonly TimeoutMs: number,
     public readonly Waiting: string[] = [],
+    Hint?: string,
   ) {
     super(
       `${Service} did not finish within ${TimeoutMs}ms` +
         (Waiting.length ? `; still pending: ${Waiting.join(', ')}` : '') +
-        `. Something it awaits may never settle (a connection, a lock), or factories may wait ` +
-        `on each other through a container captured in a closure; resolve through the ` +
-        `factory's parameter. Raise PendingTimeoutMs if it is just slow.`,
+        '. ' +
+        (Hint ??
+          `Something it awaits may never settle (a connection, a lock), or factories may wait ` +
+            `on each other through a container captured in a closure; resolve through the ` +
+            `factory's parameter. Raise PendingTimeoutMs if it is just slow.`),
     );
   }
 }

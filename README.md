@@ -44,12 +44,13 @@ step. Many teams can add modules to one container without stepping on each other
 - **Safe by default.** `new IoCContainer()` has no modes to pick. Registering the same key twice
   throws unless you say `Replace: true`. Nothing is built until it is needed or `Start()` runs.
   Anything still pending after 30 seconds fails with a list of what it waits on, and a cycle
-  throws instead of hanging, even across `await`.
+  through factory parameters throws at once, even across `await`.
 - **Keys are references, so encapsulation is free.** `IoCToken<T, 'Name'>('Name')` makes a new,
   unique key on every call, and a class key is the class itself. Share a service by exporting
   its token; keep it private by not exporting it. Two teams can't collide on a name.
-- **Sealed, typed modules.** What a module registers belongs to it: nobody else can replace,
-  decorate or unregister it, unless the module registered it with `Default: true`. With
+- **Sealed, typed modules.** What a module registers belongs to it: no other module can replace,
+  decorate or unregister it, unless it was registered with `Default: true`. The application
+  outranks modules: it may replace anything, and the container reports it as a warning. With
   `DefineModule`, a module declares what it `Needs`, and `Use()` on a typed container doesn't
   compile until those are registered. Each module type-checks its own short chain, so big apps
   stay fast to compile.
@@ -77,7 +78,8 @@ step. Many teams can add modules to one container without stepping on each other
 deno add jsr:@fathym/ioc
 ```
 
-Node.js and Bun: `npx jsr add @fathym/ioc` (or `bunx jsr add @fathym/ioc`). Requires TypeScript 5.4+;
+Node.js (20.16+) and Bun: `npx jsr add @fathym/ioc` (or `bunx jsr add @fathym/ioc`). Requires
+TypeScript 5.4+;
 see [requirements](https://github.com/fathym/ioc/blob/main/docs/getting-started/installation.md#requirements).
 
 ## Quick start

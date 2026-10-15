@@ -31,8 +31,8 @@ sources, and the [1.0 design](../design/ioc-1.0.md) has the decisions.
 - **strict:** registering a key twice throws unless you say `Replace: true` or `Default: true`;
   a scoped service resolved outside a scope throws;
 - **lazy:** nothing is built at registration; `Start()` builds everything at once;
-- **protected against hangs:** a 30-second pending timeout, and resolution chains followed
-  across `await`.
+- **protected against hangs:** a 30-second pending timeout (resolves, builds, `OnStart`/`OnStop`
+  and disposal), and resolution paths followed across `await`.
 
 There are no modes to choose and no "safe" constructor to remember. Each task has one method:
 `RegisterClass` constructs, `RegisterFactory` calls, `RegisterValue` stores. Keys are tokens or
@@ -60,7 +60,7 @@ When the container can work out the answer, it does, and there is no option for 
 - **Start order and parallelism** come from `Requires`: modules start in layers, independent
   modules together.
 - **Cleanup** comes from ownership: the container that built an instance disposes it, and a
-  parent disposes its live scopes.
+  parent disposes the scopes that own something to dispose.
 - **Failure handling** is fixed: a failed `Start()` stops what started, disposes what it built,
   and can be retried.
 - **Encapsulation** comes from the language: a token you don't export is private.

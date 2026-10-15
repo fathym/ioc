@@ -109,11 +109,17 @@ Deno.test('Sealing - module registrations', async (t) => {
   });
 
   await t.step('the application still needs Replace to register over it', () => {
+    const events: IoCEvent[] = [];
+
     assertThrows(
-      () => new IoCContainer().Use(Core).RegisterValue($Url, 'app'),
+      () =>
+        new IoCContainer({ OnEvent: (e) => events.push(e) }).Use(Core).RegisterValue($Url, 'app'),
       Error,
       'Url is already registered',
     );
+
+    // Nothing was replaced, so nothing is reported.
+    assertEquals(events.filter((e) => e.Type === 'warning'), []);
   });
 
   await t.step("modules can't change the application's registrations", () => {
@@ -335,6 +341,29 @@ Deno.test('Sealing - Use() is all or nothing', async (t) => {
 
     assert(!ioc.Has($Url));
     assertEquals(ioc.Describe().Modules, []);
+  });
+
+  await t.step('a rolled-back Use() reports no warnings', () => {
+    const events: IoCEvent[] = [];
+
+    const Framework: IoCModule = {
+      Name: 'Framework',
+      Register: (c) => c.RegisterValue($Url, 'framework', { Default: true }),
+    };
+
+    const ioc = new IoCContainer({ OnEvent: (e) => events.push(e) }).Use(Framework);
+
+    assertThrows(() =>
+      ioc.Use({
+        Name: 'Theme',
+        Register: (c) => {
+          c.RegisterValue($Url, 'theme', { Replace: true });
+          throw new Error('half done');
+        },
+      })
+    );
+
+    assertEquals(events.filter((e) => e.Type === 'warning'), []);
   });
 
   await t.step('replacements made before the failure are undone too', async () => {

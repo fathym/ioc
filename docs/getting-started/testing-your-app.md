@@ -90,8 +90,16 @@ Deno.test('outside tests, NotesApp owns its registrations', () => {
 
   const fake: NotesStore = { add: () => Promise.resolve(), list: () => Promise.resolve([]) };
 
+  // Override() only works in a testing container.
   assertThrows(() => ioc.Override(NotesStore, fake), IoCSealedError);
-  assertThrows(() => ioc.RegisterValue(NotesStore, fake, { Replace: true }), IoCSealedError);
+
+  // Another module can't replace what NotesApp registered.
+  const Rogue = DefineModule({
+    Name: 'Rogue',
+    Register: (ioc) => ioc.RegisterValue(NotesStore, fake, { Replace: true }),
+  });
+
+  assertThrows(() => ioc.Use(Rogue), IoCSealedError);
 });
 ```
 
@@ -100,10 +108,11 @@ Run it with `deno test --unstable-kv`.
 ## Why this works
 
 - **The test uses the real wiring** (`NotesApp`), so it also proves the registrations are right.
-- **What a module registers is sealed.** In an ordinary container, only `NotesApp` itself could
-  replace `NotesStore`, and `Override()` throws `IoCSealedError`, as the second test shows. A
-  container created with `{ Testing: true }` lifts sealing and enables `Override()`, so a
-  production container can't be patched by accident.
+- **What a module registers is sealed.** In an ordinary container, `Override()` throws
+  `IoCSealedError`, and so does another module trying to replace `NotesStore`, as the second test
+  shows. (The application itself may still replace it with `Replace: true`; the container reports
+  that as a warning.) A container created with `{ Testing: true }` lifts sealing and enables
+  `Override()`, so a production container can't be patched by accident.
 - **Override before you resolve.** `NotesService` is a singleton; it is built on the first
   `Resolve`, after the override, so it receives the fake.
 - **The real KV store is never opened.** Nothing is built at registration, and nothing resolves

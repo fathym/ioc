@@ -2,7 +2,7 @@
 FrontmatterVersion: 1
 DocumentType: Guide
 Title: Keys and Registrations
-Summary: What you register services under (classes and typed tokens, each a unique reference), how a package keeps a service private by not exporting its token, how names, Replace and Default work, and how modules seal what they register.
+Summary: What you register services under (classes and typed tokens, each a unique reference), how a package keeps a service private by not exporting its token, how names, Replace and Default work, how modules seal what they register while the application outranks them, and why that is a guardrail, not a security boundary.
 Created: 2026-10-13
 Updated: 2026-10-15
 Owners:
@@ -19,8 +19,8 @@ References:
 Every service is registered under a **key** and a **name**, and resolved with the same key and
 name. A key is a **reference**: a class, or a token object. Whoever holds the reference can use
 the service; whoever doesn't, can't. This page covers the kinds of key, how a package keeps a
-service private, how names work, what happens when a key is registered again, and how modules
-seal what they register.
+service private, how names work, what happens when a key is registered again, and who may change
+a registration once it exists.
 
 ## Kinds of key
 
@@ -94,7 +94,8 @@ needs that to tell two `string` tokens apart. Write every token this way.
 A package shares a service by exporting its token (or class). It keeps a service **private by not
 exporting it**. Code outside the package has no way to name the key, so it can't resolve,
 replace or decorate the service. That is the whole encapsulation model: it is the language's own
-module system, with no `Exports` list to maintain.
+module system, with no `Exports` list to maintain. Like sealing, it guards against mistakes, not
+against hostile code (see [below](#a-guardrail-not-a-security-boundary)).
 
 Here `@acme/billing` exports `$Billing` and keeps its rate table private:
 
@@ -167,7 +168,7 @@ Registering the same key and name twice in one container throws `IoCDuplicateReg
 - **`Replace: true`** replaces the existing registration on purpose.
 - **`Default: true`** registers a default that yields to any other registration of the same key
   and name, made before or after it. A replaced default is never built. Frameworks use it for
-  the services an application may replace.
+  the services an application or another module may replace.
 
 ```ts
 import { IoCContainer, IoCToken } from '@fathym/ioc';
@@ -189,17 +190,36 @@ console.log(await ioc.Resolve($Greeting)); // hello again
 
 ## Sealing: modules own their registrations
 
-Registrations made by a [module](../guides/modules-and-lifecycle.md) record that module. In the
-container that holds them, only the same module may replace, decorate or unregister them. Anyone
-else (the app, another module) gets `IoCSealedError` (`IOC_SEALED`), which names the owning
-module and the fix.
+Registrations made by a [module](../guides/modules-and-lifecycle.md) record that module as their
+owner. The **application** (code that isn't a module) outranks every module. Who may replace
+(`Replace: true`), `Decorate` or `Unregister` a registration in the container that holds it:
 
-| The registration was made…         | Replace, `Decorate`, `Unregister` allowed for…           |
-| ---------------------------------- | -------------------------------------------------------- |
-| by the app (not in a module)       | anyone holding the key                                   |
-| by a module                        | that module only                                         |
-| by a module, with `Default: true`  | anyone holding the key (a default exists to be replaced) |
-| anywhere, in a `Testing` container | anyone holding the key                                   |
+| The registration was made…          | By the application                       | By its own module | By another module                       |
+| ----------------------------------- | ---------------------------------------- | ----------------- | --------------------------------------- |
+| by the application                  | allowed                                  | n/a               | `IoCSealedError`                        |
+| by the application, `Default: true` | allowed                                  | n/a               | allowed, `IOC_DEFAULT_REPLACED` warning |
+| by a module                         | allowed, `IOC_MODULE_OVERRIDDEN` warning | allowed           | `IoCSealedError`                        |
+| by a module, with `Default: true`   | allowed                                  | allowed           | allowed, `IOC_DEFAULT_REPLACED` warning |
+| anywhere, in a `Testing` container  | allowed                                  | allowed           | allowed                                 |
+
+- **The application always wins.** It wires the whole thing, so it may change any registration,
+  including a module's. The container reports that as a `warning` event (`OnEvent`), so it is
+  never silent: `The application replaced Theme, registered by module 'Framework'.`
+- **A module may change its own registrations, and defaults.** A default (`Default: true`) is the
+  way a module or the application says "others may replace this". A module replacing a default it
+  doesn't own is reported as an `IOC_DEFAULT_REPLACED` warning.
+- **A module may not change another module's registrations, or the application's, unless they
+  are defaults.** That throws `IoCSealedError` (`IOC_SEALED`), naming the owner and the fix (see
+  the message below).
+- **Decorating keeps the owner.** A module decorating a framework's default doesn't become its
+  owner, and the registration stays a default.
+- **Registering again without `Replace`** over a registration the caller may change throws
+  `IoCDuplicateRegistrationError`; over one it may not change, `IoCSealedError`.
+
+```text
+Theme belongs to module 'Framework', so other modules can't replace it. If other modules should
+be able to, register it with Default: true in 'Framework'; the application can always replace it.
+```
 
 ```ts
 import { DefineModule, IoCContainer, IoCToken, isIoCError } from '@fathym/ioc';
@@ -211,35 +231,59 @@ const Framework = DefineModule({
   Name: 'Framework',
   Register: (ioc) =>
     ioc
-      .RegisterValue($Theme, 'light') // sealed: only Framework may change it
-      .RegisterValue($Clock, () => Date.now(), { Default: true }), // the app may replace it
+      .RegisterValue($Theme, 'light') // other modules can't change it
+      .RegisterValue($Clock, () => Date.now(), { Default: true }), // any module may replace it
 });
 
-const ioc = new IoCContainer().Use(Framework);
+// Another module may replace a default...
+const FakeClock = DefineModule({
+  Name: 'FakeClock',
+  Requires: [Framework],
+  Register: (ioc) => ioc.RegisterValue($Clock, () => 0, { Replace: true }),
+});
 
-ioc.RegisterValue($Clock, () => 0, { Replace: true }); // fine: a default
+// ...but not the rest.
+const DarkTheme = DefineModule({
+  Name: 'DarkTheme',
+  Requires: [Framework],
+  Register: (ioc) => ioc.RegisterValue($Theme, 'dark', { Replace: true }),
+});
+
+const warnings: string[] = [];
+
+const ioc = new IoCContainer({
+  OnEvent: (e) => {
+    if (e.Type === 'warning') warnings.push(e.Code);
+  },
+}).Use(FakeClock);
 
 try {
-  ioc.RegisterValue($Theme, 'dark', { Replace: true });
+  ioc.Use(DarkTheme);
 } catch (err) {
   console.log(isIoCError(err, 'IOC_SEALED')); // true: Theme belongs to module 'Framework'
 }
 
-// A scope may still shadow it, for that scope only.
-await using scope = ioc.CreateScope();
+// The application may change anything; changing a module's registration is reported.
+ioc.RegisterValue($Theme, 'dark', { Replace: true });
 
-scope.RegisterValue($Theme, 'dark');
-
-console.log(await scope.Resolve($Theme), await ioc.Resolve($Theme)); // dark light
+console.log(await ioc.Resolve($Theme), (await ioc.Resolve($Clock))()); // dark 0
+console.log(warnings); // [ "IOC_DEFAULT_REPLACED", "IOC_MODULE_OVERRIDDEN" ]
 ```
 
 - **Scopes are not affected.** Registering on a scope shadows the parent for that scope only; it
   never changes the parent. See [scopes](./scopes.md).
-- **Tests** use `new IoCContainer({ Testing: true })`. It ignores sealing, and it is the only
-  container where `Override()` works. See [testing](../guides/testing.md).
+- **Tests** use `new IoCContainer({ Testing: true })`. It lifts every rule above, and it is the
+  only container where `Override()` works. See [testing](../guides/testing.md).
 - **Sealing and private tokens work together.** A private token stops others from naming a
-  service; sealing stops others from changing a public one. A framework seals everything except
-  what it registers with `Default: true`.
+  service; sealing stops other modules from changing a public one by mistake.
+
+### A guardrail, not a security boundary
+
+Sealing and private tokens protect against mistakes, and they make ownership clear: every
+registration has one owner, and every change to it is either allowed, reported or refused with a
+message that names the fix. They are **not a security boundary**. Code running in the same process
+can reach far more than the container (the objects you hand it, globals, the runtime itself). Run
+untrusted plugins in a separate process or worker, and talk to them through messages.
 
 ## Class or factory?
 

@@ -93,8 +93,9 @@ for (const plugin of await ioc.ResolveAll($Plugin)) {
 }
 ```
 
-Each plugin owns its name: another module, or the app, registering `metrics` again gets
-`IoCSealedError` naming the `Metrics` module. See the
+Each plugin owns its name: another module registering `metrics` again gets `IoCSealedError`
+naming the `Metrics` module. Only the application may replace it (with `Replace: true`, reported
+as an `IOC_MODULE_OVERRIDDEN` warning). See the
 [plugin host](../patterns/plugin-host.md) pattern for lifecycle and requirements.
 
 ### By name: `ResolveNamed`

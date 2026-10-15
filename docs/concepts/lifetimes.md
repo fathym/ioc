@@ -159,8 +159,10 @@ for (const issue of ioc.Validate({ Throw: false })) console.log(issue.Kind, issu
 
 The fix is one of:
 
-- give the holder a shorter lifetime (`ScopeLevel: 'request'` here);
-- or inject `IoCLazy(RequestLog)` and resolve it on each use, from the right scope.
+- give the holder a lifetime no longer than what it holds (`ScopeLevel: 'request'` here);
+- or resolve `RequestLog` where it is used, from the scope at hand, instead of holding it.
+
+Injecting `IoCLazy(RequestLog)` instead doesn't fix a captive, and `Validate()` still reports it.
 
 Singletons are always built by the container that registered them, so the worst case can't
 happen silently: a singleton never receives a scope's instance. Asking for one throws

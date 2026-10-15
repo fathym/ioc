@@ -33,7 +33,9 @@ compile. Statement-style registrations are checked by `Validate()` at startup in
 
 Yes. Install it from JSR (`npx jsr add @fathym/ioc`, `bunx jsr add @fathym/ioc`). It is plain ESM
 with no runtime dependencies. CI runs the full suite on Deno, and builds the npm package and runs a
-smoke test on Node.js 20, 22 and 24 and on Bun. You need TypeScript 5.4 or later. See
+smoke test on Node.js 20, 22 and 24 and on Bun. On Node.js, 20.16 is the minimum: older Node.js
+20 releases lack the automatic async context (pass your own `AsyncLocalStorage` with the
+`AsyncContext` option there). You need TypeScript 5.4 or later. See
 [requirements](./getting-started/installation.md#requirements).
 
 ## Why is `Resolve` always async?
@@ -71,15 +73,17 @@ the modules it requires, and modules that don't depend on each other start at th
 
 Don't export its token (or its class). Keys are compared by reference, so code that can't import
 the token can't resolve, replace or decorate the service. To share a service, export its token.
-There is no `Exports` list to maintain: the language's module system is the boundary.
+There is no `Exports` list to maintain: the language's module system is the boundary. It guards
+against mistakes, not hostile code: untrusted code belongs in a separate process or worker.
 
-## Why can't I replace a service that a module registered?
+## Why can't my module replace a service another module registered?
 
-What a module registers is sealed: only that module can replace, decorate or unregister it, and
-anyone else gets `IoCSealedError` naming the module. A module that wants its service to be
-replaceable registers it with `Default: true`. In tests, a container created with
-`{ Testing: true }` lifts sealing. Registering in a scope is always allowed: it only affects that
-scope.
+What a module registers is sealed against other modules: another module replacing, decorating or
+unregistering it gets `IoCSealedError` naming the owner. A module that wants its service to be
+replaceable registers it with `Default: true`. The application (code that isn't a module) may
+replace anything with `Replace: true`; replacing a module's non-default registration is reported
+as an `IOC_MODULE_OVERRIDDEN` warning. In tests, a container created with `{ Testing: true }` lifts sealing. Registering in a
+scope is always allowed: it only affects that scope.
 
 ## Can I turn off strict mode, or make services eager?
 

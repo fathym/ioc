@@ -2,7 +2,7 @@
 FrontmatterVersion: 1
 DocumentType: Guide
 Title: Building Frameworks on @fathym/ioc
-Summary: Rules and recipes for library and framework authors - ship typed modules, mark what applications may replace with Default and let sealing protect the rest, keep internals private by not exporting their tokens, declare what the app must supply with Needs, put lifecycle in the module, and expose your wiring with Describe.
+Summary: Rules and recipes for library and framework authors - ship typed modules, mark what applications and plugins may replace with Default and let sealing protect the rest from other modules, keep internals private by not exporting their tokens, declare what the app must supply with Needs, put lifecycle in the module, and expose your wiring with Describe.
 Created: 2026-10-13
 Updated: 2026-10-15
 Owners:
@@ -62,19 +62,24 @@ console.log([1, 2, 3].map(() => limiter.allow('ip'))); // [ true, true, false ]
 ```
 
 A module is added once per container, however many other modules require it. Its registrations
-belong to it: `Describe()` shows the module, and sealing protects them.
+belong to it: `Describe()` shows the module, and sealing protects them from other modules.
 
-## 2. `Default` for what apps may replace; sealing protects the rest
+## 2. `Default` for what others may replace; sealing protects the rest
 
-Everything your module registers is **sealed**: the application can't replace, decorate or
-unregister it (`IoCSealedError` names your module and suggests `Default: true`). Decide, per
+Everything your module registers is **sealed against other modules**: a plugin or another
+library can't replace, decorate or unregister it (`IoCSealedError` names your module and
+suggests `Default: true`). The **application** outranks every module: it may change anything,
+yours included, and the container reports that as an `IOC_MODULE_OVERRIDDEN` warning (except for
+defaults, which exist to be replaced). Decide, per
 service, which it is:
 
 - **An extension point** (a logger, a mailer, a storage backend, a rate limiter): register it
   with **`Default: true`**. The application's registration wins, made before or after your
-  module, and your default is then never built.
+  module, and your default is then never built. A plugin module may replace it too (reported as
+  an `IOC_DEFAULT_REPLACED` warning).
 - **An internal** (your router, your scheduler, a cache only you use): register it normally.
-  Nobody else can change it, so your framework's invariants hold.
+  No other module can change it, so your framework's invariants hold against plugins. An
+  application that replaces it does so on purpose, and the warning says so.
 
 ```ts
 import { DefineModule, IoCContainer, IoCToken, isIoCError } from '@fathym/ioc';
@@ -108,20 +113,29 @@ const ioc = new IoCContainer()
 
 console.log(lines); // [ "hello" ]
 
+// A plugin can't change the framework's internals.
+const Plugin = DefineModule({
+  Name: 'plugin',
+  Requires: [WebFramework],
+  Register: (ioc) => ioc.Decorate($Router, (inner) => inner),
+});
+
 try {
-  ioc.Decorate($Router, (inner) => inner);
+  ioc.Use(Plugin);
 } catch (err) {
   console.log(isIoCError(err, 'IOC_SEALED')); // true: Router belongs to module '@acme/web'
 }
 ```
 
 Tests that need to swap an internal use `new IoCContainer({ Testing: true })`, which lifts
-sealing.
+sealing. Sealing protects against mistakes, not against hostile code: a plugin you don't trust
+belongs in a separate process or worker
+([keys and registrations](../concepts/keys-and-registrations.md#a-guardrail-not-a-security-boundary)).
 
 ## 3. Keep internals private: don't export their tokens
 
-Sealing stops others from _changing_ your services; not exporting a token stops them from
-_using_ them at all. Export the tokens (and classes) that are your public API. Keep everything
+Sealing stops other modules from _changing_ your services; not exporting a token stops anyone
+from _using_ them at all. Export the tokens (and classes) that are your public API. Keep everything
 else in non-exported constants: nobody outside your package can resolve, replace or decorate a
 key they can't import. See
 [encapsulation](../concepts/keys-and-registrations.md#encapsulation-dont-export-the-token).
@@ -173,17 +187,21 @@ with `Expect` on the app's typed container; see
 [declared dependencies](./declared-dependencies.md#keys-registered-elsewhere-expect).
 
 When your module builds on another module, list it in `Requires` rather than in `Needs`: it is
-added first, starts first, and its keys are typed in.
+added first, starts first, and the keys it registers itself are typed in. Only direct
+requirements count: to use a key from a module your requirement requires, require that module
+too. Your module's type carries only what it registers itself, so an application that resolves
+your dependencies' keys with types `Use`s those modules too.
 
 ## 5. Take the container you are given
 
-- **In `Register`, `OnStart`, `OnStop` and factories,** use the container you receive. Modules
-  receive a module view: it registers as your module and resolves normally, but can't `Use`,
-  `Start`, `Dispose` or `Override`.
+- **In `Register`, `OnStart`, `OnStop`, factories and decorators,** use the container you
+  receive. Your module's code receives a module view: it registers as your module and resolves
+  normally, but can't `Use`, `Start`, `Activate`, `Dispose`, `Override` or `Expect`.
 - **Never `new IoCContainer()` inside library code.** A private container doesn't see the
   application's registrations, isn't validated, and is never disposed.
 - **Resolve through the factory's parameter** (`(c) => c.Resolve(…)`), so a scope's overrides
-  reach your factory.
+  reach your factory and a cycle is reported at once. A cycle through a captured container after
+  an `await` only fails at `PendingTimeoutMs`.
 
 ## 6. Put lifecycle in the module
 
@@ -192,6 +210,10 @@ application calls `Start()` once and disposes the container on shutdown. Your mo
 the modules it requires, in parallel with modules it doesn't depend on, and stops before the
 modules it requires. If any module fails to start, yours is stopped again and `Start()` can be
 retried. Don't ask applications to call your own `init()` and `shutdown()`.
+
+If your `OnStart` legitimately takes long (migrations, a cache warm-up), set `TimeoutMs` on your
+module, or on the slow registration, rather than asking applications to raise
+`PendingTimeoutMs` for everything.
 
 ## 7. Choose lifetimes for the host's shape
 

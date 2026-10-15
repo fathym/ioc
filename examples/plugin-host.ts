@@ -1,7 +1,7 @@
 /**
- * A plugin host: the host is a module that registers replaceable defaults and a sealed router,
- * plugins are modules that require the host (or declare what they need), routes are collected
- * with IoCAll, and one Start()/Dispose() runs every module by layer.
+ * A plugin host: the host is a module that registers replaceable defaults and a router no plugin
+ * can change, plugins are modules that require the host (or declare what they need), routes are
+ * collected with IoCAll, and one Start()/Dispose() runs every module by layer.
  *
  * Run: deno run examples/plugin-host.ts
  */
@@ -40,7 +40,7 @@ export const Host = DefineModule({
       // A default: the app or a plugin may replace it.
       .RegisterValue($Logger, { log: (m) => console.log(`[host] ${m}`) }, { Default: true })
       .RegisterValue($Hits, { count: 0 })
-      // Sealed: only the Host module may change these.
+      // Sealed: no other module may change these (the app could, with a warning).
       .RegisterClass(Router, { Deps: [IoCAll($Route), $Hits] }),
 });
 
@@ -80,8 +80,15 @@ export const Hello = DefineModule({
     // The app's logger replaces the host's default.
     .RegisterValue($Logger, { log: (m) => console.log(`[app] ${m}`) });
 
+  // A plugin that tries to wrap the host's router is refused, and Use() adds none of it.
+  const Rogue = DefineModule({
+    Name: 'Rogue',
+    Requires: [Host],
+    Register: (ioc) => ioc.Decorate(Router, (inner) => inner),
+  });
+
   try {
-    app.Decorate(Router, (inner) => inner); // the router belongs to Host
+    app.Use(Rogue);
   } catch (err) {
     if (!isIoCError(err, 'IOC_SEALED')) throw err;
     console.log('Router is sealed by Host');

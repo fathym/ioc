@@ -176,20 +176,21 @@ await ioc.Dispose();
 
 NestJS is a framework, so only its DI part maps here. Its HTTP layer has no equivalent.
 
-| NestJS                                                        | @fathym/ioc                                                                                 |
-| ------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| `@Module({ providers, imports })`                             | An `IoCModule` (or `DefineModule`) with `Register` and `Requires`                           |
-| `exports: [X]`                                                | Export `X`'s token (or class) from your package; unexported tokens stay private             |
-| `@Injectable()` + constructor injection                       | `RegisterClass(X, { Deps: [...] })`                                                         |
-| `{ provide: T, useValue / useClass / useFactory, inject }`    | `RegisterValue` / `RegisterClass(Impl, { Type: $T })` / `RegisterFactory($T, fn, { Deps })` |
-| `useExisting: X` (alias)                                      | `RegisterFactory($T, (_ioc, x) => x, { Deps: [X] })`                                        |
-| `Scope.REQUEST`                                               | `Lifetime: 'scoped'` and a scope per request; dependents' lifetimes never change implicitly |
-| Durable providers (`ContextIdStrategy`, per tenant)           | `Levels: ['tenant', 'request']` and `ScopeLevel: 'tenant'`                                  |
-| `@Optional()`                                                 | `TryResolve`, or `IoCLazy` in `Deps`                                                        |
-| `forwardRef(() => X)`                                         | `IoCLazy(X)` in `Deps`                                                                      |
-| `onModuleInit` / `onApplicationBootstrap`                     | The module's `OnStart`                                                                      |
-| `onModuleDestroy` / `beforeApplicationShutdown`               | The module's `OnStop`                                                                       |
-| `Test.createTestingModule(…).overrideProvider(X).useValue(v)` | `new IoCContainer({ Testing: true })`, then `Override(X, v)`                                |
+| NestJS                                                        | @fathym/ioc                                                                                                                                                          |
+| ------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `@Module({ providers, imports })`                             | An `IoCModule` (or `DefineModule`) with `Register` and `Requires`                                                                                                    |
+| `exports: [X]`                                                | Export `X`'s token (or class) from your package; unexported tokens stay private                                                                                      |
+| Overriding another module's provider in app code              | Register it again from the application with `Replace: true` (an `IOC_MODULE_OVERRIDDEN` warning records it); another module may only replace it if it is a `Default` |
+| `@Injectable()` + constructor injection                       | `RegisterClass(X, { Deps: [...] })`                                                                                                                                  |
+| `{ provide: T, useValue / useClass / useFactory, inject }`    | `RegisterValue` / `RegisterClass(Impl, { Type: $T })` / `RegisterFactory($T, fn, { Deps })`                                                                          |
+| `useExisting: X` (alias)                                      | `RegisterFactory($T, (_ioc, x) => x, { Deps: [X] })`                                                                                                                 |
+| `Scope.REQUEST`                                               | `Lifetime: 'scoped'` and a scope per request; dependents' lifetimes never change implicitly                                                                          |
+| Durable providers (`ContextIdStrategy`, per tenant)           | `Levels: ['tenant', 'request']` and `ScopeLevel: 'tenant'`                                                                                                           |
+| `@Optional()`                                                 | `TryResolve`, or `IoCLazy` in `Deps`                                                                                                                                 |
+| `forwardRef(() => X)`                                         | `IoCLazy(X)` in `Deps`                                                                                                                                               |
+| `onModuleInit` / `onApplicationBootstrap`                     | The module's `OnStart`                                                                                                                                               |
+| `onModuleDestroy` / `beforeApplicationShutdown`               | The module's `OnStop`                                                                                                                                                |
+| `Test.createTestingModule(…).overrideProvider(X).useValue(v)` | `new IoCContainer({ Testing: true })`, then `Override(X, v)`                                                                                                         |
 
 ## After migrating
 
@@ -198,6 +199,9 @@ NestJS is a framework, so only its DI part maps here. Its HTTP layer has no equi
   before you serve traffic.
 - Read the [guidelines](../guides/guidelines.md). Several anti-patterns are easy to carry over from
   other containers, especially the service locator.
+- If you split the registrations into modules, mark what other modules may replace with
+  `Default: true`: a module can't replace another module's other registrations (the application
+  can). See [sealing](../reference/api.md#sealing).
 
 ## What's Next
 

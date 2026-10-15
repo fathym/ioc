@@ -96,7 +96,7 @@ export interface IoCRegistration {
   readonly ctor?: AnyFunction;
   /** The container that created the registration; singleton factories always run against it. */
   readonly owner: object;
-  /** The module whose `Register` made it, if any; only that module may change it. */
+  /** The module whose `Register` made it, if any (else the application owns it). */
   readonly module?: { readonly Name: string };
   readonly holder?: IoCHolder;
   readonly label: string;
@@ -427,11 +427,20 @@ export function asModule<T>(module: { readonly Name: string } | undefined, fn: (
   }
 }
 
-let journal: (() => void)[] | undefined;
+let journal: { undo: (() => void)[]; commit: (() => void)[] } | undefined;
 
 /** Records how to undo a registration change while a module's `Register` runs (atomic `Use`). */
 export function recordUndo(undo: () => void): void {
-  journal?.push(undo);
+  journal?.undo.push(undo);
+}
+
+/**
+ * Runs `fn` now, or, inside {@link atomically}, once the whole call succeeded (so a rolled-back
+ * `Use()` reports nothing).
+ */
+export function afterCommit(fn: () => void): void {
+  if (journal) journal.commit.push(fn);
+  else fn();
 }
 
 /**
@@ -441,18 +450,25 @@ export function recordUndo(undo: () => void): void {
 export function atomically<T>(fn: () => T): T {
   const outer = journal;
 
-  const mine: (() => void)[] = [];
+  const mine = { undo: [] as (() => void)[], commit: [] as (() => void)[] };
 
   journal = mine;
 
   try {
     const result = fn();
 
-    outer?.push(...mine);
+    journal = outer;
+
+    if (outer) {
+      outer.undo.push(...mine.undo);
+      outer.commit.push(...mine.commit);
+    } else {
+      for (const commit of mine.commit) commit();
+    }
 
     return result;
   } catch (err) {
-    for (const undo of mine.reverse()) undo();
+    for (const undo of mine.undo.reverse()) undo();
 
     throw err;
   } finally {

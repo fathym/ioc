@@ -2,7 +2,7 @@
 FrontmatterVersion: 1
 DocumentType: Guide
 Title: Modules and Lifecycle
-Summary: Package registrations as modules with DefineModule (Requires, Needs, a Register that returns its chain), understand the module view and sealing, let applications replace Default services, start modules in layers, recover from a failed Start, and follow it all with State and OnEvent.
+Summary: Package registrations as modules with DefineModule (Requires, Needs, a Register that returns its chain), understand the closed module view and who may change a registration (the application outranks modules), let others replace Default services, give slow steps their own TimeoutMs, start modules in layers, recover from a failed Start, and follow it all with State and OnEvent.
 Created: 2026-10-13
 Updated: 2026-10-15
 Owners:
@@ -62,6 +62,9 @@ await ioc.Start();
 - **`Needs`** lists keys the module expects someone else to register: the application, or a
   module it doesn't require. `Validate()` treats them as declared.
 - **`Register` is synchronous.** Async setup goes in async factories or in `OnStart`.
+- **`Use()` is all or nothing.** If any module's `Register` throws, every registration and module
+  that `Use()` call added is undone, including the modules it pulled in through `Requires`. Fix
+  the cause and call `Use()` again.
 - **Add every module before `Start()`.** `Use()` after it throws.
 
 ## Typed modules
@@ -69,11 +72,13 @@ await ioc.Start();
 `DefineModule` infers a module's types from what you write:
 
 - inside `Register`, the container is typed with the module's `Needs` and the keys its
-  `Requires` provide, so `Deps` can only name those and the module's own earlier registrations;
+  **direct** `Requires` register themselves, so `Deps` can only name those and the module's own
+  earlier registrations;
 - `Register` **returns the registration chain**, and the chain's keys are what the module
-  provides;
+  provides: only what it registers itself, never what its requirements register;
 - `Use(module)` on a `Typed()` container adds those keys, and doesn't compile when the container
-  lacks something the module `Needs`.
+  lacks something the module needs (its own `Needs`, plus what its requirements need and don't
+  get from their own requirements).
 
 ```ts
 import { DefineModule, IoCContainer, IoCToken } from '@fathym/ioc';
@@ -129,31 +134,62 @@ new IoCContainer().Typed().Use(Data);
 // Property ''@fathym/ioc/unmet-needs'' is missing … IoCToken<string, "DbUrl">
 ```
 
-Each module type-checks its own short chain, so a large application stays fast to compile
-([scale](../concepts/scale.md#type-checking-stays-linear-with-typed-modules)). The types check a
-module's own `Needs`; `Validate()`, which `Start()` runs first, checks the whole graph at
-runtime.
+Provides are **not transitive**: `Notes` sees `Db` because it requires `Data`, which registers
+`Db` itself. It doesn't see `$Logger`, which `Data` only gets from `Logging`. To use a key from a
+module further down, require that module too (or list the key in `Needs`). The same goes for the
+application: `Use(Notes)` types in `NotesRepo` only, so `Use` the other modules too (as above,
+`Use(Data, Notes)`), or `Expect` their keys, to resolve them with types at the app.
+
+This keeps each module's type small: each module type-checks its own short chain, so a large
+application stays fast to compile, whatever the depth of its graph
+([scale](../concepts/scale.md#type-checking-stays-linear-with-typed-modules)). The types check
+what modules need; `Validate()`, which `Start()` runs first, checks the whole graph at runtime.
 
 ## The module view
 
-`Register`, `OnStart` and `OnStop` receive a **module view** of the container, not the container
-itself:
+`Register`, `OnStart`, `OnStop`, **and every factory or decorator the module registers**,
+receive a **module view** of the container, not the container itself:
 
 - **It registers as the module.** Everything registered through it belongs to the module: sealing
   and `Describe()` know where it came from.
-- **It resolves normally,** so `OnStart` can resolve the services it starts.
-- **It can't run the application.** Calling `Use`, `Start`, `Dispose`, `Override` or `Expect`
-  on it throws `IoCRegistrationError` (`IOC_INVALID_REGISTRATION`). A module lists the modules it
-  builds on in `Requires`, and the keys it expects from elsewhere (including keys each scope
-  registers, such as a request) in `Needs`. Only the application calls `Expect()`, on its own
-  container.
+- **It resolves normally** (`Resolve`, `TryResolve`, `ResolveAll`, `ResolveNamed`,
+  `ResolveRecord`, `Names`, `Has`), so `OnStart` can resolve the services it starts. It can also
+  `Describe`, `Validate`, read `State`, `Decorate`, `Unregister`, `Isolate` and `CreateScope`
+  (which returns a module view of the new scope).
+- **It can't run the application.** Calling `Use`, `Start`, `Activate`, `Dispose`, `Override`
+  or `Expect` on it throws `IoCRegistrationError` (`IOC_INVALID_REGISTRATION`):
+  `Module 'Search' called Dispose(), which only the application can call. …`. A module lists the
+  modules it builds on in `Requires`, and the keys it expects from elsewhere (including keys each
+  scope registers, such as a request) in `Needs`. Only the application calls `Expect()`, on its
+  own container.
+- **It is closed.** The view is a separate object, not an `IoCContainer`, with no link to the
+  container a module could follow, and the container's options are frozen. A module can't reach
+  the container through it, or act as another module.
+
+Factories the **application** registers receive a plain view of the container: the application
+may do anything.
+
+The module view is a guardrail against mistakes and a clear ownership model, not a security
+boundary: code running in the same process can reach far more than the container. Run untrusted
+code in a separate process or worker
+([keys and registrations](../concepts/keys-and-registrations.md#a-guardrail-not-a-security-boundary)).
 
 ## Sealing and defaults
 
-What a module registers is **sealed**: only that module may replace, decorate or unregister it.
-The application, or another module, gets `IoCSealedError` naming the owner. A module marks what
-an application _may_ replace with `Default: true`. A default yields to any other registration of
-the same key, made before or after it, and an overridden default is never built:
+Each registration has an owner: the module that made it, or the application. The rules:
+
+- **The application outranks modules.** It may replace (`Replace: true`), decorate or unregister
+  any registration. When it changes one a module made (other than a default, which exists to be
+  replaced), the container emits an `IOC_MODULE_OVERRIDDEN` warning (`The application replaced Sender, registered by module
+  'Framework'.`), so the change shows up in logs.
+- **A module may change its own registrations, and defaults.** `Default: true` is how a module
+  says "others may replace this". A module replacing, decorating or unregistering a default it
+  doesn't own emits an `IOC_DEFAULT_REPLACED` warning.
+- **A module may not change another module's registrations, or the application's,** unless they
+  are defaults: `IoCSealedError` (`IOC_SEALED`) names the owner and the fix.
+- **A default yields** to any other registration of the same key, made before or after it, and
+  a replaced default is never built. Decorating a default keeps its owner, and it stays a
+  default.
 
 ```ts
 import { DefineModule, IoCContainer, IoCToken, isIoCError } from '@fathym/ioc';
@@ -169,28 +205,47 @@ const Framework = DefineModule({
   Name: 'Framework',
   Register: (ioc) =>
     ioc
-      .RegisterValue($Sender, 'noreply@example.com') // sealed
+      .RegisterValue($Sender, 'noreply@example.com') // other modules can't change it
       .RegisterFactory($Mailer, () => ({ send: (to) => `console mail to ${to}` }), {
-        Default: true, // replaceable
+        Default: true, // anyone may replace it
       }),
 });
 
+// A plugin may not change Framework's sender.
+const Branding = DefineModule({
+  Name: 'Branding',
+  Requires: [Framework],
+  Register: (ioc) => ioc.RegisterValue($Sender, 'hello@brand.example', { Replace: true }),
+});
+
+const warnings: string[] = [];
+
 // The application's mailer wins whether it is registered before or after the module.
-const ioc = new IoCContainer()
+const ioc = new IoCContainer({
+  OnEvent: (e) => {
+    if (e.Type === 'warning') warnings.push(e.Message);
+  },
+})
   .RegisterValue($Mailer, { send: (to) => `smtp mail to ${to}` })
   .Use(Framework);
 
 console.log((await ioc.Resolve($Mailer)).send('ada@example.com')); // smtp mail to ada@example.com
 
 try {
-  ioc.RegisterValue($Sender, 'me@example.com', { Replace: true });
+  ioc.Use(Branding);
 } catch (err) {
   console.log(isIoCError(err, 'IOC_SEALED')); // true: Sender belongs to module 'Framework'
 }
+
+// The application may, and the change is reported.
+ioc.RegisterValue($Sender, 'me@example.com', { Replace: true });
+
+console.log(await ioc.Resolve($Sender), warnings);
+// me@example.com [ "The application replaced Sender, registered by module 'Framework'." ]
 ```
 
 A scope may still register its own `$Sender`: that shadows the parent for the scope only. Tests
-lift sealing with `new IoCContainer({ Testing: true })`; see [testing](./testing.md).
+lift every rule with `new IoCContainer({ Testing: true })`; see [testing](./testing.md).
 
 ## Start and stop
 
@@ -201,10 +256,34 @@ lift sealing with `new IoCContainer({ Testing: true })`; see [testing](./testing
 3. the modules' `OnStart` run **by layer**. A module starts after the modules it `Requires`;
    modules that don't require each other start at the same time.
 
+Each `OnStart` and `OnStop` is bounded by `PendingTimeoutMs` (30 seconds by default). A module
+whose start legitimately takes longer (a migration, a cache warm-up) sets its own `TimeoutMs`,
+which applies to its `OnStart` and `OnStop` only (`0` turns it off):
+
+```ts
+import { IoCContainer, type IoCModule } from '@fathym/ioc';
+
+const Migrations: IoCModule = {
+  Name: 'Migrations',
+  TimeoutMs: 1_000, // this module may take up to a second to start
+  Register: () => {},
+  OnStart: () => new Promise((resolve) => setTimeout(resolve, 50)),
+};
+
+await using ioc = new IoCContainer({ PendingTimeoutMs: 20 }).Use(Migrations);
+
+await ioc.Start();
+
+console.log(ioc.State); // started
+```
+
+A slow service build takes `TimeoutMs` on its registration instead
+([async resolution](../concepts/async-resolution.md#the-pending-timeout)).
+
 `Dispose()`, or the end of an `await using` block, runs `OnStop` layer by layer in reverse,
 _before_ any instance is disposed, so `OnStop` can still use its services (flush a buffer, drain
-a queue). Modules in live child scopes (late plugins) stop first, since they may require the
-parent's modules. Then it disposes live child scopes, then the instances, last created first.
+a queue). Modules in child scopes (late plugins) stop first, since they may require the parent's
+modules. Then it disposes the child scopes it tracks, then the instances, last created first.
 
 ```ts
 import { IoCContainer, type IoCModule } from '@fathym/ioc';
@@ -272,6 +351,8 @@ If a build or an `OnStart` fails, `Start()` cleans up completely before it throw
 
 - the modules that started are stopped (`OnStop`, layers in reverse);
 - everything built during this `Start()` is disposed and forgotten;
+- a build still running when `Start()` gave up (it timed out) is abandoned: if it finishes later,
+  its instance is disposed, never cached;
 - `State` goes back to `'idle'`;
 - `Start()` throws one error: `IoCValidationError`, `IoCActivationError`, or `IoCStartError`
   (`IOC_START_FAILED`) with the first failure as its `cause` and every failure of that layer in
@@ -317,7 +398,10 @@ failures.
 A shutdown signal can arrive while the application is still starting. `Dispose()` then waits for
 the running step (the module that is starting) to finish, so nothing is left half-started.
 `Start()` rejects with `IoCContainerDisposedError` (`IOC_CONTAINER_DISPOSED`), no further layer
-starts, and `Dispose()` stops and disposes everything that did:
+starts, and `Dispose()` stops and disposes everything that did. If the running step itself
+fails, `Start()` reports that failure (an `IoCStartError`) instead.
+
+Here the shutdown arrives while `Db` is starting:
 
 ```ts
 import { IoCContainer, type IoCModule, isIoCError } from '@fathym/ioc';
@@ -366,7 +450,9 @@ console.log(log); // [ "db started", "db stopped", "start cancelled" ]
 `'starting'`, `'started'`, `'stopping'` or `'disposed'`. Use it for readiness and liveness checks.
 
 The `OnEvent` option receives a `start` or `stop` event per module, and a `build` event per
-service, each with its duration in `Ms` (and `Error` when it failed), plus `warning` events.
+service, each with its duration in `Ms` (and `Error` when it failed), plus `warning` events with
+a `Code`: `IOC_MODULE_OVERRIDDEN`, `IOC_DEFAULT_REPLACED`, `IOC_MODULE_DUPLICATE`,
+`IOC_ROLLBACK_FAILED` and `IOC_LATE_DISPOSE_FAILED`.
 `Describe()` adds `StartMs` and `Layer` to each module and `BuildMs` to each built service:
 
 ```ts
@@ -393,7 +479,10 @@ console.log(ioc.State, timings); // started [ "Worker started" ]
 
 Modules must be added before `Start()`. To load a plugin later, give it a scope: the scope can
 `Use` modules (requirements already added to the parent are skipped) and `Start()` them on its
-own.
+own. Start the parent first: a scope's module can't start before the parent modules it requires,
+so `scope.Start()` throws `IoCStartError` if one of them belongs to a parent that hasn't started
+(`Module 'Reports' failed to start: it requires module 'Host', which belongs to a parent container
+that hasn't started; start the parent first`).
 
 ```ts
 import { IoCContainer, type IoCModule, IoCToken } from '@fathym/ioc';
@@ -422,7 +511,7 @@ await plugins.Start();
 console.log(await plugins.ResolveAll($Route)); // [ "/reports", "/health" ]
 ```
 
-> **Note:** Disposing the parent stops the modules of its live scopes first (deepest first), then
+> **Note:** Disposing the parent stops the modules of its child scopes first (deepest first), then
 > its own, so a late plugin stops while the host modules it requires are still running. Only then
 > are the scopes and instances disposed.
 
@@ -431,8 +520,9 @@ console.log(await plugins.ResolveAll($Route)); // [ "/reports", "/health" ]
 - Add every module before `Start()`; give late plugins a scope.
 - `Start()` is idempotent: concurrent and repeated calls share one start. After a failure it can
   be called again.
-- Every build and every `OnStart`/`OnStop` is bounded by `PendingTimeoutMs` (30 seconds by
-  default), so a hung step fails `Start()` or `Dispose()` instead of hanging it.
+- Every build, every `OnStart`/`OnStop` and every disposer is bounded by `PendingTimeoutMs` (30
+  seconds by default), so a hung step fails `Start()` or `Dispose()` instead of hanging it. A
+  registration's or a module's `TimeoutMs` overrides it for that service or module.
 - Without `Start()`, `Dispose()` runs no `OnStop`.
 - `OnStop` errors are collected into the `Dispose()` error; the rest of the shutdown still runs.
 

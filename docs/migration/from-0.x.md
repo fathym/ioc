@@ -37,41 +37,42 @@ Work through the [table](#old-call--new-call), fix what the compiler reports, th
 The first column is 0.x code; none of it exists in 1.0. Rows marked _0.0.x_ only apply when you
 come from 0.0.x.
 
-| 0.x                                                                                                     | 1.0                                                                            | Notes                                                                |
-| ------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ | -------------------------------------------------------------------- |
-| `ioc.Register(Clock)`, `Register(Clock, { Lifetime })`                                                  | `ioc.RegisterClass(Clock, { Lifetime })`                                       | Add `Deps` when the constructor takes parameters                     |
-| `Register(PgDb, { Type: sym })`                                                                         | `RegisterClass(PgDb, { Type: $Db })`                                           | `Type` must be a token the class satisfies                           |
-| `Register(Cache, (c) => …)` (class key, factory)                                                        | `RegisterFactory(Cache, (c) => …)`                                             |                                                                      |
-| `Register(sym, (c) => …)`, `Register((c) => …, { Type: sym })`                                          | `RegisterFactory($Token, (c) => …)`                                            |                                                                      |
-| `const remove = Register(…, { Lifetime: 'scoped' }); remove()` _0.0.x_                                  | `RegisterFactory(…, { Lifetime: 'scoped' })`, then `Unregister(key, name?)`    | Registration methods return the container                            |
-| `ioc.Symbol('Db')`, `Symbol.for('Db')`, `Symbol('Db')` as keys                                          | `export const $Db = IoCToken<Db, 'Db'>('Db')`, declared once and imported      | [Keys are references](#keys-are-references)                          |
-| `IoCToken<Db>('Db')` called in several files                                                            | One `IoCToken<Db, 'Db'>('Db')`, exported from the package that owns `Db`       | Every call is a new key                                              |
-| `typeof key === 'symbol'`, a token as an object property key                                            | `isIoCToken(key)`; a `Map` keyed by the token                                  | A token is a frozen object, not a symbol                             |
-| String keys (`Resolve('Db')`)                                                                           | A token                                                                        | Throws `IOC_INVALID_KEY`                                             |
-| `Resolve<Db>(sym)`, `Resolve<Foo>(Foo)`, `TryResolve<T>`, `ResolveAll<T>`, `Decorate<T>`, `Override<T>` | `Resolve($Db)`, `Resolve(Foo)`: the type comes from the key                    | An explicit type argument no longer compiles                         |
-| `{ Lazy: true }`, `LazyByDefault: true`                                                                 | Remove them                                                                    | Everything is lazy                                                   |
-| `{ Lazy: false }`, eager singletons (the 0.0.x default)                                                 | `await ioc.Start()` (or `await ioc.Activate()`) at startup                     | Builds every singleton                                               |
-| `new IoCContainer({ Strict: true })`, `IoCContainer.Create()`                                           | `new IoCContainer()`                                                           | Always strict                                                        |
-| Registering a key and name again (last one wins)                                                        | `{ Replace: true }` on the replacement, or `{ Default: true }` on the original | Otherwise throws `IOC_DUPLICATE_REGISTRATION`                        |
-| `Diagnostics: (d) => …` (`IoCDiagnostic`)                                                               | `OnEvent: (e) => { if (e.Type === 'warning') … }` (`IoCEvent`)                 | [Diagnostics → OnEvent](#diagnostics--onevent)                       |
-| `AsyncContext: new AsyncLocalStorage()`                                                                 | Nothing: it is automatic where the runtime has one                             | `AsyncContext: false` turns it off                                   |
-| `PendingTimeoutMs` unset (wait forever)                                                                 | 30 000 ms by default; `PendingTimeoutMs: 0` to wait forever                    | Also bounds startup builds, `OnStart` and `OnStop`                   |
-| `source.CopyTo(target)`                                                                                 | A module: `target.Use(SourceModule)`; or a child scope: `source.CreateScope()` | [Sharing registrations](#sharing-registrations-without-copyto)       |
-| `ModuleFromContainer('Plugin', pluginIoc, { Defaults: true })`                                          | The plugin exports an `IoCModule` whose registrations use `Default: true`      |                                                                      |
-| `RegisterDirect` / `ResolveDirect`                                                                      | `RegisterValue` / `Resolve`                                                    |                                                                      |
-| `ioc.services`, `ioc.symbols`                                                                           | `ioc.Describe()`, `ioc.Names(key)`, `ioc.Has(key)`                             |                                                                      |
-| `ioc.Override(key, value)` on any container                                                             | `new IoCContainer({ Testing: true })`, then `Override`                         | [Sealing, Default and Testing](#sealing-default-and-testing)         |
-| `CreateScope({ Level: 'tenant' })` with any string                                                      | Declare the levels: `new IoCContainer({ Levels: ['tenant', 'request'] })`      | [Declaring scope levels](#declaring-scope-levels)                    |
-| `{ Lifetime: 'scoped', ScopeLevel: 'tenant' }`                                                          | `{ ScopeLevel: 'tenant' }`                                                     | `ScopeLevel` implies scoped                                          |
-| A module calling `ioc.Use(Other)` in `Register`                                                         | `Requires: [Other]` on the module                                              | Module views can't `Use`, `Expect`, `Start`, `Dispose` or `Override` |
-| A module calling `ioc.Expect($Key)` in `Register`                                                       | `Needs: [$Key]` on the module                                                  | The app still uses `Expect()` for keys each scope provides           |
-| A module relying on another module's services without saying so                                         | `Requires: [Other]`, or `Needs: [$Key]`                                        | `Validate()` reports `undeclared`                                    |
-| `err.Symbol` on `IoCServiceNotFoundError`                                                               | `err.Key` (the token description or class name)                                |                                                                      |
-| Matching `No Service for symbol '…'` in messages                                                        | `isIoCError(err, 'IOC_SERVICE_NOT_FOUND')`                                     | The message is `No service is registered for …`                      |
-| `IoCKeyCollisionError`, `IOC_KEY_COLLISION`                                                             | Nothing                                                                        | Collisions are impossible                                            |
-| `IoCDiagnostic`, `IoCDiagnosticCode`                                                                    | `IoCEvent`, `IoCWarningCode`                                                   |                                                                      |
-| `IoCServices`, `IoCServiceResolutions`, `IoCServiceConstructed`                                         | Nothing                                                                        | Internal storage is no longer public                                 |
-| `Describe()` services with `Kind: 'external'`                                                           | Nothing                                                                        | No foreign registrations exist                                       |
+| 0.x                                                                                                     | 1.0                                                                              | Notes                                                                                                   |
+| ------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `ioc.Register(Clock)`, `Register(Clock, { Lifetime })`                                                  | `ioc.RegisterClass(Clock, { Lifetime })`                                         | Add `Deps` when the constructor takes parameters                                                        |
+| `Register(PgDb, { Type: sym })`                                                                         | `RegisterClass(PgDb, { Type: $Db })`                                             | `Type` must be a token the class satisfies                                                              |
+| `Register(Cache, (c) => …)` (class key, factory)                                                        | `RegisterFactory(Cache, (c) => …)`                                               |                                                                                                         |
+| `Register(sym, (c) => …)`, `Register((c) => …, { Type: sym })`                                          | `RegisterFactory($Token, (c) => …)`                                              |                                                                                                         |
+| `const remove = Register(…, { Lifetime: 'scoped' }); remove()` _0.0.x_                                  | `RegisterFactory(…, { Lifetime: 'scoped' })`, then `Unregister(key, name?)`      | Registration methods return the container                                                               |
+| `ioc.Symbol('Db')`, `Symbol.for('Db')`, `Symbol('Db')` as keys                                          | `export const $Db = IoCToken<Db, 'Db'>('Db')`, declared once and imported        | [Keys are references](#keys-are-references)                                                             |
+| `IoCToken<Db>('Db')` called in several files                                                            | One `IoCToken<Db, 'Db'>('Db')`, exported from the package that owns `Db`         | Every call is a new key                                                                                 |
+| `typeof key === 'symbol'`, a token as an object property key                                            | `isIoCToken(key)`; a `Map` keyed by the token                                    | A token is a frozen object, not a symbol                                                                |
+| String keys (`Resolve('Db')`)                                                                           | A token                                                                          | Throws `IOC_INVALID_KEY`                                                                                |
+| `Resolve<Db>(sym)`, `Resolve<Foo>(Foo)`, `TryResolve<T>`, `ResolveAll<T>`, `Decorate<T>`, `Override<T>` | `Resolve($Db)`, `Resolve(Foo)`: the type comes from the key                      | An explicit type argument no longer compiles                                                            |
+| `{ Lazy: true }`, `LazyByDefault: true`                                                                 | Remove them                                                                      | Everything is lazy                                                                                      |
+| `{ Lazy: false }`, eager singletons (the 0.0.x default)                                                 | `await ioc.Start()` (or `await ioc.Activate()`) at startup                       | Builds every singleton                                                                                  |
+| `new IoCContainer({ Strict: true })`, `IoCContainer.Create()`                                           | `new IoCContainer()`                                                             | Always strict                                                                                           |
+| Registering a key and name again (last one wins)                                                        | `{ Replace: true }` on the replacement, or `{ Default: true }` on the original   | Otherwise throws `IOC_DUPLICATE_REGISTRATION`                                                           |
+| `Diagnostics: (d) => …` (`IoCDiagnostic`)                                                               | `OnEvent: (e) => { if (e.Type === 'warning') … }` (`IoCEvent`)                   | [Diagnostics → OnEvent](#diagnostics--onevent)                                                          |
+| `AsyncContext: new AsyncLocalStorage()`                                                                 | Nothing: it is automatic where the runtime has one (Deno, Bun, Node.js 20.16+)   | It no longer reports cycles; see [async context](#strict-lazy-timeouts-and-async-context-are-always-on) |
+| `PendingTimeoutMs` unset (wait forever)                                                                 | 30 000 ms by default; `PendingTimeoutMs: 0` to wait forever                      | Also bounds startup builds, `OnStart` and `OnStop`                                                      |
+| `source.CopyTo(target)`                                                                                 | A module: `target.Use(SourceModule)`; or a child scope: `source.CreateScope()`   | [Sharing registrations](#sharing-registrations-without-copyto)                                          |
+| `ModuleFromContainer('Plugin', pluginIoc, { Defaults: true })`                                          | The plugin exports an `IoCModule` whose registrations use `Default: true`        |                                                                                                         |
+| `RegisterDirect` / `ResolveDirect`                                                                      | `RegisterValue` / `Resolve`                                                      |                                                                                                         |
+| `ioc.services`, `ioc.symbols`                                                                           | `ioc.Describe()`, `ioc.Names(key)`, `ioc.Has(key)`                               |                                                                                                         |
+| `ioc.Override(key, value)` on any container                                                             | `new IoCContainer({ Testing: true })`, then `Override`                           | [Sealing, Default and Testing](#sealing-default-and-testing)                                            |
+| `CreateScope({ Level: 'tenant' })` with any string                                                      | Declare the levels: `new IoCContainer({ Levels: ['tenant', 'request'] })`        | [Declaring scope levels](#declaring-scope-levels)                                                       |
+| `{ Lifetime: 'scoped', ScopeLevel: 'tenant' }`                                                          | `{ ScopeLevel: 'tenant' }`                                                       | `ScopeLevel` implies scoped                                                                             |
+| A module calling `ioc.Use(Other)` in `Register`                                                         | `Requires: [Other]` on the module                                                | Module views can't `Use`, `Expect`, `Start`, `Activate`, `Dispose` or `Override`                        |
+| A module calling `ioc.Expect($Key)` in `Register`                                                       | `Needs: [$Key]` on the module                                                    | The app still uses `Expect()` for keys each scope provides                                              |
+| A module relying on another module's services without saying so                                         | `Requires: [Other]`, or `Needs: [$Key]`                                          | `Validate()` reports `undeclared`                                                                       |
+| A module replacing another module's services                                                            | `Default: true` in the owning module, or the replacement made by the application | Otherwise throws `IOC_SEALED`; [sealing](#sealing-default-and-testing)                                  |
+| `err.Symbol` on `IoCServiceNotFoundError`                                                               | `err.Key` (the token description or class name)                                  |                                                                                                         |
+| Matching `No Service for symbol '…'` in messages                                                        | `isIoCError(err, 'IOC_SERVICE_NOT_FOUND')`                                       | The message is `No service is registered for …`                                                         |
+| `IoCKeyCollisionError`, `IOC_KEY_COLLISION`                                                             | Nothing                                                                          | Collisions are impossible                                                                               |
+| `IoCDiagnostic`, `IoCDiagnosticCode`                                                                    | `IoCEvent`, `IoCWarningCode`                                                     |                                                                                                         |
+| `IoCServices`, `IoCServiceResolutions`, `IoCServiceConstructed`                                         | Nothing                                                                          | Internal storage is no longer public                                                                    |
+| `Describe()` services with `Kind: 'external'`                                                           | Nothing                                                                          | No foreign registrations exist                                                                          |
 
 `RegisterClass`, `RegisterFactory`, `RegisterValue`, `Decorate`, `Unregister`, `Typed`, `Expect`,
 `CreateScope`, `Isolate`, `Validate`, `Activate`, `Start`, `Dispose`, `Use`, `Describe`, `Names`,
@@ -174,12 +175,21 @@ console.log(ioc.Has($Config), ioc.Has($Again)); // true false
 0.1 made these opt-in to keep 0.0.x behavior. In 1.0 they are how every container behaves, and
 the options that switched them are gone.
 
-| Behavior          | 1.0                                                                                                                                                                                                                                  | What to do                                                                                                                                     |
-| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Strict**        | Registering a key and name twice in one container throws `IOC_DUPLICATE_REGISTRATION`, unless the new one has `Replace: true` or the old one `Default: true`. A `scoped` service resolved from the root throws `IOC_SCOPE_REQUIRED`. | Add `Replace: true` where a later registration is meant to win; mark framework services `Default: true`; resolve scoped services from a scope. |
-| **Lazy**          | Nothing is built at registration, including values' factories and eager 0.0.x singletons.                                                                                                                                            | Call `await ioc.Start()` (or `Activate()`) at startup, so failures still surface there.                                                        |
-| **Timeouts**      | `PendingTimeoutMs` defaults to 30 000. It bounds every pending resolve, every build in `Start()`/`Activate()`, and each `OnStart` and `OnStop`.                                                                                      | Raise it for slow startups (a large migration, a cold connection); `0` turns it off.                                                           |
-| **Async context** | Where `AsyncLocalStorage` exists (Node.js, Deno, Bun), the container follows resolution chains across `await` by itself. A cycle through a container captured in a closure throws `IOC_CIRCULAR_DEPENDENCY` instead of hanging.      | Nothing; remove `AsyncContext: new AsyncLocalStorage()`. A graph that used to hang now throws: break the cycle.                                |
+| Behavior          | 1.0                                                                                                                                                                                                                                      | What to do                                                                                                                                     |
+| ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Strict**        | Registering a key and name twice in one container throws `IOC_DUPLICATE_REGISTRATION`, unless the new one has `Replace: true` or the old one `Default: true`. A `scoped` service resolved from the root throws `IOC_SCOPE_REQUIRED`.     | Add `Replace: true` where a later registration is meant to win; mark framework services `Default: true`; resolve scoped services from a scope. |
+| **Lazy**          | Nothing is built at registration, including values' factories and eager 0.0.x singletons.                                                                                                                                                | Call `await ioc.Start()` (or `Activate()`) at startup, so failures still surface there.                                                        |
+| **Timeouts**      | `PendingTimeoutMs` defaults to 30 000. It bounds every pending resolve, every build in `Start()`/`Activate()`, each `OnStart` and `OnStop`, and each disposer. A registration's or module's `TimeoutMs` overrides it for that one.       | Give a slow service or module its own `TimeoutMs` (a large migration, a cold connection), or raise `PendingTimeoutMs`; `0` turns either off.   |
+| **Async context** | Where the runtime offers `AsyncLocalStorage` through `process.getBuiltinModule` (Deno, Bun, Node.js 20.16+), the container follows resolution chains across `await` by itself, for resolution paths in errors and observed dependencies. | Remove `AsyncContext: new AsyncLocalStorage()`, unless you target a runtime without `process.getBuiltinModule`. See the note below for cycles. |
+
+**Cycles through a captured container after `await`.** In 0.1, passing `AsyncContext` made such
+a cycle throw `IOC_CIRCULAR_DEPENDENCY`. That guess could also fire on valid code: the container
+can't tell code a build awaits from a callback the build started (a timer, a request handler). In
+1.0 the async context never reports a cycle, so a real cycle through a captured container after
+an `await` fails at `PendingTimeoutMs` with `IOC_RESOLVE_TIMEOUT`, naming what is pending. Cycles
+through the factory's parameter, through `Deps`, or before the factory's first `await` still throw
+`IOC_CIRCULAR_DEPENDENCY` at once. **What to do:** make every factory resolve through its
+parameter (`(c) => c.Resolve(…)`) or through `Deps`, never through a captured container.
 
 ```ts
 import { IoCContainer, IoCToken } from '@fathym/ioc';
@@ -198,27 +208,38 @@ console.log(await ioc.Resolve($Port)); // 9090
 **0.x:** anyone could replace, decorate, unregister or override any registration, and a module's
 registrations were recorded only for `Describe()`.
 
-**1.0:** a module owns what it registers.
+**1.0:** every registration records who made it, a module or the application (code that isn't a
+module), and that decides who may replace, decorate or unregister it later:
 
-- **Registrations made in a module's `Register` are sealed.** In that container, only the same
-  module may replace, decorate or unregister them. Anyone else gets `IoCSealedError`
-  (`IOC_SEALED`), naming the module.
-- **`Default: true` is how a framework says "you may replace this".** Defaults are not sealed.
-  Review each framework module: what the app is meant to swap (a logger, a clock, a store) needs
-  `Default: true`; everything else stays sealed.
+- **The application outranks modules.** It may change any registration, a module's included
+  (`Replace: true`, `Decorate`, `Unregister`). Changing a module's registration emits an
+  `IOC_MODULE_OVERRIDDEN` warning to `OnEvent`, so overrides stay visible, unless the registration
+  is a default: replacing a default is what it is for, so that is silent.
+- **A module may change its own registrations, and defaults.** Changing a default someone else
+  registered emits an `IOC_DEFAULT_REPLACED` warning.
+- **A module may not change another module's non-default registrations, nor the
+  application's.** It gets `IoCSealedError` (`IOC_SEALED`), naming the owner.
+- **`Default: true` is how a framework says "other modules may replace this".** Review each
+  framework module: what plugins are meant to swap (a logger, a clock, a store) needs
+  `Default: true`. The application can replace anything either way.
 - **Scopes are not affected.** Registering on a scope shadows the module's registration for that
   scope only.
 - **`Override()` is for tests only.** It works on a container created with
   `new IoCContainer({ Testing: true })` (and its scopes), which also lifts sealing. Elsewhere it
   throws `IOC_SEALED`. Test helpers that build the app's container need a way to pass
   `Testing: true`.
-- **Modules get a module view.** `Register`, `OnStart` and `OnStop` receive a container that
-  registers as the module and can't call `Use`, `Expect`, `Start`, `Dispose` or `Override`. A
-  module that added other modules with `ioc.Use(...)` lists them in `Requires` instead, and one that called `ioc.Expect(...)` lists those keys in
-  its `Needs`.
+- **Modules get a module view.** `Register`, `OnStart`, `OnStop`, and every factory and decorator
+  a module registers, receive a closed view that registers as the module and can't call `Use`,
+  `Expect`, `Start`, `Activate`, `Dispose` or `Override`. It isn't an `IoCContainer`, so code
+  that checked `ioc instanceof IoCContainer` inside a module needs to drop the check. A module
+  that added other modules with `ioc.Use(...)` lists them in `Requires` instead, and one that
+  called `ioc.Expect(...)` lists those keys in its `Needs`.
+
+Sealing guards against mistakes; it isn't a security boundary. Run untrusted plugins in a
+separate process or worker.
 
 ```ts
-import { IoCContainer, type IoCModule, IoCToken } from '@fathym/ioc';
+import { IoCContainer, type IoCEvent, type IoCModule, IoCToken, isIoCError } from '@fathym/ioc';
 
 const $Clock = IoCToken<() => number, 'Clock'>('Clock');
 const $Store = IoCToken<Map<string, string>, 'Store'>('Store');
@@ -226,20 +247,36 @@ const $Store = IoCToken<Map<string, string>, 'Store'>('Store');
 const Framework: IoCModule = {
   Name: 'Framework',
   Register: (ioc) => {
-    ioc.RegisterValue($Clock, () => Date.now()); // sealed: only Framework may change it
-    ioc.RegisterFactory($Store, () => new Map(), { Default: true }); // the app may replace it
+    ioc.RegisterValue($Clock, () => Date.now()); // sealed against other modules
+    ioc.RegisterFactory($Store, () => new Map(), { Default: true }); // plugins may replace it
   },
 };
 
-const app = new IoCContainer().Use(Framework);
+const Plugin: IoCModule = {
+  Name: 'Plugin',
+  Requires: [Framework],
+  Register: (ioc) => ioc.RegisterValue($Clock, () => 1, { Replace: true }), // not its own
+};
 
-app.RegisterFactory($Store, () => new Map([['seed', 'yes']])); // replaces the default
+try {
+  new IoCContainer().Use(Plugin);
+} catch (err) {
+  console.log(isIoCError(err, 'IOC_SEALED')); // true
+}
+
+const onEvent = (e: IoCEvent) => {
+  if (e.Type === 'warning') console.log(e.Code); // IOC_MODULE_OVERRIDDEN
+};
+
+const app = new IoCContainer({ OnEvent: onEvent }).Use(Framework);
+
+app.RegisterValue($Clock, () => 42, { Replace: true }); // the application may replace anything
 
 const test = new IoCContainer({ Testing: true }).Use(Framework);
 
-test.Override($Clock, () => 0); // tests may override anything
+test.Override($Clock, () => 0); // tests may override anything, without warnings
 
-console.log((await app.Resolve($Store)).get('seed'), (await test.Resolve($Clock))()); // yes 0
+console.log((await app.Resolve($Clock))(), (await test.Resolve($Clock))()); // 42 0
 ```
 
 ### Declaring scope levels
@@ -282,6 +319,11 @@ stopped the modules started before it.
 - **A failed `Start()` cleans up completely:** started modules stop, everything built during this
   `Start()` is disposed and forgotten, `State` returns to `'idle'`, and `Start()` can be called
   again. `IoCStartError.Failures` lists every module of the failing layer.
+- **A failed `Use()` cleans up too:** if a module's `Register` throws, every registration and
+  module that call added is undone, so `Use()` can be retried.
+- **A scope starts after its parent.** When a module added to a scope (`scope.Use(plugin)`)
+  requires a module of the parent, `scope.Start()` throws `IoCStartError` until the parent has
+  started. Start the host before its plugin scopes.
 - **`ioc.State`** reports `'idle' | 'starting' | 'started' | 'stopping' | 'disposed'`, and
   `Describe()` reports each module's `Layer` and `StartMs`, and each service's `BuildMs`.
 
@@ -318,9 +360,12 @@ await ioc.Dispose();
 scope was disposed by hand.
 
 **1.0:** `Dispose()` stops the modules, then disposes every live scope created from it (deepest
-first), then its own instances. Parents hold scopes weakly, so a scope dropped without
-`Dispose()` can still be garbage-collected. Keep disposing each scope when its work ends
-(`await using`); the cascade is the safety net at shutdown.
+first), then its own instances. A parent tracks a scope once the scope owns something to dispose
+(an instance, modules, or scopes of its own), and keeps it until it is disposed; a scope that owns
+nothing isn't tracked and is garbage-collected when dropped. So a forgotten scope never leaks a
+connection, but it holds memory until the parent shuts down. Keep disposing each scope when its
+work ends (`await using`); the cascade is the safety net at shutdown. Each disposer is bounded by
+`PendingTimeoutMs`, so a stuck one fails `Dispose()` instead of hanging it.
 
 ```ts
 import { IoCContainer } from '@fathym/ioc';
@@ -349,7 +394,8 @@ console.log(Session.closed, scope.State); // 1 disposed
 The `Diagnostics` callback is replaced by `OnEvent`, which receives timings as well as warnings:
 
 - **Warnings** arrive as `{ Type: 'warning', Code, Message, Service? }` with the codes
-  `IOC_LATE_DISPOSE_FAILED`, `IOC_MODULE_DUPLICATE` and `IOC_ROLLBACK_FAILED`.
+  `IOC_LATE_DISPOSE_FAILED`, `IOC_MODULE_DUPLICATE`, `IOC_ROLLBACK_FAILED`, and, for
+  [sealing](#sealing-default-and-testing), `IOC_MODULE_OVERRIDDEN` and `IOC_DEFAULT_REPLACED`.
 - **`IOC_REGISTRATION_REPLACED`, `IOC_CLASS_NAME_FALLBACK` and `IOC_KEY_COLLISION` no longer
   exist:** replacing now needs `Replace: true`, and keys can't collide.
 - **Other events:** `build`, `resolve`, `start` and `stop`, each with `Ms` (and `Error` when it
@@ -451,19 +497,24 @@ thing or crashed:
    it reports: explicit `Resolve<T>` arguments, string or symbol keys, `Deps` order.
 5. **Declare scope levels** on the root container with `Levels`, outermost first, and drop
    `Lifetime: 'scoped'` next to `ScopeLevel`.
-6. **Decide what each module lets others replace.** Mark those registrations `Default: true`. Move
-   `ioc.Use(...)` calls inside modules into `Requires`, and list keys a module expects from the app
-   in `Needs`.
+6. **Decide what each module lets other modules replace.** Mark those registrations
+   `Default: true` (the application can replace anything either way). Move `ioc.Use(...)` calls
+   inside modules into `Requires`, and list keys a module expects from the app in `Needs`.
 7. **Make intended replacements explicit** with `Replace: true`.
-8. **Start and stop through the container.** Call `await ioc.Start()` at boot (it validates and
+8. **Resolve through the factory's parameter.** Replace `Resolve` calls on a container captured
+   in a closure with `(c) => c.Resolve(…)` or `Deps`, so cycles throw at once instead of timing
+   out.
+9. **Start and stop through the container.** Call `await ioc.Start()` at boot (it validates and
    builds everything) and `await ioc.Dispose()` (or `await using`) at shutdown, including on
-   signals. Check that `PendingTimeoutMs` (30 s) fits your slowest startup step.
-9. **Update tests.** Create containers with `{ Testing: true }` where tests call `Override()` or
-   replace a module's registrations. Replace message matching with `isIoCError(err, code)`.
-10. **Replace `Diagnostics` with `OnEvent`.**
-11. **Add a wiring test** that calls `Validate()` on the real container, and fix any `captive` or
+   signals. Check that `PendingTimeoutMs` (30 s) fits your slowest startup step, or give that
+   one service or module its own `TimeoutMs`.
+10. **Update tests.** Create containers with `{ Testing: true }` where tests call `Override()` or
+    where a test module replaces another module's registrations. Replace message matching with
+    `isIoCError(err, code)`.
+11. **Replace `Diagnostics` with `OnEvent`.**
+12. **Add a wiring test** that calls `Validate()` on the real container, and fix any `captive` or
     `undeclared` issue it reports.
-12. **Run the test suite on every runtime you ship to,** then release with a major (or minor, if
+13. **Run the test suite on every runtime you ship to** (Node.js 20.16 or later), then release with a major (or minor, if
     still pre-1.0) version bump and a changelog entry that points your own users here.
 
 ## What's Next

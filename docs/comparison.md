@@ -46,7 +46,7 @@ fairly as we can, including **when you should pick something else**.
 | Cycle detection with path                   | ✓             | ~           | ~        | ✓      | ✓ (types)    | ~         | ~      | ✓            |
 | Startup validation                          | ✓             | ✗           | ✗        | ~      | ✓ (types)    | ✗         | ✓      | ✓            |
 | Modules with start/stop lifecycle           | ✓             | ~           | ✗        | ✗      | ✗            | ✗         | ✓      | ~            |
-| Encapsulation (private registrations)       | ✓             | ~           | ~        | ✗      | ~            | ~         | ✓      | ~            |
+| Encapsulation (private keys, module owners) | ✓             | ~           | ~        | ✗      | ~            | ~         | ✓      | ~            |
 | Nested scope levels (tenant → request)      | ✓             | ✗           | ✗        | ✗      | ✗            | ✗         | ~      | ✗            |
 | Overridable framework defaults              | ✓ (`Default`) | ~           | ✗        | ~      | ✗            | ✗         | ~      | ✓ (`TryAdd`) |
 | Error catalog in docs                       | ✓             | ✗           | ✗        | ~      | ✗            | ✗         | ✓      | ✗            |
@@ -83,6 +83,9 @@ fairly as we can, including **when you should pick something else**.
   versioning, deprecation windows, supported runtimes) is in the
   [versioning and support policy](./policy.md).
 - **You're building on a framework with its own DI** (NestJS, Angular). Use the framework's.
+- **You need to sandbox untrusted plugins.** Sealing keeps well-meaning modules from changing each
+  other's services; it isn't a security boundary. Run untrusted code in a separate process or
+  worker, whatever container you use.
 
 ## How the differences play out
 
@@ -113,14 +116,34 @@ the module lists it in `exports`, and another module sees it only if it `imports
 The framework checks this when it builds the graph, per module, inside one application. This
 container uses the language's module system instead: a key is a reference (a token object or a
 class), so a package keeps a service private by not exporting its key, and a service is shared by
-importing its key. On top of that, what a module registers is sealed: only that module can
-replace, decorate or unregister it, unless it registers it as a `Default`. The trade-off: there
-is no per-module visibility _inside_ one package, since any file that can import the token can
-resolve it. InversifyJS, tsyringe, needle-di and typed-inject get key privacy the same way when
-you use unique symbols, `InjectionToken`s or classes, but any code holding the key can rebind or
-overwrite the registration. .NET keys are types, so non-public types are private to their
-assembly, but any registration can be replaced. awilix resolves by string name in one shared
-namespace.
+importing its key. On top of that, registrations are sealed between modules: a module can't
+replace, decorate or unregister another module's registrations unless they are `Default`s, nor
+the application's. The application, which composes the modules, outranks them: it may replace
+anything, and overriding a module's non-default registration emits a warning. Modules work through a closed module view that
+can register and resolve but can't add modules, start, dispose or override. The trade-offs:
+
+- **No per-module visibility _inside_ one package:** any file that can import the token can
+  resolve it.
+- **A guardrail, not a security boundary.** Sealing and module views stop mistakes (a plugin
+  silently replacing a framework service) and make ownership clear; they don't stop hostile code
+  running in the same process, which can reach shared objects in other ways. Untrusted plugins
+  need process or worker isolation, with any container.
+
+InversifyJS, tsyringe, needle-di and typed-inject get key privacy the same way when you use unique
+symbols, `InjectionToken`s or classes, but any code holding the key can rebind or overwrite the
+registration. .NET keys are types, so non-public types are private to their assembly, but any
+registration can be replaced. awilix resolves by string name in one shared namespace.
+
+**Compile-time checks, and what they cost.** typed-inject and a [typed container](./guides/declared-dependencies.md#depend-only-on-whats-registered-typed-containers)
+both check the graph in the type system, and type-checking a long chain of registrations gets
+slow. Here, typed modules (`DefineModule`) keep each chain inside a module, and a module's type
+carries only what it registers itself, so the cost grows linearly with the number of modules,
+however deep the `Requires` graph. Measured with TypeScript 5.9 and 10 services per module:
+2,000 services as 200 flat modules took 11.6 s and 767 MB; 200 modules in a `Requires` chain
+9.7 s and 853 MB; 200 modules in 5 layers, each requiring 3 modules of the layer before, 17.8 s
+and 1.2 GB. That is real build time on a large app; registrations made as plain statements
+aren't typed and cost nothing to compile, and `Validate()` checks them at startup instead. We
+haven't measured the other containers on the same graph.
 
 **Scope levels.** NestJS durable providers (with a `ContextIdStrategy`) give each tenant its own
 sub-tree of request-scoped providers, which covers the common tenant → request case; this is

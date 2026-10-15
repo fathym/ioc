@@ -19,6 +19,7 @@ import {
 import {
   abandonedBy,
   activeHolders,
+  afterCommit,
   type AnyFunction,
   asModule,
   atomically,
@@ -246,8 +247,8 @@ export type IoCServiceOptions = {
 
   /**
    * Replaces an existing registration on purpose. Without it, registering a key and name again
-   * throws. A registration a module made can only be replaced by that module (or if it is a
-   * default).
+   * throws. A module may replace only its own registrations and defaults; the application may
+   * replace any.
    */
   Replace?: boolean;
 
@@ -419,6 +420,14 @@ const DEFAULT_NAME = '$default';
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 
+const MAX_TIMEOUT_MS = 2_147_483_647;
+
+const MODULE_TIMEOUT_HINT = `Something it awaits may never settle (a connection, a lock); set ` +
+  `the module's TimeoutMs if it is just slow.`;
+
+const DISPOSE_TIMEOUT_HINT = `Its cleanup (Symbol.asyncDispose, or the Dispose option) may never ` +
+  `settle.`;
+
 // Timers and clocks exist in every supported runtime, but not in the plain ES lib the npm build
 // compiles with.
 const host = globalThis as unknown as {
@@ -451,9 +460,10 @@ function runtimeAsyncContext(): IoCAsyncContext | undefined {
 
 /** Throws unless `ms` is undefined or a finite, non-negative number of milliseconds. */
 function checkTimeout(ms: number | undefined, option: string): void {
-  if (ms !== undefined && (!(ms >= 0) || !Number.isFinite(ms))) {
+  // Timers overflow above 2^31 - 1 ms (about 24.8 days) and would fire at once.
+  if (ms !== undefined && (!(ms >= 0) || !(ms <= MAX_TIMEOUT_MS))) {
     throw new IoCRegistrationError(
-      `${option} must be a finite number of milliseconds (0 turns it off).`,
+      `${option} must be a number of milliseconds from 0 (off) to 2147483647 (about 24.8 days).`,
     );
   }
 }
@@ -1458,8 +1468,8 @@ export class IoCContainer<TKeys = any> {
   /**
    * Wraps the current registration for a key with `decorator` (logging, caching, retries…). The
    * decorated service keeps the original's lifetime; decorators applied in order wrap each
-   * other. In a scope, decorating a parent's registration only affects the scope. A registration
-   * a module made can only be decorated by that module (or if it is a default). Returns a
+   * other. In a scope, decorating a parent's registration only affects the scope. A module may
+   * decorate only its own registrations and defaults; the application may decorate any. Returns a
    * function that restores the previous registration.
    *
    * @example Add caching around a service
@@ -2021,16 +2031,27 @@ export class IoCContainer<TKeys = any> {
    *
    * @ignore
    */
-  protected timed(value: unknown, label: string, holder?: IoCHolder, timeoutMs?: number): unknown {
+  protected timed(
+    value: unknown,
+    label: string,
+    holder?: IoCHolder,
+    timeoutMs?: number,
+    hint?: string,
+  ): unknown {
     const ms = timeoutMs ?? this.self().options.PendingTimeoutMs ?? DEFAULT_TIMEOUT_MS;
 
     if (!ms || !(value instanceof Promise)) return value;
 
     let timer: unknown;
 
+    const advice = hint ??
+      (timeoutMs !== undefined
+        ? `Something it awaits may never settle; raise its TimeoutMs if it is just slow.`
+        : undefined);
+
     const timeout = new Promise<never>((_, reject) => {
       timer = host.setTimeout(() => {
-        reject(new IoCResolveTimeoutError(label, ms, pendingLabels(holder)));
+        reject(new IoCResolveTimeoutError(label, ms, pendingLabels(holder), advice));
       }, ms);
     });
 
@@ -2119,6 +2140,7 @@ export class IoCContainer<TKeys = any> {
               `Module '${module.Name}' OnStart`,
               undefined,
               module.TimeoutMs,
+              MODULE_TIMEOUT_HINT,
             );
 
             const ms = now() - begin;
@@ -2226,7 +2248,13 @@ export class IoCContainer<TKeys = any> {
 
     for (const entry of this.owned.splice(mark).reverse()) {
       try {
-        await this.timed(disposeOne(entry.value), `Disposing ${entry.label}`);
+        await this.timed(
+          disposeOne(entry.value),
+          `Disposing ${entry.label}`,
+          undefined,
+          undefined,
+          DISPOSE_TIMEOUT_HINT,
+        );
       } catch (err) {
         errors.push(err);
       }
@@ -2267,6 +2295,7 @@ export class IoCContainer<TKeys = any> {
             `Module '${module.Name}' OnStop`,
             undefined,
             module.TimeoutMs,
+            MODULE_TIMEOUT_HINT,
           );
 
           this.emit({ Type: 'stop', Module: module.Name, Ms: now() - begin });
@@ -2349,7 +2378,13 @@ export class IoCContainer<TKeys = any> {
 
     for (const { value, label } of self.owned.splice(0).reverse()) {
       try {
-        await self.timed(disposeOne(value), `Disposing ${label}`);
+        await self.timed(
+          disposeOne(value),
+          `Disposing ${label}`,
+          undefined,
+          undefined,
+          DISPOSE_TIMEOUT_HINT,
+        );
       } catch (err) {
         errors.push(err);
       }
@@ -2417,6 +2452,7 @@ export class IoCContainer<TKeys = any> {
   protected checkSealed(
     reg: IoCRegistration,
     action: 'replace' | 'decorate' | 'unregister',
+    report = true,
   ): void {
     if (this.self().options.Testing) return;
 
@@ -2428,6 +2464,8 @@ export class IoCContainer<TKeys = any> {
     if (!caller && reg.default) return;
 
     if (!caller) {
+      if (!report) return;
+
       this.emit({
         Type: 'warning',
         Code: 'IOC_MODULE_OVERRIDDEN',
@@ -2440,13 +2478,18 @@ export class IoCContainer<TKeys = any> {
     }
 
     if (reg.default) {
-      this.emit({
-        Type: 'warning',
-        Code: 'IOC_DEFAULT_REPLACED',
-        Message: `Module '${caller.Name}' ${pastTense(action)} the default ${reg.label}` +
-          (reg.module ? `, registered by module '${reg.module.Name}'.` : '.'),
-        Service: reg.label,
-      });
+      if (!report) return;
+
+      // Reported once the module's Use() succeeded; a rolled-back one changed nothing.
+      afterCommit(() =>
+        this.emit({
+          Type: 'warning',
+          Code: 'IOC_DEFAULT_REPLACED',
+          Message: `Module '${caller.Name}' ${pastTense(action)} the default ${reg.label}` +
+            (reg.module ? `, registered by module '${reg.module.Name}'.` : '.'),
+          Service: reg.label,
+        })
+      );
 
       return;
     }
@@ -2739,11 +2782,12 @@ export class IoCContainer<TKeys = any> {
 
         this.checkSealed(existing, 'replace');
       } else if (!spec.sealChecked) {
-        this.checkSealed(existing, 'replace');
+        const duplicate = !options.Replace && !existing.default;
 
-        if (!options.Replace && !existing.default) {
-          throw new IoCDuplicateRegistrationError(label);
-        }
+        // Sealing first (its error says more), but warn only about a change that happens.
+        this.checkSealed(existing, 'replace', !duplicate);
+
+        if (duplicate) throw new IoCDuplicateRegistrationError(label);
       }
     }
 

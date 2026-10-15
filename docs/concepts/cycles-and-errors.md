@@ -2,7 +2,7 @@
 FrontmatterVersion: 1
 DocumentType: Guide
 Title: Cycles and Errors
-Summary: How the container detects circular dependencies (including across await and between concurrent resolutions), how resolution paths appear in errors, how hangs become timeouts, and how to break a cycle.
+Summary: How the container detects circular dependencies (through the factory's parameter, across await, and between concurrent resolutions), why a cycle through a captured container after an await surfaces as a timeout, how resolution paths appear in errors, and how to break a cycle.
 Created: 2026-10-13
 Updated: 2026-10-15
 Owners:
@@ -63,17 +63,21 @@ through that parameter (`c` above) is how the container follows the path across 
 how a scope's overrides reach the factory. The view shares all the container's state; it just
 isn't `===` the container.
 
-A factory that resolves through a container it **captured** instead is followed too, by the
-container's automatic async context (see
-[async resolution](./async-resolution.md#following-the-chain-across-await)):
+A factory that resolves through a container it **captured** in a closure instead is a different
+case. Before the factory's first `await`, the container still knows the path. After an `await`
+(or in a callback the factory started: a timer, a server's request handler) it can't tell code
+the build awaits from code that merely runs later, so it never guesses a cycle there. A real
+cycle through captured containers after an `await` waits until `PendingTimeoutMs` (30 seconds by
+default) and then fails with `IoCResolveTimeoutError`, naming what is pending and pointing at
+captured containers:
 
-| Factory resolves through…                   | Cycle detected?                                | Sees a scope's overrides? |
-| ------------------------------------------- | ---------------------------------------------- | ------------------------- |
-| Its parameter (`(c) => c.Resolve(…)`)       | Yes                                            | Yes                       |
-| A captured container                        | Yes (async context)                            | No                        |
-| A captured container, `AsyncContext: false` | Before the first `await` only; a timeout after | No                        |
+| Factory resolves through…                        | A cycle fails with…                                | Sees a scope's overrides? |
+| ------------------------------------------------ | -------------------------------------------------- | ------------------------- |
+| Its parameter (`(c) => c.Resolve(…)`), or `Deps` | `IoCCircularDependencyError`, at once              | Yes                       |
+| A captured container, before the first `await`   | `IoCCircularDependencyError`, at once              | No                        |
+| A captured container, after an `await`           | `IoCResolveTimeoutError`, after `PendingTimeoutMs` | No                        |
 
-So resolve through the parameter. The
+So always resolve through the parameter. The
 [guidelines](../guides/guidelines.md#captured-container-in-a-factory) show the fix.
 
 **Concurrent resolutions are covered too.** When two resolutions enter the same cycle at the same
@@ -89,8 +93,9 @@ afterwards, from outside the failed build, retries normally.
 
 ## When something never settles
 
-Some waits are not cycles: a connection that never answers, a lock nobody releases, or a cycle
-the container can't see (with `AsyncContext: false`). The pending timeout catches them. After
+Some waits are not cycles: a connection that never answers, a lock nobody releases. Others are
+cycles the container doesn't report as cycles: factories waiting on each other through a
+captured container after an `await`. The pending timeout catches both. After
 `PendingTimeoutMs` (30 seconds by default), the resolve, the startup build or the module's
 `OnStart`/`OnStop` fails with `IoCResolveTimeoutError`, listing what it was still waiting on:
 
@@ -116,9 +121,8 @@ Every error the container throws has a stable `code` (check it with
 module, and what to do:
 
 ```text
-Theme belongs to module 'Framework', so only that module can replace it. If it should be
-replaceable, register it with Default: true in 'Framework'; in tests, use a container created
-with { Testing: true }.
+Theme belongs to module 'Framework', so other modules can't replace it. If other modules should
+be able to, register it with Default: true in 'Framework'; the application can always replace it.
 ```
 
 The [error catalog](../reference/errors.md) lists every message.

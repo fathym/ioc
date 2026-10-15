@@ -46,15 +46,17 @@ pnpm add jsr:@fathym/ioc        # pnpm 10.9+
 yarn add jsr:@fathym/ioc        # Yarn 4.9+
 ```
 
-You import it as `@fathym/ioc` either way. It is plain ESM with no runtime dependencies and uses
-no Deno, Node.js or browser APIs.
+You import it as `@fathym/ioc` either way. It is plain ESM with no runtime dependencies, and it
+imports no Deno, Node.js or browser modules. Where the runtime offers `AsyncLocalStorage` without
+an import (Deno, Bun, Node.js 20.16+), it uses it for its
+[automatic async context](../concepts/async-resolution.md#following-the-chain-across-await).
 
 ## Requirements
 
 | What                    | Supported                                         | Checked in CI                                   |
 | ----------------------- | ------------------------------------------------- | ----------------------------------------------- |
 | Deno                    | 2.x                                               | the full test suite                             |
-| Node.js                 | 20 and later                                      | a smoke test on 20, 22 and 24                   |
+| Node.js                 | 20.16 and later                                   | a smoke test on 20, 22 and 24                   |
 | Bun                     | 1.x                                               | a smoke test                                    |
 | TypeScript              | 5.4 and later                                     | a consumer type-checked with 5.4 and the latest |
 | Browsers, workers, edge | any runtime with ES2022 and `Symbol.asyncDispose` | not yet                                         |

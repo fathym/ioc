@@ -57,6 +57,14 @@ Deno.test('outside test mode, the App module owns its registrations', () => {
 
   const fake: Mailer = { send: () => Promise.resolve() };
 
+  // Override() only works in a testing container.
   assertThrows(() => ioc.Override($Mailer, fake), IoCSealedError);
-  assertThrows(() => ioc.RegisterValue($Mailer, fake, { Replace: true }), IoCSealedError);
+
+  // And no other module can replace what App registered.
+  const Rogue = DefineModule({
+    Name: 'Rogue',
+    Register: (ioc) => ioc.RegisterValue($Mailer, fake, { Replace: true }),
+  });
+
+  assertThrows(() => ioc.Use(Rogue), IoCSealedError);
 });

@@ -167,15 +167,15 @@ Runnable programs, each showing one idea, run in CI: [examples/](../examples/REA
 
 ### Errors
 
-| Error                           | Usually means                                                                  |
-| ------------------------------- | ------------------------------------------------------------------------------ |
-| `IoCServiceNotFoundError`       | Nothing registered under that key and name                                     |
-| `IoCCircularDependencyError`    | Two services need each other                                                   |
-| `IoCValidationError`            | `Validate()` found wiring problems (all listed)                                |
-| `IoCContainerDisposedError`     | The container or scope was used after `Dispose()`                              |
-| `IoCStartError`                 | A module's `OnStart` failed (the start was rolled back)                        |
-| `IoCSealedError`                | Changing a registration another module owns, or `Override()` outside `Testing` |
-| `IoCDuplicateRegistrationError` | The same key and name registered twice without `Replace: true`                 |
+| Error                           | Usually means                                                                                     |
+| ------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `IoCServiceNotFoundError`       | Nothing registered under that key and name                                                        |
+| `IoCCircularDependencyError`    | Two services need each other                                                                      |
+| `IoCValidationError`            | `Validate()` found wiring problems (all listed)                                                   |
+| `IoCContainerDisposedError`     | The container or scope was used after `Dispose()`                                                 |
+| `IoCStartError`                 | A module's `OnStart` failed (the start was rolled back)                                           |
+| `IoCSealedError`                | A module changing another module's (or the app's) registration, or `Override()` outside `Testing` |
+| `IoCDuplicateRegistrationError` | The same key and name registered twice without `Replace: true`                                    |
 
 Every error has a stable `code`; see the [error catalog](./reference/errors.md).
 

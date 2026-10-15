@@ -2,7 +2,7 @@
 FrontmatterVersion: 1
 DocumentType: Guide
 Title: Async Resolution
-Summary: Why Resolve is always async, how concurrent resolves share one creation, how failures are retried, how the container follows resolution chains across await on its own, the 30-second pending timeout, and the thenable caveat.
+Summary: Why Resolve is always async, how concurrent resolves share one creation, how failures are retried, how the container follows resolution chains across await (and why a cycle through a captured container after an await is a timeout), the 30-second pending timeout and per-service timeouts, and the thenable caveat.
 Created: 2026-10-13
 Updated: 2026-10-15
 Owners:
@@ -76,12 +76,22 @@ instances, and separate promises.
 
 The container tracks every resolution chain (`Service -> Repo -> Db`), to detect cycles and to
 name the path in errors. Factories receive a view of the container that carries the chain, so
-resolving through the factory's parameter is always followed.
+resolving through the factory's parameter is always followed, across any number of `await`s. A
+cycle through the parameter throws `IoCCircularDependencyError` at once.
 
-A factory that resolves through a container it **captured** from the outer scope is followed too.
-Where the runtime offers `AsyncLocalStorage` (Deno, Node.js and Bun), the container uses it on its
-own, with no import and no option, so a cycle through captured containers throws
-`IoCCircularDependencyError` instead of hanging, even after an `await`:
+A factory that resolves through a container it **captured** from the outer scope is followed by
+the **automatic async context**. Where the runtime offers `AsyncLocalStorage` (Deno, Node.js
+20.16+ and Bun), the container uses it on its own, with no import and no option. It gives:
+
+- **resolution paths in errors** (`No service is registered for Db. Resolution path: Repo.`),
+  even after an `await`;
+- **observed dependencies** (`Describe()`'s `Observed`) for factories without `Deps`.
+
+It **never reports a cycle after an `await`**, though. There, the async context can't tell code
+the build awaits from a callback the build started (a timer, a server's request handler), and
+guessing would break valid code. So a real cycle through captured containers after an `await`
+fails at the pending timeout instead, with `IoCResolveTimeoutError` naming what is pending and
+pointing at captured containers:
 
 ```ts
 import { IoCContainer, IoCToken, isIoCError } from '@fathym/ioc';
@@ -89,9 +99,9 @@ import { IoCContainer, IoCToken, isIoCError } from '@fathym/ioc';
 const $A = IoCToken<number, 'A'>('A');
 const $B = IoCToken<number, 'B'>('B');
 
-const ioc = new IoCContainer();
+const ioc = new IoCContainer({ PendingTimeoutMs: 50 });
 
-// Both factories use the captured `ioc` after an await: still detected.
+// Both factories use the captured `ioc` after an await: a timeout, not a cycle error.
 ioc.RegisterFactory($A, async () => {
   await Promise.resolve();
 
@@ -107,20 +117,39 @@ ioc.RegisterFactory($B, async () => {
 try {
   await ioc.Resolve($A);
 } catch (err) {
+  console.log(isIoCError(err, 'IOC_RESOLVE_TIMEOUT')); // true: A did not finish within 50ms
+}
+
+// Through the parameter, the same cycle throws at once.
+const fixed = new IoCContainer()
+  .RegisterFactory($A, async (c) => {
+    await Promise.resolve();
+
+    return (await c.Resolve($B)) + 1;
+  })
+  .RegisterFactory($B, async (c) => {
+    await Promise.resolve();
+
+    return (await c.Resolve($A)) + 1;
+  });
+
+try {
+  await fixed.Resolve($A);
+} catch (err) {
   console.log(isIoCError(err, 'IOC_CIRCULAR_DEPENDENCY')); // true: A -> B -> A
 }
 ```
 
-- **It costs about 1 µs per factory call.** That is nothing for singletons, which build once.
-  On a hot path that resolves many transients per request, measure it; if it matters, turn it off
-  with `new IoCContainer({ AsyncContext: false })` and resolve through the factory's parameter.
-- **Browsers have no `AsyncLocalStorage`.** There the container falls back to following the
-  parameter and the synchronous part of each factory, and the timeout below covers the rest.
-- **You can pass your own:** `AsyncContext: new AsyncLocalStorage()` uses that instance instead.
-
-Resolving through the parameter stays the recommended style: it works everywhere, and it lets a
-scope's overrides reach the factory. See
-[cycles and errors](./cycles-and-errors.md#resolve-through-the-factorys-parameter).
+- **Always resolve through the factory's parameter.** It works everywhere, reports cycles at
+  once, and lets a scope's overrides reach the factory. See
+  [cycles and errors](./cycles-and-errors.md#resolve-through-the-factorys-parameter).
+- **The async context costs about 1 µs per factory call.** That is nothing for singletons, which
+  build once. On a hot path that resolves many transients per request, measure it; if it matters,
+  turn it off with `new IoCContainer({ AsyncContext: false })`.
+- **Browsers, and Node.js 20 before 20.16, have no automatic async context.** There the container
+  follows the parameter and the synchronous part of each factory, and the timeout covers the
+  rest. On older Node.js 20 releases you can pass your own:
+  `AsyncContext: new AsyncLocalStorage()` uses that instance instead.
 
 ## The pending timeout
 
@@ -130,7 +159,8 @@ It applies to:
 
 - every pending `Resolve`;
 - every build during `Activate()` and `Start()`;
-- each module's `OnStart` and `OnStop`.
+- each module's `OnStart` and `OnStop`;
+- each instance's disposal in `Dispose()` (see [disposal](./disposal.md#order-and-errors)).
 
 When it expires, the call fails with `IoCResolveTimeoutError` (`IOC_RESOLVE_TIMEOUT`), listing
 what was still pending:
@@ -152,9 +182,39 @@ try {
 }
 ```
 
-Tune it to your slowest legitimate startup step: raise it for a service that really takes longer
-(a large cache warm-up), lower it in tests so a hang fails fast. `PendingTimeoutMs: 0` turns it
-off. The timer only runs while something is pending; a built singleton costs nothing.
+Tune it to your slowest legitimate startup step: lower it in tests so a hang fails fast.
+`PendingTimeoutMs: 0` turns it off. The timer only runs while something is pending; a built
+singleton costs nothing.
+
+When only one step is slow, give that step its own timeout instead of raising it for everything:
+
+- **`TimeoutMs` on a registration** (`RegisterClass` or `RegisterFactory`) overrides
+  `PendingTimeoutMs` for that service's builds (also during `Start()`) and resolves. `0` turns it
+  off for that service.
+- **`TimeoutMs` on a module** (`IoCModule` or `DefineModule`) overrides it for that module's
+  `OnStart` and `OnStop`.
+
+```ts
+import { IoCContainer, IoCToken } from '@fathym/ioc';
+
+const $Migrations = IoCToken<string, 'Migrations'>('Migrations');
+
+const ioc = new IoCContainer({ PendingTimeoutMs: 20 }).RegisterFactory(
+  $Migrations,
+  async () => {
+    await new Promise((resolve) => setTimeout(resolve, 50)); // a slow migration
+
+    return 'migrated';
+  },
+  { TimeoutMs: 1_000 }, // this service may take up to a second
+);
+
+console.log(await ioc.Resolve($Migrations)); // migrated
+```
+
+A registration's `TimeoutMs` (or the container's `PendingTimeoutMs`) that isn't a finite number of
+milliseconds throws `IoCRegistrationError`
+(`TimeoutMs must be a number of milliseconds from 0 (off) to 2147483647 (about 24.8 days).`).
 
 ## Caveat: thenables are unwrapped
 

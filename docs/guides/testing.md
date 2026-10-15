@@ -33,8 +33,10 @@ say what each service depends on, so a test can:
 Tests use **`new IoCContainer({ Testing: true })`**. A testing container (and its scopes) differs
 from a normal one in two ways only:
 
-- `Override(key, value)` works (elsewhere it throws `IoCSealedError`);
-- module sealing is lifted, so a test may replace or decorate what a module registered.
+- `Override(key, value)` works (elsewhere it throws `IoCSealedError`, pointing at
+  `{ Testing: true }` or `Replace: true`);
+- every sealing rule is lifted, without warnings: test code, including test modules, may
+  replace, decorate or unregister any registration.
 
 Everything else (lifetimes, scopes, disposal, `Validate()`, `Start()`) behaves as in production.
 
@@ -96,9 +98,11 @@ Deno.test('Signup lowercases the address', async () => {
 });
 ```
 
-`$Mailer` belongs to the `App` module, so outside a testing container both `Override` and
-`Replace: true` would throw `IoCSealedError`. Prefer this to a hand-written fake container: the
-code under test gets a real container.
+Outside a testing container, `Override` throws `IoCSealedError`, so a fake can't slip into
+production. (The application could still `RegisterValue($Mailer, fake, { Replace: true })`, since
+the application outranks modules, but that is a permanent replacement reported as an
+`IOC_MODULE_OVERRIDDEN` warning, not a test override you can undo.) Prefer this to a hand-written
+fake container: the code under test gets a real container.
 
 ## 2. Fresh container per test
 

@@ -23,7 +23,8 @@ References:
 ## The shape
 
 1. **The host is a module.** It registers its extension points with `Default: true`, so an
-   application can replace them, before or after. Everything else it registers is sealed.
+   application (or a plugin) can replace them, before or after. Everything else it registers is
+   sealed against plugins; only the application outranks it.
 2. **Each plugin is a module,** exported by its package. It lists the modules it builds on in
    `Requires`, keys it expects from the app in `Needs`, registers its services in `Register`, and
    opens and closes resources in `OnStart` / `OnStop`.
@@ -99,7 +100,9 @@ console.log(events); // [ "[app] health ready", "[app] health stopped" ]
 
 Plugins discovered after `Start()` (installed at runtime, enabled per workspace) go in a scope.
 The scope reads the host's registrations, `Use`s the plugin (requirements already added to the
-host are skipped), and starts it on its own. Disposing the scope stops and unloads it:
+host are skipped), and starts it on its own. Start the host first: `workspace.Start()` throws
+`IoCStartError` while a module the plugin requires belongs to a host that hasn't started.
+Disposing the scope stops and unloads it:
 
 ```ts
 import { DefineModule, IoCContainer, IoCToken } from '@fathym/ioc';
@@ -141,16 +144,26 @@ console.log(await host.ResolveAll($Route)); // [ "/health" ]
   registrations, isn't validated, and is never disposed.
 - **Export the tokens plugins and apps use; keep the rest private.** A plugin can't reach what
   the host doesn't export.
-- **`Default: true` marks every extension point.** The rest of what the host registers is
-  sealed, so a plugin can't replace the host's router by accident: it gets `IoCSealedError`
-  naming the host.
+- **`Default: true` marks every extension point.** A plugin may replace one (the container emits
+  an `IOC_DEFAULT_REPLACED` warning). The rest of what the host registers is sealed, so a plugin
+  can't replace the host's router by accident: it gets `IoCSealedError` naming the host. The
+  application may replace anything; replacing the host's sealed services is reported as an
+  `IOC_MODULE_OVERRIDDEN` warning.
 - **Name every contribution** (`{ Name: 'health' }`) when several plugins add to one key, and
   collect them with `ResolveAll`, `ResolveNamed` or `IoCAll`. A plugin can't overwrite another
   plugin's name: that registration is sealed too.
 - **Plugins declare what the app must supply** in `Needs`; on a typed container, `Use(plugin)`
   doesn't compile until the app has registered it.
+- **Plugins get a module view, never the container.** Their `Register`, `OnStart`, `OnStop` and
+  factories can register and resolve, but can't `Use`, `Start`, `Activate`, `Dispose`,
+  `Override` or `Expect`.
+- **`Use()` is all or nothing.** If a plugin's `Register` throws, everything that `Use()` call
+  added is undone, so the host can report the bad plugin and carry on.
 - **Async setup belongs in `OnStart`** or in async factories; `Register` is synchronous. If one
-  plugin fails to start, every started plugin is stopped again, and `Start()` can be retried.
+  plugin fails to start, every started plugin is stopped again, and `Start()` can be retried. A
+  plugin with a slow start sets its own `TimeoutMs`.
+- **Sealing is a guardrail, not a sandbox.** It stops plugins from breaking the host by mistake.
+  A plugin you don't trust runs in a separate process or worker, not in the host's container.
 - **Inspect the result** with `app.Describe()`: every registration lists the module that made it,
   and every module its layer and start time.
 
