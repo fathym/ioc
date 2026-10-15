@@ -14,6 +14,7 @@ export type IoCErrorCode =
   | 'IOC_SCOPE_REQUIRED'
   | 'IOC_DUPLICATE_REGISTRATION'
   | 'IOC_SEALED'
+  | 'IOC_ACCESS_DENIED'
   | 'IOC_INVALID_LEVEL'
   | 'IOC_START_FAILED'
   | 'IOC_MODULE_CYCLE'
@@ -291,6 +292,33 @@ export class IoCSealedError extends IoCError {
           `If other modules should be able to, register it with Default: true in ` +
           `'${Module}'; the application can always replace it.`
         : `${Service} belongs to the application, so modules can't ${Action} it.`,
+    );
+  }
+}
+
+/**
+ * Thrown when an encapsulated module (see `IoCModule.Encapsulated` and the `EncapsulateModules`
+ * container option) resolves a key it hasn't declared: one it neither registers itself, lists in
+ * its `Needs`, nor gets from a module it `Requires`.
+ */
+export class IoCAccessError extends IoCError {
+  /** The error name, for logs and `instanceof`-free checks. */
+  public override name = 'IoCAccessError';
+
+  /** The stable error code. */
+  public readonly code = 'IOC_ACCESS_DENIED' as const;
+
+  /**
+   * Creates the error.
+   *
+   * @param Module The encapsulated module.
+   * @param Service The key it tried to reach.
+   */
+  constructor(public readonly Module: string, public readonly Service: string) {
+    super(
+      `Module '${Module}' is encapsulated and can't resolve ${Service}: it is neither registered ` +
+        `by '${Module}', listed in its Needs, nor registered by a module it requires. Add it to ` +
+        `Needs, or require the module that registers it.`,
     );
   }
 }

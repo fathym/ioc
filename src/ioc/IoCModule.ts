@@ -67,6 +67,15 @@ export interface IoCModule<TNeeds = never, TProvides = never> {
    */
   readonly TimeoutMs?: number;
 
+  /**
+   * Limits what the module can resolve, through its view and its factories, to what it declares:
+   * keys it registers itself, keys in its `Needs`, and keys registered by the modules it
+   * `Requires`. Anything else throws `IoCAccessError` (`IOC_ACCESS_DENIED`). The application can
+   * turn it on for modules it doesn't write (partner plugins) with the `EncapsulateModules`
+   * container option.
+   */
+  readonly Encapsulated?: boolean;
+
   /** Adds the module's registrations. Synchronous: async setup belongs in `OnStart` or factories. */
   // deno-lint-ignore no-explicit-any
   Register(ioc: IoCContainer<any>): unknown;
@@ -78,6 +87,14 @@ export interface IoCModule<TNeeds = never, TProvides = never> {
   /** Runs when the container is disposed, before its instances are, if the module started. */
   // deno-lint-ignore no-explicit-any
   OnStop?(ioc: IoCContainer<any>): unknown;
+
+  /**
+   * Reports whether the module is working, for `ioc.Health()` (readiness and liveness probes).
+   * Throw, or return `false`, when it isn't; anything else counts as healthy. Its `ioc.Signal`
+   * aborts when the check times out.
+   */
+  // deno-lint-ignore no-explicit-any
+  Health?(ioc: IoCContainer<any>): unknown;
 
   /**
    * Type-only marker carrying what the module needs and provides; never present at runtime.
@@ -154,6 +171,9 @@ export interface IoCModuleDefinition<
   /** Overrides the container's `PendingTimeoutMs` for this module's `OnStart` and `OnStop`. */
   readonly TimeoutMs?: number;
 
+  /** Limits what the module can resolve to what it declares (see `IoCModule.Encapsulated`). */
+  readonly Encapsulated?: boolean;
+
   /**
    * Adds the module's registrations. Chain them and return the chain: what it returns is what the
    * module provides to a typed container.
@@ -165,6 +185,13 @@ export interface IoCModuleDefinition<
 
   /** Runs when the container is disposed, before its instances are, if the module started. */
   OnStop?(ioc: IoCContainer<IoCModuleKeys<TRequires, TNeeds>>): unknown;
+
+  /**
+   * Reports whether the module is working, for `ioc.Health()` (readiness and liveness probes).
+   * Throw, or return `false`, when it isn't; anything else counts as healthy. Its `ioc.Signal`
+   * aborts when the check times out.
+   */
+  Health?(ioc: IoCContainer<IoCModuleKeys<TRequires, TNeeds>>): unknown;
 }
 
 /**

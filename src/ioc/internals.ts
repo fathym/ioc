@@ -19,6 +19,27 @@ export const IOC_OWNERS: WeakMap<object, object> = new WeakMap<object, object>()
 /** Owner recorded for values the container was given rather than created; never disposed. */
 export const IOC_EXTERNAL: object = Object.freeze({ external: true });
 
+/** The part of `AbortController` the container uses (typed locally: no DOM lib needed). */
+export interface IoCAborter {
+  readonly signal: unknown;
+  abort(reason?: unknown): void;
+}
+
+/** A new `AbortController`, where the runtime has one. */
+export function createAborter(): IoCAborter | undefined {
+  const Controller = (globalThis as { AbortController?: new () => IoCAborter }).AbortController;
+
+  return Controller ? new Controller() : undefined;
+}
+
+/**
+ * Aborts the signal of the build `frame` runs, creating it if the factory hasn't read it yet, so
+ * a factory that reads `Signal` later still sees the abort.
+ */
+export function abortFrame(frame: IoCResolveFrame | undefined, reason: unknown): void {
+  if (frame) (frame.aborter ??= createAborter())?.abort(reason);
+}
+
 /** A registration key: a token created by `IoCToken`, or a class. */
 export type IoCKey = object;
 
@@ -82,6 +103,8 @@ export interface IoCResolveFrame {
    * build it points at may not be waiting on this resolve.
    */
   inferred?: boolean;
+  /** Created when the factory asks for its `Signal`; aborted when the container gives up. */
+  aborter?: IoCAborter;
   /** The registration whose factory this frame runs. */
   reg?: IoCRegistration;
 }

@@ -413,7 +413,7 @@ Deno.test('Validate - undeclared module dependencies', async (t) => {
     assertEquals(new IoCContainer().Use(Replica, Fixed).Validate({ Throw: false }), []);
   });
 
-  await t.step('depending on what the application registers is not undeclared', () => {
+  await t.step('depending on what the application registers needs Needs too', () => {
     const Repos: IoCModule = {
       Name: 'ValReposApp',
       Register: (ioc) => {
@@ -423,6 +423,93 @@ Deno.test('Validate - undeclared module dependencies', async (t) => {
 
     const ioc = new IoCContainer().RegisterValue($Db, { url: 'kv://app' }).Use(Repos);
 
+    const issues = ioc.Validate({ Throw: false });
+
+    assertEquals(issues.map((i) => i.Kind), ['undeclared']);
+    assertEquals(
+      issues[0].Message,
+      "Repo (module 'ValReposApp') depends on ValDb, which the application registers, but " +
+        "'ValReposApp' doesn't list it in its Needs.",
+    );
+
+    const Declared: IoCModule = { ...Repos, Name: 'ValReposAppDeclared', Needs: [$Db] };
+
+    assertEquals(
+      new IoCContainer().RegisterValue($Db, { url: 'kv://app' }).Use(Declared).Validate({
+        Throw: false,
+      }),
+      [],
+    );
+  });
+
+  await t.step('what a factory resolved counts too, once it has run', async () => {
+    const Repos: IoCModule = {
+      Name: 'ValReposObserved',
+      Register: (ioc) => {
+        ioc.RegisterFactory(Repo, async (c) => new Repo(await c.Resolve($Db)));
+      },
+    };
+
+    const ioc = new IoCContainer().RegisterValue($Db, { url: 'kv://app' }).Use(Repos);
+
+    // Nothing declared, and the factory hasn't run: nothing to see yet.
     assertEquals(ioc.Validate({ Throw: false }), []);
+
+    await ioc.Resolve(Repo);
+
+    assertEquals(ioc.Validate({ Throw: false }).map((i) => i.Kind), ['undeclared']);
+  });
+
+  await t.step('an encapsulated module must require directly what it depends on', () => {
+    const Base: IoCModule = {
+      Name: 'ValBase',
+      Register: (ioc) => ioc.RegisterValue($Db, { url: '' }),
+    };
+
+    const Middle: IoCModule = { Name: 'ValMiddle', Requires: [Base], Register: () => {} };
+
+    const Top: IoCModule = {
+      Name: 'ValTop',
+      Requires: [Middle],
+      Register: (ioc) => ioc.RegisterClass(Repo, { Deps: [$Db] }),
+    };
+
+    // Transitively required: fine for a plain module...
+    assertEquals(new IoCContainer().Use(Top).Validate({ Throw: false }), []);
+
+    // ...not for an encapsulated one, which sees only what it requires directly.
+    const issues = new IoCContainer({ EncapsulateModules: true }).Use(Top).Validate({
+      Throw: false,
+    });
+
+    assertEquals(issues.map((i) => i.Kind), ['undeclared']);
+    assert(issues[0].Message.includes("neither requires 'ValBase' directly"), issues[0].Message);
+  });
+
+  await t.step('a default the application replaced still comes from its module', () => {
+    const Defaults: IoCModule = {
+      Name: 'ValDefaults',
+      Register: (ioc) => ioc.RegisterValue($Db, { url: 'kv://default' }, { Default: true }),
+    };
+
+    const Repos: IoCModule = {
+      Name: 'ValRepos',
+      Requires: [Defaults],
+      Register: (ioc) => ioc.RegisterClass(Repo, { Deps: [$Db] }),
+    };
+
+    // Replaced after the module registered it...
+    const after = new IoCContainer({ EncapsulateModules: true })
+      .Use(Repos)
+      .RegisterValue($Db, { url: 'kv://prod' });
+
+    assertEquals(after.Validate({ Throw: false }), []);
+
+    // ...or registered before it, so the module's default never took its place.
+    const before = new IoCContainer({ EncapsulateModules: true })
+      .RegisterValue($Db, { url: 'kv://prod' })
+      .Use(Repos);
+
+    assertEquals(before.Validate({ Throw: false }), []);
   });
 });

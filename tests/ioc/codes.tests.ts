@@ -107,6 +107,22 @@ const producers: Record<IoCErrorCode, () => unknown> = {
 
   IOC_SEALED: () => new IoCContainer().Override(IoCToken<number>('CodesOverride'), 1),
 
+  IOC_ACCESS_DENIED: () => {
+    const $Hidden = IoCToken<number>('CodesHidden');
+
+    let attempt: Promise<unknown> | undefined;
+
+    new IoCContainer().RegisterValue($Hidden, 1).Use({
+      Name: 'CodesEncapsulated',
+      Encapsulated: true,
+      Register: (m) => {
+        attempt = m.Resolve($Hidden);
+      },
+    });
+
+    return attempt;
+  },
+
   IOC_INVALID_LEVEL: () => new IoCContainer({ Levels: ['tenant'] }).CreateScope({ Level: 'x' }),
 
   IOC_START_FAILED: () =>

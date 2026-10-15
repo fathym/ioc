@@ -1,4 +1,5 @@
 import {
+  IoCAccessError,
   IoCActivationError,
   IoCCircularDependencyError,
   IoCContainerDisposedError,
@@ -18,6 +19,7 @@ import {
 } from './errors.ts';
 import {
   abandonedBy,
+  abortFrame,
   activeHolders,
   afterCommit,
   type AnyFunction,
@@ -25,6 +27,7 @@ import {
   atomically,
   attachBuild,
   constructorArity,
+  createAborter,
   createView,
   crossesInferred,
   currentFrame,
@@ -34,6 +37,7 @@ import {
   IOC_EXTERNAL,
   IOC_OWNERS,
   IOC_SELF,
+  type IoCAborter,
   type IoCDependencyRecord,
   type IoCHolder,
   type IoCKey,
@@ -78,7 +82,67 @@ export type IoCEvent =
   | { Type: 'resolve'; Service: string; Ms: number; Error?: unknown }
   | { Type: 'start'; Module: string; Ms: number; Error?: unknown }
   | { Type: 'stop'; Module: string; Ms: number; Error?: unknown }
+  | { Type: 'health'; Module: string; Ms: number; Healthy: boolean; Error?: unknown }
   | { Type: 'warning'; Code: IoCWarningCode; Message: string; Service?: string };
+
+/**
+ * The `AbortSignal` a factory or `OnStart` receives through `ioc.Signal`. It is the platform's
+ * `AbortSignal` type where one is declared (DOM or Node.js types), else the part of it the
+ * container guarantees.
+ */
+export type IoCAbortSignal = typeof globalThis extends { AbortSignal: { prototype: infer S } } ? S
+  : {
+    /** Whether the container gave up on the work. */
+    readonly aborted: boolean;
+
+    /** Why: the timeout, rollback or disposal error. */
+    readonly reason: unknown;
+
+    /** Throws `reason` when aborted. */
+    throwIfAborted(): void;
+
+    /** Calls `listener` when the signal aborts. */
+    addEventListener(type: 'abort', listener: () => void, options?: { once?: boolean }): void;
+
+    /** Removes a listener added with `addEventListener`. */
+    removeEventListener(type: 'abort', listener: () => void): void;
+  };
+
+/** One module's result in an {@link IoCHealthReport}. */
+export interface IoCModuleHealth {
+  /** The module's name. */
+  readonly Module: string;
+
+  /** False when its `Health` threw, returned `false`, or timed out. */
+  readonly Healthy: boolean;
+
+  /** How long the check took, in milliseconds. */
+  readonly Ms: number;
+
+  /** What its `Health` threw (an `IoCResolveTimeoutError` when it timed out). */
+  readonly Error?: unknown;
+}
+
+/** What {@link IoCContainer.Health} reports. */
+export interface IoCHealthReport {
+  /** True when the container has started and every module's `Health` passed: ready for work. */
+  readonly Healthy: boolean;
+
+  /** The container's lifecycle state when the checks finished. */
+  readonly State: IoCContainerState;
+
+  /** The started modules that declare `Health`, in start order. Empty unless started. */
+  readonly Modules: readonly IoCModuleHealth[];
+}
+
+/** Options for {@link IoCContainer.Health}. */
+export interface IoCHealthOptions {
+  /**
+   * How long each module's `Health` may take, in milliseconds (default 5000; 0 for no limit).
+   * Keep it below your probe's own timeout, so the report, not the probe, names the slow module.
+   */
+  readonly TimeoutMs?: number;
+}
 
 /** Where the container is in its lifecycle (see {@link IoCContainer.State}). */
 export type IoCContainerState = 'idle' | 'starting' | 'started' | 'stopping' | 'disposed';
@@ -117,6 +181,13 @@ export interface IoCContainerOptions {
 
   /** Receives build, resolve, start and stop timings and warnings (see {@link IoCEvent}). */
   OnEvent?: (event: IoCEvent) => void;
+
+  /**
+   * Encapsulates modules: each can resolve only what it declares (see `IoCModule.Encapsulated`).
+   * `true` for every module, or a function choosing which (`(m) => m.Name.startsWith('partner:')`).
+   * A module's own `Encapsulated` setting wins.
+   */
+  EncapsulateModules?: boolean | ((module: IoCModule) => boolean);
 
   /**
    * For tests: lifts module sealing (any registration may be replaced, decorated or unregistered)
@@ -420,10 +491,15 @@ const DEFAULT_NAME = '$default';
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 
+const DEFAULT_HEALTH_TIMEOUT_MS = 5_000;
+
 const MAX_TIMEOUT_MS = 2_147_483_647;
 
 const MODULE_TIMEOUT_HINT = `Something it awaits may never settle (a connection, a lock); set ` +
   `the module's TimeoutMs if it is just slow.`;
+
+const HEALTH_TIMEOUT_HINT = `Something it checks may never answer; pass Health() a longer ` +
+  `TimeoutMs if it is just slow.`;
 
 const DISPOSE_TIMEOUT_HINT = `Its cleanup (Symbol.asyncDispose, or the Dispose option) may never ` +
   `settle.`;
@@ -701,6 +777,15 @@ export class IoCContainer<TKeys = any> {
   protected readonly modules: IoCModule[];
 
   /**
+   * Every module that registered each key, including a default the application (or another
+   * default) later replaced or kept out: the module still provides the key to the modules that
+   * require it, for `Validate()`'s `undeclared` check and for encapsulated modules.
+   *
+   * @ignore
+   */
+  protected readonly declarers: Map<IoCKey, Set<IoCModule>>;
+
+  /**
    * The layers of modules that started, in start order; stopped in reverse.
    *
    * @ignore
@@ -720,6 +805,13 @@ export class IoCContainer<TKeys = any> {
    * @ignore
    */
   protected starting?: Promise<void>;
+
+  /**
+   * The signals of the `OnStart` calls running now, aborted if `Dispose()` comes.
+   *
+   * @ignore
+   */
+  protected readonly startAborters: Set<IoCAborter>;
 
   /**
    * Holders built while `Start()` runs, so a failed start can forget them.
@@ -791,9 +883,11 @@ export class IoCContainer<TKeys = any> {
     this.owned = [];
     this.expected = new Map();
     this.modules = [];
+    this.declarers = new Map();
     this.startedLayers = [];
     this.startMs = new Map();
     this.children = new Set();
+    this.startAborters = new Set();
     this.disposed = false;
     this.state = 'idle';
   }
@@ -809,6 +903,42 @@ export class IoCContainer<TKeys = any> {
    */
   public get State(): IoCContainerState {
     return this.self().state;
+  }
+
+  /**
+   * Inside a factory (on the `ioc` it receives) or a module's `OnStart`/`OnStop`, a signal that
+   * aborts when the container gives up on that work: its `Start()`/`Activate()` (or module)
+   * timeout expired, a failed `Start()` rolled back, or the container was disposed. Pass it on to
+   * `fetch`, database clients and long migrations so abandoned work actually stops. `undefined`
+   * elsewhere, and on runtimes without `AbortController`. A `Resolve` that times out doesn't abort
+   * the build: others may still be waiting for it.
+   *
+   * @example
+   * ```ts
+   * import { IoCContainer, IoCToken } from '@fathym/ioc';
+   *
+   * const $Index = IoCToken<string[], 'Index'>('Index');
+   *
+   * const ioc = new IoCContainer({ PendingTimeoutMs: 20 }).RegisterFactory($Index, async (c) => {
+   *   const pages: string[] = [];
+   *
+   *   while (!c.Signal?.aborted) {
+   *     pages.push(`page ${pages.length}`); // a long crawl that never finishes by itself
+   *     await new Promise((r) => setTimeout(r, 5));
+   *   }
+   *
+   *   return pages;
+   * });
+   *
+   * await ioc.Start().catch((err) => console.log(err.name)); // IoCActivationError; the crawl stops
+   * ```
+   */
+  public get Signal(): IoCAbortSignal | undefined {
+    const frame = (this as Indexable)[IOC_CONTEXT] as IoCResolveFrame | undefined;
+
+    if (!frame || frame.inferred) return undefined;
+
+    return (frame.aborter ??= createAborter())?.signal as IoCAbortSignal | undefined;
   }
 
   //#region Resolution
@@ -1013,7 +1143,15 @@ export class IoCContainer<TKeys = any> {
         work.push(
           Promise.resolve()
             .then(() =>
-              self.timed(reg.resolveIn(self, undefined), reg.label, reg.holder, reg.timeoutMs)
+              self.timed(
+                reg.resolveIn(self, undefined),
+                reg.label,
+                reg.holder,
+                reg.timeoutMs,
+                undefined,
+                // Startup gave up on it: tell the factory, through its Signal.
+                (err) => abortFrame(reg.holder?.building, err),
+              )
             )
             .then(noop, (error) => {
               failures.push({ label: reg.label, error });
@@ -1163,25 +1301,38 @@ export class IoCContainer<TKeys = any> {
         visit(reg, []);
       }
 
-      // Undeclared module dependencies: a module may only lean on modules it requires.
+      // Undeclared module dependencies: a module may lean only on what it declares. Checked for
+      // declared Deps and for what its factories actually resolved (once they have run).
       if (reg.module) {
         const module = reg.module as IoCModule;
 
-        for (const dep of reg.deps ?? []) {
+        // An encapsulated module sees only the modules it requires directly, as at runtime.
+        const direct = this.isEncapsulated(module);
+
+        const seen = new Set<string>();
+
+        for (const dep of [...reg.deps ?? [], ...reg.observed?.values() ?? []]) {
           const target = resolveDep(dep);
 
-          const from = target?.module as IoCModule | undefined;
+          const label = dependencyLabel(dep);
 
-          if (!from || from === module || requiresModule(module, from)) continue;
+          if (!target || seen.has(label)) continue;
 
-          if (listsNeed(module, dep)) continue;
+          seen.add(label);
+
+          if (listsNeed(module, dep) || this.providesTo(module, target.key, direct)) continue;
+
+          const from = (target.module ?? this.declaredBy(target.key)[0]) as IoCModule | undefined;
 
           issue(
             'undeclared',
             reg.label,
-            `${reg.label} (module '${module.Name}') depends on ${dependencyLabel(dep)} from ` +
-              `module '${from.Name}', but '${module.Name}' neither requires '${from.Name}' nor ` +
-              `lists ${dependencyLabel(dep)} in its Needs.`,
+            from
+              ? `${reg.label} (module '${module.Name}') depends on ${label} from module ` +
+                `'${from.Name}', but '${module.Name}' neither requires '${from.Name}'` +
+                `${direct ? ' directly' : ''} nor lists ${label} in its Needs.`
+              : `${reg.label} (module '${module.Name}') depends on ${label}, which the ` +
+                `application registers, but '${module.Name}' doesn't list it in its Needs.`,
           );
         }
       }
@@ -1764,6 +1915,99 @@ export class IoCContainer<TKeys = any> {
    * ```
    */
   public Describe(): IoCDescription {
+    return this.describeNow();
+  }
+
+  /**
+   * Checks that the application is ready for work, for readiness and liveness probes: runs every
+   * started module's `Health` hook concurrently, each bounded by `TimeoutMs` (its `ioc.Signal`
+   * aborts when that expires). `Healthy` is true when the container has started and every check
+   * passed; a check fails by throwing or returning `false`, which the report records rather than
+   * throws.
+   *
+   * For a liveness probe, treat only `State === 'disposed'` (or a hung `Health()`) as dead: a
+   * container that is still starting is alive, just not ready.
+   *
+   * @example
+   * ```ts
+   * import { IoCContainer } from '@fathym/ioc';
+   *
+   * let connected = true;
+   *
+   * const ioc = new IoCContainer().Use({
+   *   Name: 'Database',
+   *   Register: () => {},
+   *   Health: () => connected, // or ping the server, and throw what went wrong
+   * });
+   *
+   * await ioc.Start();
+   *
+   * console.log((await ioc.Health()).Healthy); // true
+   *
+   * connected = false;
+   *
+   * const report = await ioc.Health();
+   *
+   * console.log(report.Healthy, report.Modules); // false [{ Module: 'Database', Healthy: false, … }]
+   *
+   * await ioc.Dispose();
+   * ```
+   */
+  public async Health(options?: IoCHealthOptions): Promise<IoCHealthReport> {
+    const self = this.self();
+
+    checkTimeout(options?.TimeoutMs, 'TimeoutMs');
+
+    const timeoutMs = options?.TimeoutMs ?? DEFAULT_HEALTH_TIMEOUT_MS;
+
+    if (self.state !== 'started') return { Healthy: false, State: self.state, Modules: [] };
+
+    const checked = self.startedLayers.flat().filter((module) => module.Health);
+
+    const modules = await Promise.all(checked.map(async (module): Promise<IoCModuleHealth> => {
+      const begin = now();
+
+      const aborter = createAborter();
+
+      let result: IoCModuleHealth;
+
+      try {
+        const value = await self.timed(
+          Promise.resolve().then(() =>
+            module.Health!(
+              new IoCModuleView(self, module, undefined, aborter) as unknown as IoCContainer,
+            )
+          ),
+          `Module '${module.Name}' Health`,
+          undefined,
+          timeoutMs,
+          HEALTH_TIMEOUT_HINT,
+          (err) => aborter?.abort(err),
+        );
+
+        result = { Module: module.Name, Healthy: value !== false, Ms: now() - begin };
+      } catch (err) {
+        result = { Module: module.Name, Healthy: false, Ms: now() - begin, Error: err };
+      }
+
+      self.emit({ Type: 'health', ...result });
+
+      return result;
+    }));
+
+    return {
+      Healthy: self.state === 'started' && modules.every((m) => m.Healthy),
+      State: self.state,
+      Modules: modules,
+    };
+  }
+
+  /**
+   * Builds the `Describe()` snapshot.
+   *
+   * @ignore
+   */
+  protected describeNow(): IoCDescription {
     const self = this.self();
 
     const services: IoCServiceDescription[] = [];
@@ -2037,6 +2281,7 @@ export class IoCContainer<TKeys = any> {
     holder?: IoCHolder,
     timeoutMs?: number,
     hint?: string,
+    onTimeout?: (error: unknown) => void,
   ): unknown {
     const ms = timeoutMs ?? this.self().options.PendingTimeoutMs ?? DEFAULT_TIMEOUT_MS;
 
@@ -2051,7 +2296,11 @@ export class IoCContainer<TKeys = any> {
 
     const timeout = new Promise<never>((_, reject) => {
       timer = host.setTimeout(() => {
-        reject(new IoCResolveTimeoutError(label, ms, pendingLabels(holder), advice));
+        const error = new IoCResolveTimeoutError(label, ms, pendingLabels(holder), advice);
+
+        onTimeout?.(error);
+
+        reject(error);
       }, ms);
     });
 
@@ -2131,16 +2380,31 @@ export class IoCContainer<TKeys = any> {
 
         const started: IoCModule[] = [];
 
+        // One module failing fails the layer: its siblings are told to give up through their
+        // Signal, so the rollback doesn't wait for work that won't be used.
+        const siblings: IoCAborter[] = [];
+
         await Promise.all(layer.map(async (module) => {
           const begin = now();
 
+          const aborter = createAborter();
+
+          if (aborter) {
+            this.startAborters.add(aborter);
+
+            siblings.push(aborter);
+          }
+
           try {
             await this.timed(
-              module.OnStart?.(new IoCModuleView(this, module) as unknown as IoCContainer),
+              module.OnStart?.(
+                new IoCModuleView(this, module, undefined, aborter) as unknown as IoCContainer,
+              ),
               `Module '${module.Name}' OnStart`,
               undefined,
               module.TimeoutMs,
               MODULE_TIMEOUT_HINT,
+              (err) => aborter?.abort(err),
             );
 
             const ms = now() - begin;
@@ -2153,7 +2417,11 @@ export class IoCContainer<TKeys = any> {
           } catch (err) {
             failures.push({ Module: module.Name, Error: err });
 
+            for (const sibling of siblings) if (sibling !== aborter) sibling.abort(err);
+
             this.emit({ Type: 'start', Module: module.Name, Ms: now() - begin, Error: err });
+          } finally {
+            if (aborter) this.startAborters.delete(aborter);
           }
         }));
 
@@ -2183,7 +2451,10 @@ export class IoCContainer<TKeys = any> {
         throw err;
       }
 
-      const rollback = [...await this.stopModules(), ...await this.forgetSince(mark)];
+      const rollback = [
+        ...await this.stopModules(),
+        ...await this.forgetSince(mark, err instanceof LayerFailure ? err.failures[0].Error : err),
+      ];
 
       this.state = 'idle';
 
@@ -2243,7 +2514,7 @@ export class IoCContainer<TKeys = any> {
    *
    * @ignore
    */
-  protected async forgetSince(mark: number): Promise<unknown[]> {
+  protected async forgetSince(mark: number, reason?: unknown): Promise<unknown[]> {
     const errors: unknown[] = [];
 
     for (const entry of this.owned.splice(mark).reverse()) {
@@ -2264,6 +2535,7 @@ export class IoCContainer<TKeys = any> {
       // A build still running (it timed out) is abandoned: if it lands later, its instance is
       // disposed instead of cached (see `track`).
       if (holder.state === 'pending') {
+        abortFrame(holder.building, reason);
         holder.promise = undefined;
         releaseBuild(holder);
       } else if (holder.state !== 'ready') continue;
@@ -2289,13 +2561,18 @@ export class IoCContainer<TKeys = any> {
       await Promise.all(layer.map(async (module) => {
         const begin = now();
 
+        const aborter = createAborter();
+
         try {
           await this.timed(
-            module.OnStop?.(new IoCModuleView(this, module) as unknown as IoCContainer),
+            module.OnStop?.(
+              new IoCModuleView(this, module, undefined, aborter) as unknown as IoCContainer,
+            ),
             `Module '${module.Name}' OnStop`,
             undefined,
             module.TimeoutMs,
             MODULE_TIMEOUT_HINT,
+            (err) => aborter?.abort(err),
           );
 
           this.emit({ Type: 'stop', Module: module.Name, Ms: now() - begin });
@@ -2358,7 +2635,26 @@ export class IoCContainer<TKeys = any> {
     self.state = 'stopping';
 
     // A running Start() stops at its next step (it sees `disposing`); let that step finish so
-    // no module is left half-started.
+    // no module is left half-started. Running OnStarts and builds are told to give up through
+    // their Signal.
+    const disposedError = new IoCContainerDisposedError();
+
+    const abortPending = () => {
+      for (const aborter of self.startAborters) aborter.abort(disposedError);
+
+      for (const bank of self.registrations.values()) {
+        for (const reg of bank.values()) {
+          if (reg.holder?.state === 'pending') abortFrame(reg.holder.building, disposedError);
+        }
+      }
+
+      for (const holder of self.scopedHolders.values()) {
+        if (holder.state === 'pending') abortFrame(holder.building, disposedError);
+      }
+    };
+
+    abortPending();
+
     await self.starting?.catch(noop);
 
     // Modules stop while their services are still alive: the modules of live child scopes (which
@@ -2375,6 +2671,9 @@ export class IoCContainer<TKeys = any> {
     self.disposed = true;
 
     self.state = 'disposed';
+
+    // Builds started since (by OnStop, say) won't be used either.
+    abortPending();
 
     for (const { value, label } of self.owned.splice(0).reverse()) {
       try {
@@ -2438,6 +2737,58 @@ export class IoCContainer<TKeys = any> {
    */
   protected currentModule(): IoCModule | undefined {
     return activeModule() as IoCModule | undefined;
+  }
+
+  /**
+   * The modules that registered `key` here or in a parent (see `declarers`).
+   *
+   * @ignore
+   */
+  protected declaredBy(key: IoCKey): IoCModule[] {
+    const modules: IoCModule[] = [];
+
+    for (const container of this.chain()) {
+      for (const module of container.declarers.get(key) ?? []) modules.push(module);
+    }
+
+    return modules;
+  }
+
+  /**
+   * True when `module` registers `key`, or a module it requires (directly, when `direct`) does.
+   *
+   * @ignore
+   */
+  protected providesTo(module: IoCModule, key: IoCKey, direct: boolean): boolean {
+    const owners = new Set(this.declaredBy(key));
+
+    for (const container of this.chain()) {
+      for (const reg of container.registrations.get(key)?.values() ?? []) {
+        if (reg.module) owners.add(reg.module as IoCModule);
+      }
+    }
+
+    for (const owner of owners) {
+      if (owner === module) return true;
+
+      if (direct ? (module.Requires ?? []).includes(owner) : requiresModule(module, owner)) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  /**
+   * Whether `module` may resolve only what it declares (its own `Encapsulated`, else the
+   * `EncapsulateModules` option).
+   *
+   * @ignore
+   */
+  protected isEncapsulated(module: IoCModule): boolean {
+    const option = this.self().options.EncapsulateModules;
+
+    return module.Encapsulated ?? (typeof option === 'function' ? option(module) : !!option);
   }
 
   /**
@@ -2772,6 +3123,20 @@ export class IoCContainer<TKeys = any> {
     if (scopeLevel !== undefined && !spec.detached) self.checkLevel(scopeLevel, false);
 
     checkTimeout(options.TimeoutMs, 'TimeoutMs');
+
+    const declarer = spec.owner ? undefined : this.currentModule();
+
+    if (declarer && !spec.detached) {
+      const modules = self.declarers.get(key) ?? new Set<IoCModule>();
+
+      if (!modules.has(declarer)) {
+        modules.add(declarer);
+
+        self.declarers.set(key, modules);
+
+        recordUndo(() => modules.delete(declarer));
+      }
+    }
 
     const existing = self.registrations.get(key)?.get(name);
 
@@ -3132,14 +3497,54 @@ class IoCModuleView {
 
   readonly #frame?: IoCResolveFrame;
 
-  constructor(container: IoCContainer, module: IoCModule, frame?: IoCResolveFrame) {
+  readonly #encapsulated: boolean;
+
+  readonly #aborter?: IoCAborter;
+
+  constructor(
+    container: IoCContainer,
+    module: IoCModule,
+    frame?: IoCResolveFrame,
+    aborter?: IoCAborter,
+  ) {
     this.#container = container;
     this.#module = module;
     this.#frame = frame;
+    this.#aborter = aborter;
+
+    this.#encapsulated = (container as Indexable).isEncapsulated(module);
+  }
+
+  /** Throws `IoCAccessError` when this module is encapsulated and hasn't declared `key`. */
+  #check(key: unknown): void {
+    if (!this.#encapsulated) return;
+
+    const k = checkKey(key);
+
+    const module = this.#module;
+
+    if ((module.Needs ?? []).some((need) => normalizeDependency(need).key === k)) return;
+
+    if ((this.#container as Indexable).providesTo(module, k, true)) return;
+
+    throw new IoCAccessError(module.Name, keyDescription(k));
+  }
+
+  /** Throws `IoCAccessError` for a whole-container call when this module is encapsulated. */
+  #checkWhole(method: string): void {
+    if (this.#encapsulated) throw new IoCAccessError(this.#module.Name, `${method}()`);
   }
 
   get State(): IoCContainerState {
     return this.#container.State;
+  }
+
+  get Signal(): IoCAbortSignal | undefined {
+    if (this.#aborter) return this.#aborter.signal as IoCAbortSignal;
+
+    if (!this.#frame || this.#frame.inferred) return undefined;
+
+    return (this.#frame.aborter ??= createAborter())?.signal as IoCAbortSignal | undefined;
   }
 
   /** Where resolves continue from: the factory's resolution chain, when this is a factory's. */
@@ -3183,46 +3588,87 @@ class IoCModuleView {
   }
 
   Resolve(...args: Parameters<IoCContainer['Resolve']>): ReturnType<IoCContainer['Resolve']> {
+    try {
+      this.#check(args[0]);
+    } catch (err) {
+      return Promise.reject(err);
+    }
+
     return this.#resolver().Resolve(...args);
   }
 
   TryResolve(
     ...args: Parameters<IoCContainer['TryResolve']>
   ): ReturnType<IoCContainer['TryResolve']> {
+    try {
+      this.#check(args[0]);
+    } catch (err) {
+      return Promise.reject(err);
+    }
+
     return this.#resolver().TryResolve(...args);
   }
 
   ResolveAll(
     ...args: Parameters<IoCContainer['ResolveAll']>
   ): ReturnType<IoCContainer['ResolveAll']> {
+    try {
+      this.#check(args[0]);
+    } catch (err) {
+      return Promise.reject(err);
+    }
+
     return this.#resolver().ResolveAll(...args);
   }
 
   ResolveNamed(
     ...args: Parameters<IoCContainer['ResolveNamed']>
   ): ReturnType<IoCContainer['ResolveNamed']> {
+    try {
+      this.#check(args[0]);
+    } catch (err) {
+      return Promise.reject(err);
+    }
+
     return this.#resolver().ResolveNamed(...args);
   }
 
   ResolveRecord(
     ...args: Parameters<IoCContainer['ResolveRecord']>
   ): ReturnType<IoCContainer['ResolveRecord']> {
-    return this.#resolver().ResolveRecord(...args);
+    try {
+      for (const dep of Object.values(args[0])) this.#check(normalizeDependency(dep).key);
+    } catch (err) {
+      return Promise.reject(err);
+    }
+
+    // Each entry resolves through this view, so lazy entries are checked when they run too.
+    return (this.#container.ResolveRecord as (r: unknown) => ReturnType<
+      IoCContainer['ResolveRecord']
+    >).call(this, ...args);
   }
 
   Names(...args: Parameters<IoCContainer['Names']>): string[] {
+    this.#check(args[0]);
+
     return this.#container.Names(...args);
   }
 
   Has(...args: Parameters<IoCContainer['Has']>): boolean {
+    this.#check(args[0]);
+
     return this.#container.Has(...args);
   }
 
   Describe(): IoCDescription {
+    this.#checkWhole('Describe');
+
     return this.#container.Describe();
   }
 
   Validate(...args: Parameters<IoCContainer['Validate']>): IoCValidationIssue[] {
+    this.#checkWhole('Validate');
+
     return this.#container.Validate(...args);
   }
 
@@ -3249,6 +3695,10 @@ class IoCModuleView {
 
   Dispose(): Promise<never> {
     return Promise.reject(notForModules(this.#module, 'Dispose'));
+  }
+
+  Health(): Promise<never> {
+    return Promise.reject(notForModules(this.#module, 'Health'));
   }
 
   [Symbol.asyncDispose](): Promise<never> {
