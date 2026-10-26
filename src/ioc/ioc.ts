@@ -397,7 +397,7 @@ export class IoCContainer<TKeys = any> {
   declare readonly '@fathym/ioc/keys'?: (keys: TKeys) => void;
 
   /** @ignore */
-  protected readonly registrations = new Map<IoCKey, Map<string, IoCStored>>();
+  protected readonly registrations: Map<IoCKey, Map<string, IoCStored>> = new Map();
 
   /** @ignore */
   protected parent?: IoCContainer;
@@ -410,7 +410,7 @@ export class IoCContainer<TKeys = any> {
 
    * @ignore
    */
-  protected readonly scopedHolders = new Map<IoCRegistration, IoCHolder>();
+  protected readonly scopedHolders: Map<IoCRegistration, IoCHolder> = new Map();
 
   /**
 
@@ -430,7 +430,7 @@ export class IoCContainer<TKeys = any> {
 
    * @ignore
    */
-  protected readonly expected = new Map<IoCKey, Set<string>>();
+  protected readonly expected: Map<IoCKey, Set<string>> = new Map();
 
   /**
 
@@ -460,7 +460,7 @@ export class IoCContainer<TKeys = any> {
 
    * @ignore
    */
-  protected readonly children = new Set<IoCContainer>();
+  protected readonly children: Set<IoCContainer> = new Set();
 
   /**
 
