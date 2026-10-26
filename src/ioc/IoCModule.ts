@@ -5,16 +5,13 @@ import type { IoCContainer, IoCDependencyKey, IoCExpected, IoCNoKeys } from './i
  * feature contributes services to a host container. Add modules with {@link IoCContainer.Use}.
  *
  * - `Register` adds the module's services. It runs once per container, after the modules it
- *   `Requires`. Registrations made here belong to the module: other modules can't replace,
- *   decorate or unregister them (unless they are registered with `Default: true`); the
- *   application can.
- * - `OnStart` runs from {@link IoCContainer.Start}, after every singleton was built. Modules that
- *   don't require each other start at the same time; a module starts after everything it requires.
+ *   `Requires`.
+ * - `OnStart` runs from {@link IoCContainer.Start}, one module at a time, after the modules it
+ *   requires.
  * - `OnStop` runs from {@link IoCContainer.Dispose}, in the reverse order, before any instance is
  *   disposed, for modules that started.
  *
- * Each of them receives a module view of the container: it registers as the module, and it
- * can't add modules, start, dispose or override.
+ * Each of them receives the container.
  *
  * Use {@link DefineModule} to get a typed module, whose `Register` is checked against what the
  * module needs and whose provided keys flow into a typed container.
@@ -47,7 +44,7 @@ import type { IoCContainer, IoCDependencyKey, IoCExpected, IoCNoKeys } from './i
  * @typeParam TProvides Type-only: the keys the module registers itself (see `DefineModule`). A module written by hand needs and provides nothing, as far as types go.
  */
 export interface IoCModule<TNeeds = never, TProvides = never> {
-  /** A unique, readable name, used in errors, `Describe()` and events. */
+  /** A unique, readable name, used in errors and `Describe()`. */
   readonly Name: string;
 
   /** Modules that must be registered (and started) before this one. */
@@ -56,45 +53,22 @@ export interface IoCModule<TNeeds = never, TProvides = never> {
 
   /**
    * Keys the module needs that someone else registers (the app, or a module it doesn't require).
-   * `Validate()` treats them as declared, so the module may depend on them.
+   * Type-only: on a typed container, `Use()` doesn't compile until they are registered.
    */
   // deno-lint-ignore no-explicit-any
   readonly Needs?: readonly (IoCDependencyKey<any> | readonly [IoCDependencyKey<any>, string])[];
-
-  /**
-   * Overrides the container's `PendingTimeoutMs` for this module's `OnStart` and `OnStop`
-   * (`0` turns it off).
-   */
-  readonly TimeoutMs?: number;
-
-  /**
-   * Limits what the module can resolve, through its view and its factories, to what it declares:
-   * keys it registers itself, keys in its `Needs`, and keys registered by the modules it
-   * `Requires`. Anything else throws `IoCAccessError` (`IOC_ACCESS_DENIED`). The application can
-   * turn it on for modules it doesn't write (partner plugins) with the `EncapsulateModules`
-   * container option.
-   */
-  readonly Encapsulated?: boolean;
 
   /** Adds the module's registrations. Synchronous: async setup belongs in `OnStart` or factories. */
   // deno-lint-ignore no-explicit-any
   Register(ioc: IoCContainer<any>): unknown;
 
-  /** Runs when the container starts, after every singleton was built. */
+  /** Runs from `Start()`, after the modules it requires have started. */
   // deno-lint-ignore no-explicit-any
   OnStart?(ioc: IoCContainer<any>): unknown;
 
   /** Runs when the container is disposed, before its instances are, if the module started. */
   // deno-lint-ignore no-explicit-any
   OnStop?(ioc: IoCContainer<any>): unknown;
-
-  /**
-   * Reports whether the module is working, for `ioc.Health()` (readiness and liveness probes).
-   * Throw, or return `false`, when it isn't; anything else counts as healthy. Its `ioc.Signal`
-   * aborts when the check times out.
-   */
-  // deno-lint-ignore no-explicit-any
-  Health?(ioc: IoCContainer<any>): unknown;
 
   /**
    * Type-only marker carrying what the module needs and provides; never present at runtime.
@@ -156,7 +130,7 @@ export interface IoCModuleDefinition<
   TNeeds extends readonly unknown[],
   TResult,
 > {
-  /** A unique, readable name, used in errors, `Describe()` and events. */
+  /** A unique, readable name, used in errors and `Describe()`. */
   readonly Name: string;
 
   /**
@@ -168,30 +142,17 @@ export interface IoCModuleDefinition<
   /** Keys the module needs that someone else registers; they are typed in too. */
   readonly Needs?: TNeeds;
 
-  /** Overrides the container's `PendingTimeoutMs` for this module's `OnStart` and `OnStop`. */
-  readonly TimeoutMs?: number;
-
-  /** Limits what the module can resolve to what it declares (see `IoCModule.Encapsulated`). */
-  readonly Encapsulated?: boolean;
-
   /**
    * Adds the module's registrations. Chain them and return the chain: what it returns is what the
    * module provides to a typed container.
    */
   Register(ioc: IoCContainer<IoCModuleKeys<TRequires, TNeeds>>): TResult;
 
-  /** Runs when the container starts, after every singleton was built. */
+  /** Runs from `Start()`, after the modules it requires have started. */
   OnStart?(ioc: IoCContainer<IoCModuleKeys<TRequires, TNeeds>>): unknown;
 
   /** Runs when the container is disposed, before its instances are, if the module started. */
   OnStop?(ioc: IoCContainer<IoCModuleKeys<TRequires, TNeeds>>): unknown;
-
-  /**
-   * Reports whether the module is working, for `ioc.Health()` (readiness and liveness probes).
-   * Throw, or return `false`, when it isn't; anything else counts as healthy. Its `ioc.Signal`
-   * aborts when the check times out.
-   */
-  Health?(ioc: IoCContainer<IoCModuleKeys<TRequires, TNeeds>>): unknown;
 }
 
 /**

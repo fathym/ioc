@@ -179,47 +179,8 @@ Deno.test('Typed modules - runtime', async (t) => {
 
     assertEquals((await ioc.Resolve(Repo)).db.url, 'kv://local');
 
-    assertEquals(
-      ioc.Describe().Modules.map((m) => `${m.Name}@${m.Layer}`),
-      ['Config@0', 'Db@1', 'Repo@2'],
-    );
+    assertEquals(ioc.Describe().Modules.map((m) => m.Name), ['Config', 'Db', 'Repo']);
 
     await ioc.Dispose();
-  });
-
-  await t.step('Needs count as declared for the undeclared-dependency check', () => {
-    const PortModule = DefineModule({
-      Name: 'Port',
-      Register: (ioc) => ioc.RegisterValue($Port, 80),
-    });
-
-    // RepoModule depends on $Port from PortModule without requiring it, but lists it in Needs.
-    const ioc = new IoCContainer().Use(PortModule, RepoModule);
-
-    assertEquals(ioc.Validate({ Throw: false }), []);
-  });
-
-  await t.step('a dependency on another module neither required nor needed is reported', () => {
-    const PortModule = DefineModule({
-      Name: 'Port',
-      Register: (ioc) => ioc.RegisterValue($Port, 80),
-    });
-
-    const Sneaky: IoCModule = {
-      Name: 'Sneaky',
-      Register: (ioc) =>
-        ioc.RegisterFactory(Repo, (_c, p) => new Repo(new Db(''), p), {
-          Deps: [$Port],
-        }),
-    };
-
-    const issues = new IoCContainer().Use(PortModule, Sneaky).Validate({ Throw: false });
-
-    assertEquals(issues.map((i) => i.Kind), ['undeclared']);
-    assertEquals(
-      issues[0].Message,
-      "Repo (module 'Sneaky') depends on Port from module 'Port', but 'Sneaky' neither " +
-        "requires 'Port' nor lists Port in its Needs.",
-    );
   });
 });

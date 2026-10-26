@@ -13,9 +13,6 @@ export type IoCErrorCode =
   | 'IOC_INVALID_KEY'
   | 'IOC_SCOPE_REQUIRED'
   | 'IOC_DUPLICATE_REGISTRATION'
-  | 'IOC_SEALED'
-  | 'IOC_ACCESS_DENIED'
-  | 'IOC_INVALID_LEVEL'
   | 'IOC_START_FAILED'
   | 'IOC_MODULE_CYCLE'
   | 'IOC_RESOLVE_TIMEOUT'
@@ -117,7 +114,7 @@ export class IoCContainerDisposedError extends IoCError {
 /** One problem found by `Validate()`. */
 export interface IoCValidationIssue {
   /** What kind of problem it is. */
-  Kind: 'missing' | 'cycle' | 'captive' | 'arguments' | 'undeclared';
+  Kind: 'missing' | 'cycle' | 'captive' | 'arguments';
 
   /** The service the problem belongs to. */
   Service: string;
@@ -205,10 +202,7 @@ export class IoCRegistrationError extends IoCError {
   }
 }
 
-/**
- * Thrown when a `scoped` service is resolved outside a scope (from the root container), or
- * outside a scope of the level it requires.
- */
+/** Thrown when a `scoped` service is resolved outside a scope (from the root container). */
 export class IoCScopeRequiredError extends IoCError {
   /** The error name, for logs and `instanceof`-free checks. */
   public override name = 'IoCScopeRequiredError';
@@ -220,16 +214,11 @@ export class IoCScopeRequiredError extends IoCError {
    * Creates the error.
    *
    * @param Service The scoped service that was resolved.
-   * @param Level The scope level it requires, if any.
    */
-  constructor(public readonly Service: string, public readonly Level?: string) {
+  constructor(public readonly Service: string) {
     super(
-      Level
-        ? `Scoped service ${Service} was resolved outside a scope of level '${Level}'; resolve ` +
-          `it from a scope created with CreateScope({ Level: '${Level}' }), or from a scope ` +
-          `inside one.`
-        : `Scoped service ${Service} was resolved outside a scope; resolve it from a scope ` +
-          `created with CreateScope().`,
+      `Scoped service ${Service} was resolved outside a scope; resolve it from a scope created ` +
+        `with CreateScope().`,
     );
   }
 }
@@ -255,93 +244,6 @@ export class IoCDuplicateRegistrationError extends IoCError {
       `${Service} is already registered; pass Replace: true to override it, or Default: true ` +
         `to register a default that yields to other registrations.`,
     );
-  }
-}
-
-/**
- * Thrown when a module replaces, decorates or unregisters a registration it doesn't own: another
- * module's (unless it is a default) or the application's. The application itself may change any
- * registration. `Override()` throws it too, except on a container created with
- * `{ Testing: true }`.
- */
-export class IoCSealedError extends IoCError {
-  /** The error name, for logs and `instanceof`-free checks. */
-  public override name = 'IoCSealedError';
-
-  /** The stable error code. */
-  public readonly code = 'IOC_SEALED' as const;
-
-  /**
-   * Creates the error.
-   *
-   * @param Service The registration that was to be changed.
-   * @param Module The module that owns it; undefined when the application owns it.
-   * @param Action What was attempted (`replace`, `decorate`, `unregister`, `override`).
-   */
-  constructor(
-    public readonly Service: string,
-    public readonly Module: string | undefined,
-    public readonly Action: 'replace' | 'decorate' | 'unregister' | 'override',
-  ) {
-    super(
-      Action === 'override'
-        ? `Override() is for tests: create the container with { Testing: true } to use it on ` +
-          `${Service}, or register a replacement with Replace: true.`
-        : Module
-        ? `${Service} belongs to module '${Module}', so other modules can't ${Action} it. ` +
-          `If other modules should be able to, register it with Default: true in ` +
-          `'${Module}'; the application can always replace it.`
-        : `${Service} belongs to the application, so modules can't ${Action} it.`,
-    );
-  }
-}
-
-/**
- * Thrown when an encapsulated module (see `IoCModule.Encapsulated` and the `EncapsulateModules`
- * container option) resolves a key it hasn't declared: one it neither registers itself, lists in
- * its `Needs`, nor gets from a module it `Requires`.
- */
-export class IoCAccessError extends IoCError {
-  /** The error name, for logs and `instanceof`-free checks. */
-  public override name = 'IoCAccessError';
-
-  /** The stable error code. */
-  public readonly code = 'IOC_ACCESS_DENIED' as const;
-
-  /**
-   * Creates the error.
-   *
-   * @param Module The encapsulated module.
-   * @param Service The key it tried to reach.
-   */
-  constructor(public readonly Module: string, public readonly Service: string) {
-    super(
-      `Module '${Module}' is encapsulated and can't resolve ${Service}: it is neither registered ` +
-        `by '${Module}', listed in its Needs, nor registered by a module it requires. Add it to ` +
-        `Needs, or require the module that registers it.`,
-    );
-  }
-}
-
-/**
- * Thrown when a scope level is used that the container doesn't declare (see the `Levels`
- * option), or when a scope is created inside a scope of a deeper level.
- */
-export class IoCLevelError extends IoCError {
-  /** The error name, for logs and `instanceof`-free checks. */
-  public override name = 'IoCLevelError';
-
-  /** The stable error code. */
-  public readonly code = 'IOC_INVALID_LEVEL' as const;
-
-  /**
-   * Creates the error.
-   *
-   * @param Level The level that was given.
-   * @param message What is wrong with it.
-   */
-  constructor(public readonly Level: string, message: string) {
-    super(message);
   }
 }
 
@@ -401,10 +303,9 @@ export class IoCModuleCycleError extends IoCError {
 }
 
 /**
- * Thrown by `Start()` when a module's `OnStart` fails. By then the started modules have been
- * stopped and everything built during this `Start()` was disposed; errors from that rollback are
- * in `RollbackErrors`. The first failure is the `cause`; when several modules of one layer failed
- * together, `Failures` lists each one.
+ * Thrown by `Start()` when a module's `OnStart` fails. By then the modules that had started were
+ * stopped again, in reverse order; errors from their `OnStop` are in `RollbackErrors`. The
+ * module's error is the `cause`.
  */
 export class IoCStartError extends IoCError {
   /** The error name, for logs and `instanceof`-free checks. */
@@ -413,32 +314,22 @@ export class IoCStartError extends IoCError {
   /** The stable error code. */
   public readonly code = 'IOC_START_FAILED' as const;
 
-  /** Every module that failed in the failing layer, with its error, in module order. */
-  public readonly Failures: { Module: string; Error: unknown }[];
-
   /**
    * Creates the error.
    *
-   * @param Module The name of the (first) module whose `OnStart` failed.
+   * @param Module The name of the module whose `OnStart` failed.
    * @param cause The error it threw.
-   * @param RollbackErrors Errors thrown while rolling back (`OnStop`, disposal).
-   * @param Failures Every failure of the layer; defaults to just this one.
+   * @param RollbackErrors Errors thrown by `OnStop` while stopping the started modules again.
    */
   constructor(
     public readonly Module: string,
     cause: unknown,
     public readonly RollbackErrors: unknown[] = [],
-    Failures?: { Module: string; Error: unknown }[],
   ) {
-    const others = (Failures?.length ?? 1) - 1;
-
     super(
-      `Module '${Module}' failed to start: ${cause instanceof Error ? cause.message : cause}` +
-        (others > 0 ? ` (and ${others} more module(s) in the same layer)` : ''),
+      `Module '${Module}' failed to start: ${cause instanceof Error ? cause.message : cause}`,
       { cause },
     );
-
-    this.Failures = Failures ?? [{ Module, Error: cause }];
   }
 }
 
@@ -462,9 +353,8 @@ export class IoCNotIsolatableError extends IoCError {
 }
 
 /**
- * Thrown when a resolve, a build during `Start()`/`Activate()`, or a module's `OnStart`/`OnStop`
- * is still pending after `PendingTimeoutMs` (30 seconds unless configured). `Waiting` lists the
- * pending builds it was waiting on, as far as the container can see them.
+ * Thrown when a resolve, or a module's `OnStart`/`OnStop`, or an instance's disposer, is still
+ * pending after `PendingTimeoutMs` (30 seconds unless configured).
  */
 export class IoCResolveTimeoutError extends IoCError {
   /** The error name, for logs and `instanceof`-free checks. */
@@ -476,25 +366,15 @@ export class IoCResolveTimeoutError extends IoCError {
   /**
    * Creates the error.
    *
-   * @param Service The service being resolved.
+   * @param Service What was pending: a service, `Module 'X' OnStart`, or `Disposing X`.
    * @param TimeoutMs The timeout that expired.
-   * @param Waiting The pending builds it was waiting on, itself first when it is one.
-   * @param Hint What to check, when the container knows better than the general advice.
    */
-  constructor(
-    public readonly Service: string,
-    public readonly TimeoutMs: number,
-    public readonly Waiting: string[] = [],
-    Hint?: string,
-  ) {
+  constructor(public readonly Service: string, public readonly TimeoutMs: number) {
     super(
-      `${Service} did not finish within ${TimeoutMs}ms` +
-        (Waiting.length ? `; still pending: ${Waiting.join(', ')}` : '') +
-        '. ' +
-        (Hint ??
-          `Something it awaits may never settle (a connection, a lock), or factories may wait ` +
-            `on each other through a container captured in a closure; resolve through the ` +
-            `factory's parameter. Raise PendingTimeoutMs if it is just slow.`),
+      `${Service} did not finish within ${TimeoutMs}ms. Something it awaits may never settle ` +
+        `(a connection, a lock), or factories may wait on each other through a container ` +
+        `captured in a closure; resolve through the factory's parameter. Raise PendingTimeoutMs ` +
+        `if it is just slow.`,
     );
   }
 }

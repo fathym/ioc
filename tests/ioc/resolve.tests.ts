@@ -203,7 +203,6 @@ Deno.test('Resolve - values', async (t) => {
 
     assert(ioc.Has($Lazy));
     assertEquals(ioc.Names($Lazy), ['$default']);
-    assertEquals(ioc.Describe().Services[0].State, 'empty');
     assertEquals(built, 0);
   });
 
@@ -290,13 +289,13 @@ Deno.test('Resolve - errors', async (t) => {
     assertEquals(ioc.Describe().Services, []);
   });
 
-  await t.step('symbols and strings are not keys: they reject with IOC_INVALID_KEY', async () => {
+  await t.step('strings and objects are not keys: they reject with IOC_INVALID_KEY', async () => {
     const ioc = new IoCContainer();
 
     // deno-lint-ignore no-explicit-any
     const untyped = ioc as any;
 
-    for (const key of [Symbol('foreign'), Symbol.for('foreign'), 'foreign']) {
+    for (const key of [{ Description: 'foreign' }, 'foreign']) {
       const err = await assertRejects(() => untyped.Resolve(key), IoCRegistrationError);
 
       assertEquals(err.code, 'IOC_INVALID_KEY');

@@ -37,7 +37,7 @@ Deno.test('Cycles - detected instead of hanging', async (t) => {
   });
 
   await t.step('cycle through a closure-captured container, without async context', async () => {
-    const ioc = new IoCContainer({ AsyncContext: false });
+    const ioc = new IoCContainer();
 
     ioc.RegisterFactory($A, async () => ({ b: await ioc.Resolve($B) }));
     ioc.RegisterFactory($B, async () => ({ a: await ioc.Resolve($A) }));
@@ -46,7 +46,8 @@ Deno.test('Cycles - detected instead of hanging', async (t) => {
   });
 
   await t.step('cycle through a closure-captured container after an await', async () => {
-    // Only presumed by the async context, so it surfaces as a timeout naming what's pending.
+    // The container can't follow a captured container across an await, so it surfaces as a
+    // timeout naming the service.
     const ioc = new IoCContainer({ PendingTimeoutMs: 50 });
 
     ioc.RegisterFactory($A, async () => {
@@ -63,7 +64,7 @@ Deno.test('Cycles - detected instead of hanging', async (t) => {
     );
 
     assertEquals(err.code, 'IOC_RESOLVE_TIMEOUT');
-    assert(err.Waiting.includes('A'), String(err.Waiting));
+    assert(err.message.startsWith('A did not finish'), err.message);
   });
 
   await t.step('transient self-dependency', async () => {

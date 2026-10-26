@@ -10,12 +10,21 @@ interface ITestClass {
 
 const $ITestClass = IoCToken<ITestClass, 'ITestClass'>('ITestClass');
 
+/** Every instance built by the test classes, in order (reset per container in `buildCounting`). */
+let built: string[] = [];
+
 class TestDefaultClass implements ITestClass {
   public Hello: string = 'World';
+
+  constructor() {
+    built.push(this.Hello);
+  }
 }
 
 class TestParamsClass implements ITestClass {
-  constructor(public Hello: string) {}
+  constructor(public Hello: string) {
+    built.push(Hello);
+  }
 }
 
 type Lifetime = 'singleton' | 'transient' | 'scoped';
@@ -88,17 +97,11 @@ function optionsFor(lifetime: Lifetime, name?: string): RegistrationOptions {
   };
 }
 
-/** A container that records the label of every service it builds. */
+/** A container, and the instances built since it was created. */
 function buildCounting(): { ioc: IoCContainer; builds: string[] } {
-  const builds: string[] = [];
+  built = [];
 
-  const ioc = new IoCContainer({
-    OnEvent: (e) => {
-      if (e.Type === 'build') builds.push(e.Service);
-    },
-  });
-
-  return { ioc, builds };
+  return { ioc: new IoCContainer(), builds: built };
 }
 
 /** Registers one service under each of: class, class + name, token, token + name. */

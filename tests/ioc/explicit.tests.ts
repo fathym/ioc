@@ -187,7 +187,7 @@ Deno.test('RegisterValue', async (t) => {
 
     const [service] = ioc.Describe().Services;
 
-    assertEquals([service.Kind, service.Lifetime, service.State], ['value', 'singleton', 'ready']);
+    assertEquals([service.Kind, service.Lifetime], ['value', 'singleton']);
   });
 
   await t.step('named values', async () => {

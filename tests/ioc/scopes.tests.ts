@@ -464,6 +464,7 @@ Deno.test('CreateScope - parent disposal', async (t) => {
       });
 
       await root.Start();
+      await root.Resolve($Res, 'root');
 
       const outer = root.CreateScope();
       const inner = outer.CreateScope();

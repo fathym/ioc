@@ -296,7 +296,7 @@ Deno.test('Register - keys, names and return values', async (t) => {
     // deno-lint-ignore no-explicit-any
     const untyped = ioc as any;
 
-    for (const key of ['Db', Symbol('Db'), Symbol.for('Db'), { Description: 'Db' }, null]) {
+    for (const key of ['Db', { Description: 'Db' }, null, () => 1]) {
       const err = assertThrows(
         () => untyped.RegisterFactory(key, () => 1),
         IoCRegistrationError,
@@ -313,7 +313,7 @@ Deno.test('Register - keys, names and return values', async (t) => {
 
     try {
       // deno-lint-ignore no-explicit-any
-      ioc.RegisterFactory(Symbol.for('X') as any, () => 1);
+      ioc.RegisterFactory('X' as any, () => 1);
     } catch {
       // expected
     }
@@ -352,18 +352,15 @@ Deno.test('Register - keys, names and return values', async (t) => {
     );
   });
 
-  await t.step('a token is its own key: an equal description is another key', async () => {
+  await t.step('a token is its name: the same name is the same key', async () => {
     const ioc = new IoCContainer();
     const $Local = IoCToken<string>('local');
 
     ioc.RegisterFactory($Local, () => 'local-value');
 
     assertEquals(await ioc.Resolve($Local), 'local-value');
-    await assertRejects(
-      () => ioc.Resolve(IoCToken<string>('local')),
-      IoCServiceNotFoundError,
-      'No service is registered for local.',
-    );
+    assertEquals(await ioc.Resolve(IoCToken<string>('local')), 'local-value');
+    assertEquals(await ioc.Resolve(Symbol.for('local') as typeof $Local), 'local-value');
   });
 
   await t.step('registration methods return the container, for chaining', () => {
@@ -488,7 +485,7 @@ Deno.test('Register - by token', async (t) => {
     ioc.RegisterFactory($Typed, (c) => {
       const container: IoCContainer = c;
 
-      return container.Has($Typed) ? $Typed.Description : 'missing';
+      return container.Has($Typed) ? $Typed.description! : 'missing';
     });
 
     assertEquals(await ioc.Resolve($Typed), 'Typed');

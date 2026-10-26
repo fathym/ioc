@@ -4,7 +4,7 @@ DocumentType: Guide
 Title: 'Step 1: Installation'
 Summary: Add @fathym/ioc to a Deno, Node.js or Bun project and import it.
 Created: 2026-10-13
-Updated: 2026-10-15
+Updated: 2026-10-22
 Owners:
   - fathym
 References:
@@ -47,16 +47,14 @@ yarn add jsr:@fathym/ioc        # Yarn 4.9+
 ```
 
 You import it as `@fathym/ioc` either way. It is plain ESM with no runtime dependencies, and it
-imports no Deno, Node.js or browser modules. Where the runtime offers `AsyncLocalStorage` without
-an import (Deno, Bun, Node.js 20.16+), it uses it for its
-[automatic async context](../concepts/async-resolution.md#following-the-chain-across-await).
+imports no Deno, Node.js or browser modules.
 
 ## Requirements
 
 | What                    | Supported                                         | Checked in CI                                   |
 | ----------------------- | ------------------------------------------------- | ----------------------------------------------- |
 | Deno                    | 2.x                                               | the full test suite                             |
-| Node.js                 | 20.16 and later                                   | a smoke test on 20, 22 and 24                   |
+| Node.js                 | 20 and later                                      | a smoke test on 20, 22 and 24                   |
 | Bun                     | 1.x                                               | a smoke test                                    |
 | TypeScript              | 5.4 and later                                     | a consumer type-checked with 5.4 and the latest |
 | Browsers, workers, edge | any runtime with ES2022 and `Symbol.asyncDispose` | not yet                                         |
@@ -76,8 +74,7 @@ an import (Deno, Bun, Node.js 20.16+), it uses it for its
 
 > **Note:** A class key is the class itself, so minifying class names never changes which
 > service you get. Errors and `Describe()` print class names, though: keep them readable with
-> `keepNames: true` in esbuild and Vite (`keep_classnames: true` in Terser). See
-> [keys and registrations](../concepts/keys-and-registrations.md#same-named-classes).
+> `keepNames: true` in esbuild and Vite (`keep_classnames: true` in Terser).
 
 **Runtimes without explicit resource management.** `await using` needs runtime support (or a
 compiler that down-levels it). Without it, call `await scope.Dispose()` yourself.
@@ -119,5 +116,4 @@ singletons unless you say otherwise.
 
 - Register classes, factories and values, and meet typed tokens:
   [first-container.md](./first-container.md) _[Tutorial]_
-- Prefer to see every way to register first?
-  [registering-services.md](../guides/registering-services.md) _[How-to]_
+- Every registration method and option: [api.md](../reference/api.md) _[Reference]_

@@ -11,11 +11,9 @@ if (!target) throw new Error('Pass the module to test, e.g. ./dist/npm/esm/mod.j
 const url = new URL(target, `file://${globalThis.process?.cwd?.() ?? globalThis.Deno.cwd()}/`);
 
 const {
-  IoCAccessError,
   IoCCircularDependencyError,
   IoCContainer,
   IoCResolveTimeoutError,
-  IoCSealedError,
   IoCServiceNotFoundError,
   IoCToken,
   IoCValidationError,
@@ -133,108 +131,48 @@ check(validation instanceof IoCValidationError, 'Validate reports missing depend
   await rejects(() => captured.Resolve($X), IoCResolveTimeoutError, 'captured cycles time out');
 }
 
-// Modules: layered start, sealing, and disposal reaching child scopes.
+// Modules: start in order, stop in reverse, and disposal reaching child scopes.
 const events = [];
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const $Url = IoCToken('Smoke/Url');
 const Core = {
   Name: 'Core',
   Register: (c) => c.RegisterValue($Url, 'core'),
-  OnStart: () => sleep(20).then(() => events.push('start:Core')),
+  OnStart: () => events.push('start:Core'),
   OnStop: () => events.push('stop:Core'),
-};
-const Cache = {
-  Name: 'Cache',
-  Register: () => {},
-  OnStart: () => sleep(20).then(() => events.push('start:Cache')),
 };
 const Api = {
   Name: 'Api',
-  Requires: [Core, Cache],
+  Requires: [Core],
   Register: () => {},
   OnStart: () => events.push('start:Api'),
+  OnStop: () => events.push('stop:Api'),
 };
 const app = new IoCContainer().Use(Api);
-const begin = Date.now();
 await app.Start();
 check(app.State === 'started', 'Start() reaches the started state');
-check(
-  events.at(-1) === 'start:Api' && Date.now() - begin < 200,
-  'independent modules start together',
-);
-let sealed;
-try {
-  app.CreateScope().Use({
-    Name: 'Partner',
-    Requires: [Core],
-    Register: (c) => c.Unregister($Url),
-  });
-} catch (err) {
-  sealed = err;
-}
-check(sealed === undefined, 'a scope may shadow, never touch, the parent');
-try {
-  new IoCContainer().Use(Core, {
-    Name: 'Partner',
-    Requires: [Core],
-    Register: (c) => c.RegisterValue($Url, 'evil', { Replace: true }),
-  });
-} catch (err) {
-  sealed = err;
-}
-check(sealed instanceof IoCSealedError, 'module registrations are sealed against other modules');
+check(events.join() === 'start:Core,start:Api', 'modules start after what they require');
+check((await app.Resolve($Url)) === 'core', 'modules register services');
 const tenant = app.CreateScope();
 tenant.RegisterClass(Session, { Lifetime: 'scoped' });
 const leftOpen = await tenant.Resolve(Session);
 disposed.length = 0;
 await app.Dispose();
-check(app.State === 'disposed' && events.includes('stop:Core'), 'Dispose() stops the modules');
+check(
+  app.State === 'disposed' && events.join().endsWith('stop:Api,stop:Core'),
+  'Dispose() stops the modules in reverse',
+);
 check(disposed.includes(leftOpen.id), 'Dispose() disposes the live child scopes');
 
-// Decorate.
-ioc.Decorate($Db, (inner) => ({ query: (sql) => inner.query(sql.toUpperCase()) }));
-check((await ioc.Resolve($Db)).query('x')[0] === 'X', 'Decorate wraps a registration');
+// Tokens are their names, so packages share them as 0.x keys did.
+check(IoCToken('Smoke/Shared') === Symbol.for('Smoke/Shared'), 'a token is Symbol.for(name)');
+
+// Override for tests.
+const restore = ioc.Override($Db, { query: () => ['fake'] });
+check((await ioc.Resolve($Db)).query('x')[0] === 'fake', 'Override replaces a registration');
+restore();
+check((await ioc.Resolve($Db)).query('x')[0] === 'x', 'and the restore puts it back');
 
 await ioc.Dispose();
-
-// Encapsulated modules resolve only what they declare.
-const $Key = IoCToken('Key');
-let denied;
-const sandbox = new IoCContainer({ EncapsulateModules: true }).RegisterValue($Key, 'k').Use({
-  Name: 'Vendor',
-  Register: () => {},
-  OnStart: async (c) => {
-    denied = await c.Resolve($Key).catch((err) => err);
-  },
-});
-await sandbox.Start();
-check(denied instanceof IoCAccessError, 'an encapsulated module resolves only what it declares');
-await sandbox.Dispose();
-
-// Signal: a build the container gave up on is told to stop.
-const $Crawl = IoCToken('Crawl');
-let crawlSignal;
-const crawler = new IoCContainer({ PendingTimeoutMs: 20 }).RegisterFactory($Crawl, (c) => {
-  crawlSignal = c.Signal;
-  return new Promise((resolve) => c.Signal.addEventListener('abort', () => resolve('stopped')));
-});
-await crawler.Activate().catch(() => {});
-check(crawlSignal?.aborted === true, 'a startup timeout aborts the factory signal');
-await crawler.Dispose();
-
-// Health: one report from every started module's check.
-let healthy = true;
-const probed = new IoCContainer().Use({
-  Name: 'Probe',
-  Register: () => {},
-  Health: () => healthy,
-});
-check((await probed.Health()).Healthy === false, 'Health() is not ready before Start()');
-await probed.Start();
-check((await probed.Health()).Healthy === true, 'Health() passes when every check does');
-healthy = false;
-check((await probed.Health()).Modules[0].Healthy === false, 'Health() names the failing module');
-await probed.Dispose();
 
 const runtime = globalThis.Bun
   ? `Bun ${Bun.version}`

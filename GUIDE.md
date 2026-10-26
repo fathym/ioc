@@ -4,7 +4,7 @@ DocumentType: Guide
 Title: IoC Container Guide
 Summary: Playbook for maintaining the Fathym IoC container for Deno runtimes.
 Created: 2025-11-20
-Updated: 2026-10-15
+Updated: 2026-10-26
 Owners:
   - fathym
 References:
@@ -18,10 +18,6 @@ References:
     Path: ../GUIDE.md
   - Label: IoC 1.0 (design)
     Path: ./docs/design/ioc-1.0.md
-  - Label: IoC Next (the 0.1 design)
-    Path: ./docs/design/ioc-next.md
-  - Label: DI Ecosystem Feedback (research)
-    Path: ./docs/research/di-ecosystem-feedback.md
   - Label: Root Workspace Guide
     Path: ../../../WORKSPACE_GUIDE.md
 ---
@@ -32,10 +28,13 @@ Use this playbook to keep IoC container work predictable and discoverable.
 
 ## Current Focus
 
-- Keep the 1.0 guarantees covered by tests: strict, lazy and timeout-bounded
-  containers, reference keys (tokens and classes), sealed module registrations,
-  typed modules, scope levels, and the layered `Start()`/`Dispose()` lifecycle
+- Keep the 1.0 core covered by tests: strict, lazy and timeout-bounded containers,
+  typed tokens (`Symbol.for` names) and class keys, scopes and disposal, modules with an
+  ordered `Start()`/`Dispose()` lifecycle, typed modules and `Validate()`
   (`tests/ioc/*.tests.ts`).
+- Hold new features to the rule in [`docs/design/ioc-1.0.md`](./docs/design/ioc-1.0.md): a
+  feature earns a place only if it fixes a bug the Fathym repositories can hit, or replaces
+  something they do by hand today.
 - Follow the [versioning policy](./docs/policy.md): breaking changes only in a
   major release, each with a migration guide.
 - Keep the documentation in `docs/` complete and verified: `deno task docs:check` runs every

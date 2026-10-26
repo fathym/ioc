@@ -2,14 +2,16 @@
 FrontmatterVersion: 1
 DocumentType: Guide
 Title: 'Step 5: Testing Your App'
-Summary: Put the app's wiring in a module, then test the notes service with a fake store in a test-mode container - no module mocking needed.
+Summary: Put the app's wiring in a module, then test the notes service with a fake store - no module mocking needed.
 Created: 2026-10-13
-Updated: 2026-10-15
+Updated: 2026-10-22
 Owners:
   - fathym
 References:
   - Label: Getting Started
     Path: ./README.md
+  - Label: API reference
+    Path: ../reference/api.md
   - Label: Project Agents Guide
     Path: ../../AGENTS.md
 ---
@@ -23,11 +25,44 @@ Deno doesn't support Jest-style module mocking. That's fine: the container _is_ 
 real wiring in a module, add it to a test container, and override the one service you want to
 fake.
 
-## Override a dependency in a test container
+## Put the wiring in a module
+
+A module is a named set of registrations, with optional `OnStart` and `OnStop` hooks. Its
+`Register`, `OnStart` and `OnStop` each receive the container. `main.ts` and the tests both add
+the same module with `Use()`:
 
 ```ts
-import { assertEquals, assertThrows } from 'jsr:@std/assert@1.0.16';
-import { DefineModule, IoCContainer, IoCSealedError } from '@fathym/ioc';
+import { DefineModule, IoCContainer } from '@fathym/ioc';
+
+class NotesService {
+  public list(): string[] {
+    return [];
+  }
+}
+
+// notes-app.ts: the app's real wiring.
+const NotesApp = DefineModule({
+  Name: 'NotesApp',
+  Register: (ioc) => ioc.RegisterClass(NotesService),
+  OnStart: () => console.log('notes ready'),
+  OnStop: () => console.log('notes stopped'),
+});
+
+// main.ts
+await using ioc = new IoCContainer().Use(NotesApp);
+
+await ioc.Start(); // validates the wiring, then runs OnStart: notes ready
+
+console.log((await ioc.Resolve(NotesService)).list()); // []
+
+// At the end of the program, `await using` disposes the container: notes stopped
+```
+
+## Override a dependency in a test
+
+```ts
+import { assertEquals } from 'jsr:@std/assert@1.0.16';
+import { DefineModule, IoCContainer } from '@fathym/ioc';
 
 // The abstract class is the key; the app and the test provide different implementations.
 abstract class NotesStore {
@@ -70,8 +105,12 @@ const NotesApp = DefineModule({
       .RegisterClass(NotesService, { Deps: [NotesStore] }),
 });
 
+Deno.test('the real wiring is valid', () => {
+  new IoCContainer().Use(NotesApp).Validate(); // throws IoCValidationError if anything is missing
+});
+
 Deno.test('NotesService trims notes before saving', async () => {
-  await using ioc = new IoCContainer({ Testing: true }).Use(NotesApp);
+  await using ioc = new IoCContainer().Use(NotesApp);
 
   const saved: string[] = [];
 
@@ -84,47 +123,27 @@ Deno.test('NotesService trims notes before saving', async () => {
 
   assertEquals(await service.addNote('  Buy milk  '), ['Buy milk']);
 });
-
-Deno.test('outside tests, NotesApp owns its registrations', () => {
-  const ioc = new IoCContainer().Use(NotesApp);
-
-  const fake: NotesStore = { add: () => Promise.resolve(), list: () => Promise.resolve([]) };
-
-  // Override() only works in a testing container.
-  assertThrows(() => ioc.Override(NotesStore, fake), IoCSealedError);
-
-  // Another module can't replace what NotesApp registered.
-  const Rogue = DefineModule({
-    Name: 'Rogue',
-    Register: (ioc) => ioc.RegisterValue(NotesStore, fake, { Replace: true }),
-  });
-
-  assertThrows(() => ioc.Use(Rogue), IoCSealedError);
-});
 ```
 
 Run it with `deno test --unstable-kv`.
 
 ## Why this works
 
-- **The test uses the real wiring** (`NotesApp`), so it also proves the registrations are right.
-- **What a module registers is sealed.** In an ordinary container, `Override()` throws
-  `IoCSealedError`, and so does another module trying to replace `NotesStore`, as the second test
-  shows. (The application itself may still replace it with `Replace: true`; the container reports
-  that as a warning.) A container created with `{ Testing: true }` lifts sealing and enables
-  `Override()`, so a production container can't be patched by accident.
+- **The test uses the real wiring** (`NotesApp`), so the first test also proves the registrations
+  are right.
+- **`Override()` works on any container.** It replaces the registration with a value and returns
+  a function that puts back exactly what was there before. Use that function when a container is
+  shared across tests; here each test makes its own, and `await using` disposes it when the test
+  ends.
 - **Override before you resolve.** `NotesService` is a singleton; it is built on the first
-  `Resolve`, after the override, so it receives the fake.
+  `Resolve`, after the override, so it receives the fake. An instance built earlier keeps what it
+  was given.
 - **The real KV store is never opened.** Nothing is built at registration, and nothing resolves
   it.
-- **`await using` disposes the test container** when the test ends. `Override()` also returns a
-  function that puts back the original registration, for containers shared across tests.
 
 > **Note:** You can also register a fake on a scope (`ioc.CreateScope().RegisterValue(...)`),
-> which works on any container because it only affects that scope. Scope registrations reach
-> **transient and scoped** services resolved from the scope; a singleton is built by the
-> container it was registered in. The [testing guide](../guides/testing.md) covers both, and more
-> recipes.
+> which leaves the container itself untouched. Scope registrations reach **transient and scoped**
+> services resolved from the scope; a singleton is built by the container it was registered in.
 
 ## You're done
 
@@ -132,17 +151,15 @@ You've used most of what you'll need day to day:
 
 - **registration:** classes, factories, values and tokens;
 - **lifetimes:** singleton, transient and scoped;
-- **async startup** with `Start()`;
+- **async startup** with `Start()` and `Activate()`;
 - **per-request scopes** with disposal;
-- **modules** that own their registrations;
-- **test overrides** with `{ Testing: true }`.
+- **modules** that package the wiring, with start and stop hooks;
+- **test overrides** with `Override()`.
 
 ## What's Next
 
-- More copy-paste testing recipes: [testing.md](../guides/testing.md) _[How-to]_
-- Modules with startup and shutdown hooks:
-  [modules-and-lifecycle.md](../guides/modules-and-lifecycle.md) _[How-to]_
-- Structure a real app's registrations:
-  [organizing-registrations.md](../guides/organizing-registrations.md) _[How-to]_
-- Understand the model behind it all: [concepts](../concepts/README.md) _[Explanation]_
-- Avoid the common mistakes: [guidelines.md](../guides/guidelines.md) _[How-to]_
+- Every method, option and type: [api.md](../reference/api.md) _[Reference]_
+- Every error message, its cause and the fix: [errors.md](../reference/errors.md) _[Reference]_
+- Modules that require each other, defaults the app replaces, and a failed start that is retried:
+  [examples/modules-lifecycle.ts](../../examples/modules-lifecycle.ts) _[Example]_
+- Coming from 0.x: [from-0.x.md](../migration/from-0.x.md) _[How-to]_

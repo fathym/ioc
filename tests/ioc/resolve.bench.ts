@@ -23,7 +23,7 @@ const ioc = new IoCContainer()
 
 tokens.forEach((token, i) => ioc.RegisterValue(token, i));
 
-const quiet = new IoCContainer({ AsyncContext: false, PendingTimeoutMs: 0 })
+const quiet = new IoCContainer({ PendingTimeoutMs: 0 })
   .RegisterFactory($Transient, () => new Svc(), { Lifetime: 'transient' });
 
 await ioc.Activate();

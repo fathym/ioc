@@ -4,7 +4,7 @@ DocumentType: Guide
 Title: Changelog
 Summary: Notable changes to @fathym/ioc, newest first, following Keep a Changelog.
 Created: 2026-10-13
-Updated: 2026-10-15
+Updated: 2026-10-26
 Owners:
   - fathym
 References:
@@ -32,148 +32,63 @@ Nothing yet.
 
 ## [1.0.0]
 
-A clean break from 0.x: the compatibility layer is gone, so keys can't collide, modules own their
-registrations, and the safe settings are the only settings. Most code needs small, mechanical
+A small core that fixes 0.x's defects and replaces what Fathym's repositories do by hand. Keys
+don't change: a token is still `Symbol.for(name)`, now typed. Most code needs small, mechanical
 changes. **Upgrade with [migrating from 0.x](./docs/migration/from-0.x.md)**, which maps every
 removed call to its replacement. 0.x and 1.0 containers don't share registrations, so packages
 that share a container upgrade together.
 
 ### Removed
 
-- **`Register`** (deprecated in 0.1). Use `RegisterClass`, `RegisterFactory` or `RegisterValue`.
-- **Global keys:** `ioc.Symbol(id)`, plain symbols and `Symbol.for` keys, and class keys matched
-  by name. Strings, symbols, plain objects and non-class functions throw `IOC_INVALID_KEY`.
-- **`CopyTo`, `RegisterDirect`, `ResolveDirect`, `ModuleFromContainer`, and the public
-  `services` and `symbols` maps.** Share registrations with modules (`Use`) or scopes
-  (`CreateScope`); inspect them with `Describe()`, `Names()` and `Has()`.
-- **Modes:** the `Strict` option, `IoCContainer.Create()`, `Lazy` and `LazyByDefault`. Every
-  container is strict and lazy.
-- **The `Diagnostics` option** and the `IoCDiagnostic` / `IoCDiagnosticCode` types; use `OnEvent`.
-  The `IOC_REGISTRATION_REPLACED`, `IOC_CLASS_NAME_FALLBACK` and `IOC_KEY_COLLISION` notices no
-  longer exist.
-- **`IoCKeyCollisionError`** (`IOC_KEY_COLLISION`): collisions are impossible.
-- **The cross-version protocol** (and `docs/reference/protocol.md`): 1.0 doesn't interoperate with
-  0.x containers. The `IoCServices`, `IoCServiceResolutions` and `IoCServiceConstructed` types and
-  the `'external'` kind in `Describe()` are gone with it.
-- **Explicit type arguments on resolution:** `Resolve<T>(…)`, `TryResolve<T>`, `ResolveAll<T>`,
-  `ResolveNamed<T>`, `Decorate<T>` and `Override<T>` infer the type from the key.
+- The overloaded `Register(...)`; `ioc.Symbol()`; string keys.
+- `CopyTo`, `RegisterDirect`, `ResolveDirect`, `ModuleFromContainer` and the public `services` /
+  `symbols` maps.
+- The `Strict`, `Lazy`, `LazyByDefault`, `Diagnostics` and `AsyncContext` options, and
+  `IoCContainer.Create()`.
+- From 0.1: `Decorate`, `IoCLazy`, `IoCAll`, scope levels (`Levels`, `ScopeLevel`,
+  `CreateScope({ Level })`), and the async-context tracking of resolution chains.
+- The cross-version protocol and the 0.x interop fixtures.
 
 ### Changed
 
-- **Tokens are unique references.** `IoCToken<T, 'Name'>('Name')` returns a frozen object, a new
-  key on every call; its description is only a label. Share a service by importing its token,
-  keep it private by not exporting it. Tokens from two installed copies of the library work
-  together. A class key is the class itself.
-- **Always strict:** registering a key and name twice throws `IOC_DUPLICATE_REGISTRATION` unless
-  `Replace: true` (or the existing one is a `Default`); a `scoped` service resolved from the root
-  throws `IOC_SCOPE_REQUIRED`.
-- **Always lazy:** nothing is built at registration; `Start()` or `Activate()` builds every
-  singleton. Values count as built at once.
-- **`PendingTimeoutMs` defaults to 30 000** (`0` turns it off). It bounds every pending resolve,
-  every build in `Start()`/`Activate()`, each `OnStart` and `OnStop`, and each disposer, so a
-  stuck `Symbol.asyncDispose` fails `Dispose()` with a timeout inside `IoCDisposeError` instead of
-  hanging shutdown.
-- **Async context is automatic** where the runtime offers `AsyncLocalStorage` through
-  `process.getBuiltinModule` (Deno, Bun, Node.js 20.16+); `AsyncContext: false` turns it off. It
-  gives resolution paths in errors and observed dependencies across `await`, and never reports a
-  cycle: a cycle through a container captured in a closure, after an `await` (or from a callback a
-  factory started), fails at `PendingTimeoutMs` with `IoCResolveTimeoutError`, naming what is
-  pending. 0.1 with an `AsyncContext` threw `IOC_CIRCULAR_DEPENDENCY` there, which could also
-  break valid code. Cycles through a factory's parameter, through `Deps`, or before a factory's
-  first `await` still throw `IOC_CIRCULAR_DEPENDENCY` at once.
-- **Registrations are sealed between modules, and the application outranks modules.** Every
-  registration records whether a module or the application made it. The application may replace,
-  decorate or unregister any registration (a module's non-default one emits an
-  `IOC_MODULE_OVERRIDDEN` warning; a default changes silently). A
-  module may change its own registrations and any `Default` (someone else's emits
-  `IOC_DEFAULT_REPLACED`), but not another module's or the application's other registrations:
-  those throw `IoCSealedError` (`IOC_SEALED`). `Decorate` keeps the original's owner and default
-  flag. Sealing is a guardrail against mistakes, not a security boundary.
-- **Modules work through a closed module view:** `Register`, `OnStart`, `OnStop`, and every
-  factory and decorator a module registers, receive a separate object (not an `IoCContainer`)
-  that registers as the module and resolves normally. `Use`, `Expect`, `Start`, `Activate`,
-  `Dispose` and `Override` throw on it. Factories the application registers still receive a plain
-  view of the container. Container options are frozen.
-- **`Override()` only works on a container created with `{ Testing: true }`** (and its scopes),
-  which also lifts sealing.
-- **Scope levels must be declared** with the `Levels` option, outermost first; undeclared or
-  wrongly nested levels throw `IoCLevelError`. `ScopeLevel` implies `Lifetime: 'scoped'`.
-- **`Start()` starts modules by layer:** after the modules they require, independent modules
-  concurrently; stop runs in reverse. A failed `Start()` stops the started modules, disposes and
-  forgets everything it built, returns to `idle`, and can be retried; a build still running then
-  (it timed out) is abandoned, and disposed if it finishes later. `Dispose()` during `Start()`
-  makes `Start()` reject with `IOC_CONTAINER_DISPOSED`, or with the `IoCStartError` of a module
-  that had already failed.
-- **`Dispose()` disposes live child scopes** (deepest first) after stopping modules and before its
-  own instances. A parent tracks a scope once the scope owns something to dispose (an instance,
-  modules, or scopes of its own) and holds it until it is disposed; scopes that own nothing aren't
-  tracked and are garbage-collected when dropped.
-- **A scope's modules start after the parent's.** `scope.Start()` throws `IoCStartError` when a
-  module it added requires a module of a parent that hasn't started.
-- **Node.js 20.16 is the minimum Node.js version** (for `process.getBuiltinModule`).
-- **`IoCServiceNotFoundError`** has `Key` instead of `Symbol`, and its message reads
-  `No service is registered for …`.
-- **`Validate()`** reports `captive` dependencies across scope levels and through transients.
-  The message advises a shorter lifetime, or resolving the service where it is used.
+- **Explicit registration:** `RegisterClass`, `RegisterFactory` and `RegisterValue`. `Resolve`
+  and friends take the type from the key; explicit type arguments no longer compile.
+- **Tokens are typed names:** `IoCToken<T, 'Name'>('Name')` returns `Symbol.for('Name')`, so
+  existing `Symbol.for` keys keep working. Class keys are the class itself, never matched by name.
+- **Registering a key and name twice throws** (`IOC_DUPLICATE_REGISTRATION`) unless it says
+  `Replace: true` or the existing registration is a `Default: true`. A default yields to any
+  other registration, before or after it, including a parent's.
+- **Lazy by default:** services are built on first resolve. `Activate()` builds every singleton
+  now.
+- **Timeouts by default:** anything pending after `PendingTimeoutMs` (30 s; `0` turns it off)
+  fails with `IoCResolveTimeoutError`, including `OnStart`, `OnStop` and disposers.
+- **Scopes:** disposing a container disposes its live scopes, then its own instances in reverse
+  creation order.
 
 ### Added
 
-- **`IoCSealedError`** (`IOC_SEALED`), **`IoCLevelError`** (`IOC_INVALID_LEVEL`) and
-  **`IoCAccessError`** (`IOC_ACCESS_DENIED`).
-- **Encapsulated modules:** `IoCModule.Encapsulated` and the `EncapsulateModules` container option
-  (`true`, or `(module) => boolean`). An encapsulated module may resolve only what it registers,
-  lists in `Needs`, or what the modules in its own `Requires` register; anything else throws
-  `IoCAccessError`, from its hooks and the factories it registered.
-- **`ioc.Signal`:** inside a factory or a module's `OnStart`, `OnStop` or `Health`, an
-  `AbortSignal` (`IoCAbortSignal`) that aborts when the container gives up on that work: a
-  `Start()`/`Activate()` or module timeout, a sibling module failing to start, a rolled-back
-  `Start()`, or `Dispose()` (also of a parent). It reaches transients and decorated inner builds
-  under the abandoned build. A `Resolve()` timeout aborts only a transient build, never a shared
-  singleton or scoped one.
-- **`ioc.Health(options?)`** and **`IoCModule.Health`:** runs every started module's check
-  concurrently, each bounded by `TimeoutMs` (5 s by default), and returns an `IoCHealthReport`
-  (`Healthy`, `State`, per-module `Healthy`/`Ms`/`Error`) for readiness and liveness probes.
-  Each result is also a `health` event.
-- **`DefineModule({ Name, Requires, Needs, Register })`:** typed modules. `Register`'s container is
-  typed with the module's `Needs` and what its direct `Requires` register themselves; the chain it
-  returns is what it provides (non-transitive: only its own keys); `Use()` on a typed container
-  adds those keys and doesn't compile when a module's needs are unmet. Type-checking grows
-  linearly with the number of modules, however deep the `Requires` graph.
-- **One module failing to start aborts the others starting in its layer** (through their
-  `Signal`), so the rollback doesn't wait for work that won't be used.
-- **`Use()` is all or nothing:** if a module's `Register` throws, every registration and module
-  that call added (requirements included) is undone, so `Use()` can be retried.
-- **`TimeoutMs`** on `RegisterClass` and `RegisterFactory` overrides `PendingTimeoutMs` for one
-  service's builds and resolves (a slow migration), and **`IoCModule.TimeoutMs`** (also in
-  `DefineModule`) for one module's `OnStart` and `OnStop`. Invalid values (negative, `NaN`,
-  `Infinity`) throw `IoCRegistrationError` at registration or at `Use()`.
-- **`IoCModule.Needs`:** keys a module expects someone else to register. `Validate()` reports an
-  `undeclared` issue when a module depends on another module's service, or on one the application
-  registers, without `Requires` or `Needs`, in its declared `Deps` (so the result never depends
-  on what has run). What a factory without `Deps` resolves is reported as it runs, as an
-  `IOC_UNDECLARED_DEPENDENCY` warning. A
-  module's `Default: true` registration the application replaced still counts as the module's.
-- **Container options `Levels`, `OnEvent` and `Testing`.** `OnEvent` receives `build`, `resolve`,
-  `start`, `stop` and `warning` events (`IoCEvent`, `IoCWarningCode`), including the new
-  `IOC_ROLLBACK_FAILED`, `IOC_MODULE_OVERRIDDEN` and `IOC_DEFAULT_REPLACED` warnings.
-- **`ioc.State`** (`'idle' | 'starting' | 'started' | 'stopping' | 'disposed'`), and in
-  `Describe()`: the container's `State`, each service's `BuildMs`, and each module's `Layer` and
-  `StartMs`.
-- **`IoCStartError.Failures`:** every module of the failing layer, with its error.
-- **`OnDemand: true`** on singleton registrations: built on first resolve only, never by
-  `Start()` or `Activate()`.
-- **`isIoCToken(value)`.**
-- **The [versioning and support policy](./docs/policy.md).**
+- **Modules:** `IoCModule` (`Name`, `Requires`, `Needs`, `Register`, `OnStart`, `OnStop`),
+  `Use()`, `Start()` and `State`. `Start()` validates, then runs `OnStart` one module at a time in
+  dependency order; a failure stops the started modules again and throws `IoCStartError`, and
+  `Start()` can be retried. `Dispose()` runs `OnStop` in reverse.
+- **Typed modules and containers:** `DefineModule`, `Typed()` and `Expect()`. `Deps` are checked
+  against constructor parameters, and `Use()` on a typed container doesn't compile until a
+  module's `Needs` are registered.
+- `Validate()`: missing, cyclic, captive and constructor-argument problems, from declared `Deps`.
+- `TryResolve`, `ResolveAll`, `ResolveNamed`, `ResolveRecord`, `Names`, `Has`, `Unregister`,
+  `Isolate`, `Override`, `Describe`, `Dispose` / `await using`, the `Dispose` registration option.
+- Error classes with stable codes (`IoCErrorCode`) and `isIoCError(err, code)`.
+- The [versioning and support policy](./docs/policy.md).
 
 ### Fixed
 
-- Two packages declaring tokens with the same description no longer share (and overwrite) one
-  global key.
-- Two different classes with the same name no longer resolve each other's registrations.
-- A cycle through a captured container after `await` no longer hangs forever: it fails at
-  `PendingTimeoutMs`, naming what is pending.
-- A failed `Start()` no longer leaves services built during it alive.
-- Scopes still alive when their parent is disposed no longer keep their instances undisposed.
+- A dependency cycle no longer hangs: through a factory's `ioc` or `Deps` it throws
+  `IoCCircularDependencyError` at once; anything else fails at the pending timeout.
+- A second registration no longer silently replaces the first.
+- Two classes with the same name no longer resolve each other's registrations.
+- Instances are disposed once, by the container that built them; values registered with
+  `RegisterValue` are never disposed unless they have a `Dispose` option.
+- Concurrent resolves of a singleton share one build, and a failed build is retried.
 
 ## [0.1.0]
 

@@ -43,11 +43,10 @@ Deno.test('Types', async () => {
   expectType<Equals<typeof cache, Cache>>(true);
   expectType<Equals<IoCTokenOf<typeof $Db>, Db>>(true);
 
-  // A token's description is kept in its type when given as the second type argument.
+  // A token's name is kept in its type when given as the second type argument.
   const $Named = IoCToken<string, 'TypesNamed'>('TypesNamed');
 
-  expectType<Equals<typeof $Named.Description, 'TypesNamed'>>(true);
-  expectType<Equals<typeof $Db.Description, string>>(true);
+  expectType<Equals<typeof $Named, IoCToken<string, 'TypesNamed'>>>(true);
 
   // TryResolve / ResolveAll / ResolveNamed carry the type.
   const maybe = await ioc.TryResolve($Db);
@@ -104,8 +103,8 @@ Deno.test('Types', async () => {
   });
 
   typeOnly(async () => {
-    // Keys are tokens or classes: strings and symbols don't compile.
-    // @ts-expect-error a plain symbol is not a key
+    // Keys are tokens or classes: strings and untyped symbols don't compile.
+    // @ts-expect-error a plain symbol is not a typed key
     ioc.RegisterFactory(Symbol.for('Anything'), () => 42);
 
     // @ts-expect-error a string is not a key
@@ -151,10 +150,10 @@ Deno.test('Types', async () => {
 
   // Override keeps the key's type.
   typeOnly(() => {
-    new IoCContainer({ Testing: true }).Override($Db, { query: (s) => s });
+    new IoCContainer().Override($Db, { query: (s) => s });
 
     // @ts-expect-error the override must be a Db
-    new IoCContainer({ Testing: true }).Override($Db, 42);
+    new IoCContainer().Override($Db, 42);
   });
 
   assertEquals(typeof db.query, 'function');

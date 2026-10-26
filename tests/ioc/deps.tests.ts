@@ -104,7 +104,6 @@ Deno.test('RegisterClass with Deps', async (t) => {
 
       await ioc.Activate();
 
-      assertEquals(ioc.Describe().Services.find((s) => s.Label === 'Repo')?.State, 'ready');
       assertInstanceOf(await ioc.Resolve(Repo), Repo);
     },
   );

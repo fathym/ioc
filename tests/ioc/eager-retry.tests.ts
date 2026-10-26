@@ -147,7 +147,7 @@ Deno.test('Activate and Start - retry after a failed build', async (t) => {
     assertInstanceOf(repo.cfg, Cfg);
   });
 
-  await t.step('Start() can be retried after a failed build', async () => {
+  await t.step('Activate() can be retried after a failed build', async () => {
     const ioc = new IoCContainer();
     let attempts = 0;
 
@@ -157,13 +157,10 @@ Deno.test('Activate and Start - retry after a failed build', async (t) => {
       return { attempt: attempts };
     });
 
-    await assertRejects(() => ioc.Start(), IoCActivationError);
+    await assertRejects(() => ioc.Activate(), IoCActivationError);
 
-    assertEquals(ioc.State, 'idle');
+    await ioc.Activate();
 
-    await ioc.Start();
-
-    assertEquals(ioc.State, 'started');
     assertEquals(await ioc.Resolve($Db), { attempt: 2 });
     assertEquals(attempts, 2);
 

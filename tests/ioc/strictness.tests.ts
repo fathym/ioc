@@ -5,7 +5,7 @@ import {
   IoCScopeRequiredError,
   IoCServiceNotFoundError,
 } from '../../src/ioc/errors.ts';
-import { IoCContainer, type IoCEvent } from '../../src/ioc/ioc.ts';
+import { IoCContainer } from '../../src/ioc/ioc.ts';
 import type { IoCModule } from '../../src/ioc/IoCModule.ts';
 import { IoCToken } from '../../src/ioc/IoCToken.ts';
 import { assert, assertEquals, assertRejects, assertThrows } from '../test.deps.ts';
@@ -120,14 +120,11 @@ Deno.test('Replacing registrations', async (t) => {
     assertEquals((await ioc.Resolve($Mailer)).send(), 'framework');
   });
 
-  await t.step('Replace: true replaces without a warning', async () => {
-    const events: IoCEvent[] = [];
-
-    const ioc = new IoCContainer({ OnEvent: (e) => events.push(e) })
+  await t.step('Replace: true replaces', async () => {
+    const ioc = new IoCContainer()
       .RegisterValue($Mailer, framework)
       .RegisterValue($Mailer, user, { Replace: true });
 
-    assertEquals(events.filter((e) => e.Type === 'warning'), []);
     assertEquals((await ioc.Resolve($Mailer)).send(), 'user');
   });
 
@@ -176,14 +173,6 @@ Deno.test('Strictness (always on)', async (t) => {
       IoCDuplicateRegistrationError,
       'StrictMailer[smtp]',
     );
-  });
-
-  await t.step('Decorate is allowed', async () => {
-    const ioc = new IoCContainer().RegisterValue($Mailer, framework);
-
-    ioc.Decorate($Mailer, (inner) => ({ send: () => inner.send().toUpperCase() }));
-
-    assertEquals((await ioc.Resolve($Mailer)).send(), 'FRAMEWORK');
   });
 
   await t.step('resolving a scoped service from the root throws', async () => {
@@ -287,13 +276,13 @@ Deno.test('Keys are compared by reference', async (t) => {
     assertEquals(await ioc.Resolve($Config), 'x');
   });
 
-  await t.step('two tokens with one description are different keys', async () => {
+  await t.step('two tokens with one name are one key', () => {
     const $First = IoCToken<string>('StrictSame');
     const $Second = IoCToken<string>('StrictSame');
 
-    const ioc = new IoCContainer().RegisterValue($First, 'first').RegisterValue($Second, 'second');
-
-    assertEquals(await ioc.Resolve($First), 'first');
-    assertEquals(await ioc.Resolve($Second), 'second');
+    assertThrows(
+      () => new IoCContainer().RegisterValue($First, 'first').RegisterValue($Second, 'second'),
+      IoCDuplicateRegistrationError,
+    );
   });
 });

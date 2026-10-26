@@ -234,10 +234,12 @@ Deno.test('Invalid keys', async (t) => {
     );
   });
 
-  await t.step('symbols and plain objects are rejected too (1.0: only tokens and classes)', () => {
+  await t.step('plain objects and functions are rejected too; symbols are tokens', () => {
     const ioc = new IoCContainer();
 
-    for (const key of [Symbol('Db'), Symbol.for('Db'), { Description: 'Db' }]) {
+    ioc.RegisterValue(Symbol.for('FixesDb') as never, 1 as never);
+
+    for (const key of [{ Description: 'Db' }, () => 1]) {
       const err = assertThrows(() => ioc.RegisterValue(key as never, 1 as never));
 
       assert(isIoCError(err, 'IOC_INVALID_KEY'), String(err));

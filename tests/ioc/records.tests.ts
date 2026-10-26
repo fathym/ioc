@@ -1,9 +1,8 @@
-// ResolveNamed, ResolveRecord, IoCLazy, IoCAll, factory Deps and observed edges.
+// ResolveNamed, ResolveRecord and factory Deps.
 import { IoCCircularDependencyError, IoCServiceNotFoundError } from '../../src/ioc/errors.ts';
 import { IoCContainer } from '../../src/ioc/ioc.ts';
-import { IoCAll, IoCLazy } from '../../src/ioc/IoCDeps.ts';
 import { IoCToken } from '../../src/ioc/IoCToken.ts';
-import { assert, assertEquals, assertRejects, assertStrictEquals } from '../test.deps.ts';
+import { assert, assertEquals, assertRejects } from '../test.deps.ts';
 
 interface Profile {
   model: string;
@@ -58,22 +57,19 @@ Deno.test('ResolveRecord', async (t) => {
       .RegisterFactory($Port, slow(8080), { Name: 'http' })
       .RegisterValue($Resolver, { handles: () => true }, { Name: 'any' });
 
-    const { url, port, resolvers, profile } = await ioc.ResolveRecord({
+    const { url, port, resolver } = await ioc.ResolveRecord({
       url: $Url,
       port: [$Port, 'http'],
-      resolvers: IoCAll($Resolver),
-      profile: IoCLazy($Profile),
+      resolver: [$Resolver, 'any'],
     });
 
     const u: string = url;
     const p: number = port;
-    const r: Resolver[] = resolvers;
-    const later: () => Promise<Profile> = profile;
+    const r: Resolver = resolver;
 
     assertEquals(`${u}:${p}`, 'localhost:8080');
-    assertEquals(r.length, 1);
+    assert(r.handles(''));
     assertEquals(peak, 2);
-    await assertRejects(() => later(), IoCServiceNotFoundError);
   });
 
   await t.step('a missing service rejects', async () => {
@@ -81,118 +77,6 @@ Deno.test('ResolveRecord', async (t) => {
       () => new IoCContainer().ResolveRecord({ url: $Url }),
       IoCServiceNotFoundError,
     );
-  });
-});
-
-Deno.test('IoCLazy and IoCAll in Deps', async (t) => {
-  await t.step('IoCLazy injects a resolver; nothing is built until it is called', async () => {
-    let built = 0;
-
-    class Signup {
-      constructor(public profile: () => Promise<Profile>) {}
-    }
-
-    const ioc = new IoCContainer()
-      .RegisterFactory($Profile, () => (built++, { model: 'x' }))
-      .RegisterClass(Signup, { Deps: [IoCLazy($Profile)] });
-
-    const signup = await ioc.Resolve(Signup);
-
-    assertEquals(built, 0);
-    assertEquals((await signup.profile()).model, 'x');
-    assertStrictEquals(await signup.profile(), await ioc.Resolve($Profile));
-  });
-
-  await t.step('IoCLazy breaks a construction cycle', async () => {
-    class A {
-      constructor(public b: () => Promise<B>) {}
-    }
-
-    class B {
-      constructor(public a: A) {}
-    }
-
-    const ioc = new IoCContainer()
-      .RegisterClass(A, { Deps: [IoCLazy(B)] })
-      .RegisterClass(B, { Deps: [A] });
-
-    assertEquals(ioc.Validate(), []);
-
-    const a = await ioc.Resolve(A);
-
-    assertStrictEquals((await a.b()).a, a);
-  });
-
-  await t.step('a named IoCLazy', async () => {
-    class Reader {
-      constructor(public port: () => Promise<number>) {}
-    }
-
-    const ioc = new IoCContainer()
-      .RegisterValue($Port, 9000, { Name: 'admin' })
-      .RegisterClass(Reader, { Deps: [IoCLazy([$Port, 'admin'])] });
-
-    assertEquals(await (await ioc.Resolve(Reader)).port(), 9000);
-  });
-
-  await t.step('IoCAll injects every registration, possibly none', async () => {
-    class Router {
-      constructor(public resolvers: Resolver[]) {}
-    }
-
-    const empty = new IoCContainer().RegisterClass(Router, { Deps: [IoCAll($Resolver)] });
-
-    assertEquals((await empty.Resolve(Router)).resolvers, []);
-    assertEquals(empty.Validate(), []);
-
-    const ioc = new IoCContainer()
-      .RegisterValue($Resolver, { handles: (p) => p.startsWith('/api') }, { Name: 'api' })
-      .RegisterValue($Resolver, { handles: () => true }, { Name: 'fallback' })
-      .RegisterClass(Router, { Deps: [IoCAll($Resolver)], Lifetime: 'transient' });
-
-    const router = await ioc.Resolve(Router);
-
-    assertEquals(router.resolvers.map((r) => r.handles('/home')), [false, true]);
-
-    // In a scope, the scope's registrations join (nearest first).
-    await using scope = ioc.CreateScope();
-
-    scope.RegisterValue($Resolver, { handles: () => false }, { Name: 'tenant' });
-
-    assertEquals((await scope.Resolve(Router)).resolvers.length, 3);
-  });
-
-  await t.step('Validate still reports a missing lazy dependency', () => {
-    class Needs {
-      constructor(public p: () => Promise<Profile>) {}
-    }
-
-    const issues = new IoCContainer()
-      .RegisterClass(Needs, { Deps: [IoCLazy($Profile)] })
-      .Validate({ Throw: false });
-
-    assertEquals(issues.map((i) => i.Kind), ['missing']);
-  });
-
-  await t.step('types: the parameter must match what is injected', () => {
-    class WantsService {
-      constructor(public p: Profile) {}
-    }
-
-    class WantsLazy {
-      constructor(public p: () => Promise<Profile>) {}
-    }
-
-    const ioc = new IoCContainer();
-
-    // @ts-expect-error: IoCLazy injects a function, not the service
-    ioc.RegisterClass(WantsService, { Deps: [IoCLazy($Profile)] });
-
-    // @ts-expect-error: a lazy URL is not a lazy profile
-    ioc.RegisterClass(WantsLazy, { Deps: [IoCLazy($Url)], Replace: true });
-
-    // @ts-expect-error: IoCAll injects an array
-    ioc.RegisterClass(WantsService, { Deps: [IoCAll($Profile)], Replace: true });
   });
 });
 
@@ -270,41 +154,5 @@ Deno.test('Factory Deps', async (t) => {
     });
 
     assertEquals(await ioc.Resolve($Url), 'plain');
-  });
-});
-
-Deno.test('Observed edges', async (t) => {
-  await t.step('records what a factory resolved while building', async () => {
-    const $Endpoint = IoCToken<string, 'ObsEndpoint'>('ObsEndpoint');
-
-    const ioc = new IoCContainer()
-      .RegisterValue($Url, 'localhost')
-      .RegisterValue($Port, 1, { Name: 'http' })
-      .RegisterFactory($Endpoint, async (c) => {
-        const url = await c.Resolve($Url);
-        const port = await c.TryResolve($Port, 'http');
-        await c.TryResolve($Port, 'missing');
-        return `${url}:${port}`;
-      });
-
-    await ioc.Activate();
-
-    const described = ioc.Describe().Services.find((s) => s.Label === 'ObsEndpoint');
-
-    assertEquals(described?.Observed, ['RecUrl', 'RecPort[http]']);
-  });
-
-  await t.step('resolves made later through a kept view are not recorded', async () => {
-    const $Holder = IoCToken<{ ioc: IoCContainer }, 'ObsHolder'>('ObsHolder');
-
-    const ioc = new IoCContainer()
-      .RegisterValue($Url, 'u')
-      .RegisterFactory($Holder, (c) => ({ ioc: c }));
-
-    await (await ioc.Resolve($Holder)).ioc.Resolve($Url);
-
-    const described = ioc.Describe().Services.find((s) => s.Label === 'ObsHolder');
-
-    assertEquals(described?.Observed, []);
   });
 });

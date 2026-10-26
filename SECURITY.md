@@ -47,7 +47,7 @@ The [versioning policy](./docs/policy.md) covers semantic versioning, deprecatio
 `@fathym/ioc` has no runtime dependencies and performs no I/O itself. The most likely security
 issues come from how an application uses it. One example: a scope that is never disposed can keep
 one request's data (credentials, user objects) alive. The
-[per-request scopes guide](./docs/guides/per-request-scopes.md) shows the safe pattern.
+[per-request scopes tutorial](./docs/getting-started/per-request-scopes.md) shows the safe pattern.
 
 ## What's Next
 

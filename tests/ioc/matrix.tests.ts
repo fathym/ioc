@@ -211,8 +211,6 @@ Deno.test('Matrix - lifetimes across scopes, registered directly or by a module'
             assertStrictEquals(fromFirst, fromSecond);
             assertStrictEquals(fromFirst, await ioc.Resolve(form.key));
           }
-
-          assertEquals(ioc.Describe().Services[0].Module, via === 'module' ? 'Impls' : undefined);
         });
       }
     }

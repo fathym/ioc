@@ -19,13 +19,13 @@
  * const db = await ioc.Resolve($Db); // db: Db
  * ```
  *
- * **Every call creates a new, unique key.** The description is only a label for errors and
- * `Describe()`: two tokens with the same description are two different keys. To share a service,
- * share (import) its token; to keep a service private to a package, don't export its token.
+ * **A token is its name.** `IoCToken('Db')` is `Symbol.for('Db')`, so two packages that each call
+ * `IoCToken('Db')` share one key, as 0.x keys did. Pick names that won't collide across packages
+ * (`'eac/Config'` rather than `'Config'`).
  *
- * The optional second type argument fixes the description in the token's type. Two tokens of the
- * same service type are then still told apart by a {@link IoCContainer.Typed typed container},
- * which matters for tokens of plain types such as `string`:
+ * The optional second type argument fixes the name in the token's type. Two tokens of the same
+ * service type are then still told apart by a {@link IoCContainer.Typed typed container}, which
+ * matters for tokens of plain types such as `string`:
  *
  * ```ts
  * import { IoCToken } from '@fathym/ioc';
@@ -33,36 +33,21 @@
  * const $DbUrl = IoCToken<string, 'DbUrl'>('DbUrl');
  * ```
  */
-export interface IoCToken<T, TId extends string = string> {
-  /** The label used in errors and `Describe()`. Not part of the token's identity. */
-  readonly Description: TId;
-
+export type IoCToken<T, TId extends string = string> = symbol & {
   /** Type-only marker carrying the service type; never present at runtime. */
   readonly '@fathym/ioc/type': T;
-}
+
+  /** Type-only marker carrying the token's name; never present at runtime. */
+  readonly '@fathym/ioc/id': TId;
+};
 
 /**
- * Marks token objects. It is a `Symbol.for` key so a token made by one copy of this library (two
- * versions in one dependency tree) is still recognized by another; identity stays per object.
- */
-const TOKEN: unique symbol = Symbol.for('@fathym/ioc/token');
-
-/**
- * Creates a new, unique token. Pass the description as a second type argument
+ * The token named `id`: `Symbol.for(id)`, typed with the service it resolves. Calling it again
+ * with the same name, in any package, gives the same key. Pass the name as a second type argument
  * (`IoCToken<string, 'DbUrl'>('DbUrl')`) to keep it in the type.
  */
-export function IoCToken<T, const TId extends string = string>(description: TId): IoCToken<T, TId> {
-  return Object.freeze({
-    Description: description,
-    [TOKEN]: true,
-    toString: () => `IoCToken(${description})`,
-  }) as unknown as IoCToken<T, TId>;
-}
-
-/** True for a token created by {@link IoCToken}. */
-export function isIoCToken(value: unknown): value is IoCToken<unknown> {
-  return typeof value === 'object' && value !== null &&
-    (value as { [TOKEN]?: unknown })[TOKEN] === true;
+export function IoCToken<T, const TId extends string = string>(id: TId): IoCToken<T, TId> {
+  return Symbol.for(id) as IoCToken<T, TId>;
 }
 
 /** The service type carried by a token. */

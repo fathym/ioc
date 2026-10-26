@@ -1,12 +1,7 @@
 // Type-checked by `deno task test:runtimes` with the oldest supported TypeScript (5.4) and the
 // latest, against the built npm package's declarations and a minimal `lib`, the way a Node.js or
 // Bun project would consume it.
-import {
-  DefineModule,
-  IoCContainer,
-  type IoCHealthReport,
-  IoCToken,
-} from '../../dist/npm/esm/mod.js';
+import { DefineModule, IoCContainer, IoCToken } from '../../dist/npm/esm/mod.js';
 
 interface Db {
   query(sql: string): string[];
@@ -56,22 +51,13 @@ export const app = new IoCContainer()
 // @ts-expect-error a typed container rejects a module whose needs are not registered
 new IoCContainer().Typed().Use(ServerModule);
 
-// Signal is usable without DOM or Node.js types (the container's own AbortSignal shape).
-export const Watcher = DefineModule({
-  Name: 'Watcher',
-  Encapsulated: true,
-  Register: (c) =>
-    c.RegisterFactory($Port, (inner) => {
-      inner.Signal?.throwIfAborted();
-      inner.Signal?.addEventListener('abort', () => {}, { once: true });
+// Tokens are typed symbols: a token resolves to its type, and keeps its name in the type.
+export const db: Promise<Db> = app.Resolve($Db);
 
-      return inner.Signal?.aborted ? 0 : 8080;
-    }),
-  Health: (c) => c.Signal?.aborted !== true,
-});
+export const name: string | undefined = $Db.description;
 
-export const report: Promise<IoCHealthReport> = app.Health({ TimeoutMs: 1000 });
+// Override keeps the key's type.
+export const restore: () => void = app.Override($Port, 9090);
 
-export const firstFailure: Promise<string | undefined> = report.then((r) =>
-  r.Modules.find((m) => !m.Healthy)?.Module
-);
+// @ts-expect-error the override must match the token's type
+app.Override($Port, 'not a port');

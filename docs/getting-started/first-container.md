@@ -4,7 +4,7 @@ DocumentType: Guide
 Title: 'Step 2: Your First Container'
 Summary: Register a class, a factory and a value, use a typed token, and see how lifetimes change what you get back.
 Created: 2026-10-13
-Updated: 2026-10-15
+Updated: 2026-10-22
 Owners:
   - fathym
 References:
@@ -77,8 +77,10 @@ Three things to notice:
    work later.
 3. **You never called `new Clock()`.** The container did.
 
-> **Note:** Every `IoCToken()` call creates a new, unique key; the name is only a label for
-> errors. Declare each token once, in a module of its own, and import it wherever you need it.
+> **Note:** A token is its name: `IoCToken('AppName')` is `Symbol.for('AppName')`, so every call
+> with the same name, in any package, gives the same key. Pick names that won't collide with other
+> packages (`'notes/AppName'`), declare each token once, and import it wherever you need it. A
+> class key is the class itself, so two different classes named `Clock` are two different keys.
 
 ## Let the container call the constructor
 
@@ -171,8 +173,6 @@ There's a third lifetime, `scoped`, which you'll use in [step 4](./per-request-s
 
 ## What's Next
 
-- Start an async service (Deno KV) and check startup:
+- Start an async service (Deno KV) and check the wiring at startup:
   [async-services.md](./async-services.md) _[Tutorial]_
-- Why tokens and classes are keys, and how to keep a service private:
-  [keys-and-registrations.md](../concepts/keys-and-registrations.md) _[Explanation]_
-- All the lifetimes in one table: [lifetimes.md](../concepts/lifetimes.md) _[Explanation]_
+- Every registration option and lifetime: [api.md](../reference/api.md) _[Reference]_

@@ -4,7 +4,7 @@ DocumentType: Guide
 Title: Versioning and Support Policy
 Summary: What @fathym/ioc promises from 1.0 - semantic versioning and what counts as breaking, the deprecation window, supported runtimes, how releases are made, and how security fixes ship.
 Created: 2026-10-15
-Updated: 2026-10-15
+Updated: 2026-10-22
 Owners:
   - fathym
 References:
@@ -49,8 +49,8 @@ when it:
 - **removes an error code, renames one, or changes what it means,** or makes a condition throw a
   different code than before;
 - **changes documented behavior:** lifetimes and ownership, resolution order, start and stop
-  order, disposal order, sealing rules, what `Validate()` reports, and the default value of any
-  option (such as `PendingTimeoutMs`);
+  order, disposal order, the duplicate and default rules, what `Validate()` reports, and the
+  default value of any option (such as `PendingTimeoutMs`);
 - **drops a supported runtime,** except as described under
   [supported runtimes](#dropping-a-runtime-version).
 
@@ -60,15 +60,13 @@ These can change in any release:
 
 - **Error message text.** Messages are written for people and may gain detail or be reworded.
   Match on `code` (`isIoCError(err, code)`), never on the message.
-- **New members of open sets:** a new `IoCErrorCode`, `IoCWarningCode`, `IoCEvent` type or
-  `IoCValidationIssue` `Kind` arrives in a minor release. Code that switches over them should keep
-  a default branch.
-- **New optional fields** on options, events, issues and descriptions.
+- **New members of open sets:** a new `IoCErrorCode` or `IoCValidationIssue` `Kind` arrives in a
+  minor release. Code that switches over them should keep a default branch.
+- **New optional fields** on options, issues and descriptions.
 - **Fixes to undocumented behavior,** including type changes that only reject code that would
   already have failed at runtime. Each is listed in the changelog under _Fixed_.
 - **Internals:** members marked `@ignore` or `protected`, the `'@fathym/ioc/…'` marker properties
-  on types, timing (`Ms`, `BuildMs`, `StartMs` values), the order of entries the docs don't
-  promise, and performance.
+  on types, the order of entries the docs don't promise, and performance.
 - **Development tooling:** scripts, tests, CI and the docs themselves.
 
 When a bug fix has to change documented behavior because the documented behavior is unsafe (for
@@ -88,24 +86,20 @@ Nothing is removed without warning. A deprecated API:
 4. **is removed only in a major release.**
 
 A deprecated behavior that can't carry a JSDoc tag (an option value, an implicit default) is
-announced the same way, and may also emit an `OnEvent` warning when it is used.
+announced the same way.
 
 ## Supported runtimes
 
 | Runtime    | Supported versions | Checked in CI                                   |
 | ---------- | ------------------ | ----------------------------------------------- |
 | Deno       | 2.x                | Full test suite, docs examples                  |
-| Node.js    | 20.16+, 22, 24     | Smoke test against the npm build                |
+| Node.js    | 20, 22, 24         | Smoke test against the npm build                |
 | Bun        | 1.x                | Smoke test against the npm build and the source |
 | TypeScript | 5.4 and later      | A consumer type-checked with TypeScript 5.4     |
 
-The package has no runtime dependencies. The container never imports `node:async_hooks`; where
-the runtime offers `AsyncLocalStorage` through `process.getBuiltinModule` (all of the above), it
-is used to follow resolution chains across `await`. **Node.js 20 needs 20.16 or later** for that:
-`process.getBuiltinModule` arrived in 20.16, and on older 20.x releases the automatic async context
-is silently off (pass your own `AsyncLocalStorage` with the `AsyncContext` option there). The
-supported minimum is therefore Node.js 20.16. Other ES2022 runtimes, browsers included, may work
-but aren't tested.
+The package has no runtime dependencies and imports no Node.js modules. It needs ES2022 and
+`Symbol.asyncDispose` (provided by Deno, Bun and Node.js 20+, or by the TypeScript `esnext.disposable`
+library for typing). Other ES2022 runtimes, browsers included, may work but aren't tested.
 
 ### Dropping a runtime version
 
