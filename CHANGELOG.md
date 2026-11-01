@@ -28,6 +28,19 @@ supported.
 
 ## [Unreleased]
 
+### Added
+
+- **Agent kit** (`@fathym/ioc/agents`): the conventions AI coding agents follow with
+  `@fathym/ioc`, as a Claude Code skill, a Cursor rule, an `AGENTS.md` section and Copilot
+  instructions. `deno run -A jsr:@fathym/ioc/init-agents` writes them into a project;
+  `writeAgentKit()` does the same from code. The rules' example is type-checked and run in CI.
+- **`llms-full.txt`:** every docs page and example program in one file, for AI agents, generated
+  and checked with `llms.txt`.
+- **Errors that say how to fix them:** every error has `DocsUrl`, linking to its code's new
+  section in the [error catalog](./docs/reference/errors.md#error-codes) (`ioCErrorDocsUrl(code)`
+  gives the same link). Each `Validate()` issue has a `Hint`, shown as a `Fix:` line in the thrown
+  message, which also ends with the docs link.
+
 ### Changed
 
 - **Faster resolution.** A service whose dependencies are already built (or build synchronously) is

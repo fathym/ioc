@@ -97,7 +97,9 @@ announced the same way.
 | Bun        | 1.x                | Smoke test against the npm build and the source |
 | TypeScript | 5.4 and later      | A consumer type-checked with TypeScript 5.4     |
 
-The package has no runtime dependencies and imports no Node.js modules. It needs ES2022 and
+The package has no runtime dependencies. The core (`@fathym/ioc`) imports no Node.js modules; the
+agent kit (`@fathym/ioc/agents`) writes files with `node:fs` and `node:path`, which Deno, Node.js
+and Bun all provide. It needs ES2022 and
 `Symbol.asyncDispose` (provided by Deno, Bun and Node.js 20+, or by the TypeScript `esnext.disposable`
 library for typing). Other ES2022 runtimes, browsers included, may work but aren't tested.
 

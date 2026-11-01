@@ -2,7 +2,7 @@
 
 > Dependency injection for modern TypeScript. No decorators. No metadata. Async from the ground up.
 
-Every code example in these docs is type-checked in CI. Install from npm (`npm install @fathym/ioc`) or JSR (`deno add jsr:@fathym/ioc`); the examples import from `@fathym/ioc`.
+Every code example in these docs is type-checked in CI. Install from npm (`npm install @fathym/ioc`) or JSR (`deno add jsr:@fathym/ioc`); the examples import from `@fathym/ioc`. The full text of the docs, in one file: [llms-full.txt](https://raw.githubusercontent.com/fathym/ioc/main/llms-full.txt).
 
 ## Start here
 
@@ -24,6 +24,7 @@ Every code example in these docs is type-checked in CI. Install from npm (`npm i
 ## Guides
 
 - [Guides](https://raw.githubusercontent.com/fathym/ioc/main/docs/guides/README.md): Short how-to recipes for @fathym/ioc - one task per page.
+- [Working with AI coding agents](https://raw.githubusercontent.com/fathym/ioc/main/docs/guides/ai-coding-agents.md): Give Claude Code, Cursor, Copilot and other coding agents the @fathym/ioc conventions, the full docs, and a fix loop they can act on.
 - [Registering many modules](https://raw.githubusercontent.com/fathym/ioc/main/docs/guides/registering-many-modules.md): Add a folder of modules with one call - a barrel file, or import.meta.glob under Vite - instead of convention-based auto-registration.
 
 ## Reference

@@ -26,5 +26,6 @@ import './ioc/validate.tests.ts';
 import './ioc/edge-cases.tests.ts';
 import './ioc/edges.tests.ts';
 import './ioc/guarantees.tests.ts';
+import './agents/kit.tests.ts';
 import './docs/docs-check.tests.ts';
 import './docs/examples.tests.ts';
