@@ -52,37 +52,38 @@ where a repository needs a database and asks whether `deno check` rejects it.
 ## Benchmarks
 
 The same graph in each library: two values, a singleton repository, a transient handler, and a
-scoped request context. `@fathym/ioc` always resolves asynchronously, so each resolve includes an
-`await` and its `PendingTimeoutMs` timer; the other three resolve synchronously. Treat these as
-orders of magnitude on one machine, not as a ranking: at a few microseconds per resolve, the
-container is rarely what limits an application.
+scoped request context. `Resolve` in `@fathym/ioc` always returns a promise, so each resolve
+includes at least one `await`; services whose dependencies are ready are built synchronously
+inside it, and only work that is still pending gets a `PendingTimeoutMs` timer. The other three
+resolve synchronously. Treat these as orders of magnitude on one machine, not as a ranking: at
+about a microsecond per resolve, the container is rarely what limits an application.
 
 **cold start**
 
 | Library     | Time per iteration | Per second |
 | ----------- | -----------------: | ---------: |
-| tsyringe    |             1.2 µs |    824,700 |
-| @fathym/ioc |            25.5 µs |     39,148 |
-| awilix      |            28.9 µs |     34,561 |
-| InversifyJS |            86.3 µs |     11,593 |
+| tsyringe    |             1.2 µs |    838,223 |
+| @fathym/ioc |            18.1 µs |     55,386 |
+| awilix      |            18.6 µs |     53,818 |
+| InversifyJS |            50.7 µs |     19,732 |
 
 **resolve**
 
 | Library     | Time per iteration | Per second |
 | ----------- | -----------------: | ---------: |
-| InversifyJS |              50 ns | 19,862,895 |
-| awilix      |             117 ns |  8,510,970 |
-| tsyringe    |             185 ns |  5,402,096 |
-| @fathym/ioc |             5.2 µs |    193,352 |
+| InversifyJS |              51 ns | 19,665,279 |
+| awilix      |             134 ns |  7,488,224 |
+| tsyringe    |             180 ns |  5,542,185 |
+| @fathym/ioc |             1.2 µs |    817,166 |
 
 **scope per request**
 
 | Library     | Time per iteration | Per second |
 | ----------- | -----------------: | ---------: |
-| tsyringe    |             5.6 µs |    179,327 |
-| awilix      |            12.3 µs |     81,278 |
-| @fathym/ioc |            14.8 µs |     67,422 |
-| InversifyJS |            30.1 µs |     33,226 |
+| tsyringe    |             4.8 µs |    207,008 |
+| awilix      |            17.4 µs |     57,394 |
+| @fathym/ioc |            25.7 µs |     38,961 |
+| InversifyJS |            72.3 µs |     13,839 |
 
 Source: [`compare/bench.ts`](../../compare/bench.ts).
 

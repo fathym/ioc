@@ -183,8 +183,8 @@ const Api = DefineModule({
 [comparison page](https://github.com/fathym/ioc/blob/main/docs/reference/comparison.md), with the
 code for every cell. InversifyJS checks dependencies at compile time with `toResolvedValue`, not
 with `@inject` decorators, and loads `reflect-metadata` itself. NestJS cells come from its
-documentation. On raw speed the synchronous containers win: a resolve here takes about 5 µs
-against well under 1 µs; the comparison page has the numbers.
+documentation. On raw speed the synchronous containers win: a resolve here takes about 1 µs
+against 50–200 ns; the comparison page has the numbers.
 
 Sizes are each whole library bundled with its required polyfill and measured with
 `deno task size --compare` (NestJS 12.3 core and common). Dependencies count indirect ones;
