@@ -17,3 +17,6 @@ cov/
 
 .logs/runtime-*.jsonl
 
+
+# npm build output
+dist/

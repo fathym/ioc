@@ -1,0 +1,241 @@
+---
+FrontmatterVersion: 1
+DocumentType: Guide
+Title: Changelog
+Summary: Notable changes to @fathym/ioc, newest first, following Keep a Changelog.
+Created: 2026-10-13
+Updated: 2026-10-26
+Owners:
+  - fathym
+References:
+  - Label: Project README
+    Path: ./README.md
+  - Label: Migrating from 0.x
+    Path: ./docs/migration/from-0.x.md
+  - Label: Versioning and support policy
+    Path: ./docs/policy.md
+  - Label: Project Agents Guide
+    Path: ./AGENTS.md
+---
+
+# Changelog
+
+All notable changes to this project are documented here. The format follows
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/). From 1.0.0 the project follows
+[Semantic Versioning](https://semver.org/); the [versioning and support policy](./docs/policy.md)
+says what counts as breaking, how long deprecated APIs keep working, and which runtimes are
+supported.
+
+## [Unreleased]
+
+Nothing yet.
+
+## [1.0.0]
+
+A small core that fixes 0.x's defects and replaces what Fathym's repositories do by hand. Keys
+don't change: a token is still `Symbol.for(name)`, now typed. Most code needs small, mechanical
+changes. **Upgrade with [migrating from 0.x](./docs/migration/from-0.x.md)**, which maps every
+removed call to its replacement. 0.x and 1.0 containers don't share registrations, so packages
+that share a container upgrade together.
+
+### Removed
+
+- The overloaded `Register(...)`; `ioc.Symbol()`; string keys.
+- `CopyTo`, `RegisterDirect`, `ResolveDirect`, `ModuleFromContainer` and the public `services` /
+  `symbols` maps.
+- The `Strict`, `Lazy`, `LazyByDefault`, `Diagnostics` and `AsyncContext` options, and
+  `IoCContainer.Create()`.
+- From 0.1: `Decorate`, `IoCLazy`, `IoCAll` (also in `ResolveRecord`), scope levels (`Levels`,
+  `ScopeLevel`, `CreateScope({ Level })`), the async-context tracking of resolution chains, and
+  `IoCKeyCollisionError`.
+- From 0.1's `Describe()`: scope levels, observed dependencies and build state. It now lists
+  registrations (key, name, kind, lifetime, default, `Deps`, depth) and modules.
+- The cross-version protocol and the 0.x interop fixtures.
+
+### Changed
+
+- **Explicit registration:** `RegisterClass`, `RegisterFactory` and `RegisterValue`. `Resolve`
+  and friends take the type from the key; explicit type arguments no longer compile.
+- **Tokens are typed names:** `IoCToken<T, 'Name'>('Name')` returns `Symbol.for('Name')`, so
+  existing `Symbol.for` keys keep working. Class keys are the class itself, never matched by name.
+- **Registering a key and name twice throws** (`IOC_DUPLICATE_REGISTRATION`) unless it says
+  `Replace: true` or the existing registration is a `Default: true`. A default does nothing when
+  a non-default registration exists, here or in a parent; any later registration replaces it.
+- **Lazy by default:** services are built on first resolve. `Activate()` builds every singleton
+  now. **`Start()` no longer builds singletons** (it did in 0.1); call `Activate()` after it to
+  keep that behavior.
+- **Timeouts by default:** anything pending after `PendingTimeoutMs` (30 s; `0` turns it off)
+  fails with `IoCResolveTimeoutError`, including `OnStart`, `OnStop` and disposers.
+- **Scopes:** disposing a container disposes its live scopes, then its own instances in reverse
+  creation order.
+
+### Added
+
+Compared with 0.0.x. Most of these first shipped in 0.1.0; new since 0.1 are `DefineModule`,
+module `Needs`, `State`, `IoCModuleCycleError`, `IoCNotIsolatableError` and the 30-second default
+timeout.
+
+- **Modules:** `IoCModule` (`Name`, `Requires`, `Needs`, `Register`, `OnStart`, `OnStop`),
+  `Use()`, `Start()` and `State`. `Start()` validates, then runs `OnStart` one module at a time in
+  dependency order; a failure stops the started modules again and throws `IoCStartError`, and
+  `Start()` can be retried. `Dispose()` runs `OnStop` in reverse.
+- **Typed modules and containers:** `DefineModule`, `Typed()` and `Expect()`. `Deps` are checked
+  against constructor parameters, and `Use()` on a typed container doesn't compile until a
+  module's `Needs` are registered.
+- `Validate()`: missing, cyclic, captive and constructor-argument problems, from declared `Deps`.
+- `TryResolve`, `ResolveAll`, `ResolveNamed`, `ResolveRecord`, `Names`, `Has`, `Unregister`,
+  `Isolate`, `Override`, `Describe`, `Dispose` / `await using`, the `Dispose` registration option.
+- Error classes with stable codes (`IoCErrorCode`) and `isIoCError(err, code)`.
+- The [versioning and support policy](./docs/policy.md).
+
+### Fixed
+
+- A dependency cycle no longer hangs: through a factory's `ioc` or `Deps` it throws
+  `IoCCircularDependencyError` at once; anything else fails at the pending timeout.
+- A second registration no longer silently replaces the first.
+- Two classes with the same name no longer resolve each other's registrations.
+- Instances are disposed once, by the container that built them; values registered with
+  `RegisterValue` are never disposed unless they have a `Dispose` option.
+- Concurrent resolves of a singleton share one build, and a failed build is retried.
+
+## [0.1.0]
+
+The first minor release: a rewritten container core, typed APIs, scopes and disposal, modules and
+lifecycle, and the full documentation set. Existing code keeps working, and containers from
+0.0.x interoperate in the same process. Upgrading to 1.0:
+[migrating from 0.x](./docs/migration/from-0.x.md).
+
+### Added
+
+- **Typed tokens:** `IoCToken<T>(id)`, so `Resolve($Db)` is typed without generics. Abstract
+  classes also work as typed keys. `IoCToken<T, 'Id'>('Id')` also puts the id in the type.
+- **Explicit registration:** `RegisterClass` (with `Deps` constructor dependencies, checked at
+  compile time, and a `Type` token checked against the class), `RegisterFactory` and
+  `RegisterValue`. Each returns the container, so registrations chain.
+- **Typed containers:** `Typed()` starts tracking registrations in the container's type. Chained
+  registrations add their keys, and `Deps` may only name keys registered earlier, so a missing or
+  misordered registration doesn't compile. `Expect(...keys)` declares keys registered elsewhere
+  (another module, each scope). Untyped containers (`new IoCContainer()`) behave as before.
+- **Scopes:** `CreateScope()` creates child containers. `scoped` services get one instance per
+  scope, scope registrations act as local overrides, and nothing is copied.
+- **Disposal:** `Dispose()` and `[Symbol.asyncDispose]` (`await using`). Instances are disposed
+  in reverse creation order, and errors are collected into an `AggregateError`.
+- **Lookups:** `Has`, `TryResolve`, `ResolveAll` and `Unregister`.
+- **`Decorate(key, (inner, ioc) => …)`** wraps a registration in place.
+- **Startup checks:** `Validate()` checks the declared dependency graph, and `Activate()` builds
+  every singleton at startup.
+- **Error classes with stable codes:** `IoCServiceNotFoundError`, `IoCCircularDependencyError`,
+  `IoCValidationError`, `IoCContainerDisposedError`, `IoCRegistrationError`,
+  `IoCActivationError` and `IoCDisposeError` (both `AggregateError`s), and the strict-mode
+  `IoCScopeRequiredError`, `IoCDuplicateRegistrationError` and `IoCKeyCollisionError`. Every error
+  has a `code` (`IOC_…`); `isIoCError(err, code?)` checks it, across library copies too.
+- **Container options:** `new IoCContainer({ Strict, LazyByDefault, Diagnostics })`, and
+  `IoCContainer.Create()` for new code (`Strict` + `LazyByDefault`). Scopes inherit them.
+  Without options the container behaves as before.
+- **`Default: true`** registers a framework default that yields to any other registration of the
+  key, made before or after it (including registrations copied in with `CopyTo`), and is never
+  built unless used. **`Replace: true`** marks an intended override.
+- **Strict mode:** duplicate registrations, `scoped` services resolved outside a scope, and one
+  key used by both a class and a token throw. An unregistered class never resolves a different
+  class with the same name.
+- **A `Dispose` option** on `RegisterClass`, `RegisterFactory` and `RegisterValue` cleans up
+  resources that don't implement `Symbol.dispose` (`Dispose: (kv) => kv.close()`).
+- **`Names(key)`** lists the names a key is registered under, nearest scope first, without
+  building anything. **`Validate({ Throw: false })`** returns the issues instead of throwing.
+- **The cross-version protocol** is documented in `docs/reference/protocol.md`.
+- **Modules:** `IoCModule` (`Name`, `Requires`, `Register`, `OnStart`, `OnStop`) and
+  `ioc.Use(...modules)`, which adds requirements first and each module once.
+  `ModuleFromContainer(name, container, { Defaults })` wraps a plugin's container (any version).
+- **Lifecycle:** `Start()` validates, builds every singleton and runs `OnStart` in module order,
+  rolling back on failure (`IoCStartError`). `Dispose()` runs `OnStop` in reverse before
+  disposing instances, so `await using` covers shutdown.
+- **Scope levels:** `CreateScope({ Level })` and `ScopeLevel` on `scoped` registrations: the
+  instance lives in the nearest scope of that level (one per tenant, shared by its requests).
+- **`scope.Isolate(...keys)`** gives a scope its own instances of a parent's registrations (same
+  recipe, decorators included), for sub-units that must not share state.
+- **`ResolveNamed(key)`** (a `Map` of name to service) and **`ResolveRecord({ … })`** (a typed
+  bag of services, resolved concurrently).
+- **`IoCLazy(key)`** and **`IoCAll(key)`** inject a resolver function or every registration, in
+  `Deps` and `ResolveRecord`; lazy dependencies don't count as cycles in `Validate()`.
+- **Factory `Deps`:** `RegisterFactory(key, (ioc, a, b) => …, { Deps: [$A, $B] })` passes typed
+  dependencies and lets `Validate()` see them.
+- **Observed dependencies:** what each factory resolves while building is recorded, for
+  introspection.
+- **`Override(key, value)`** swaps a registration for tests and returns an exact undo.
+- **`Describe()`** returns the registration graph as plain data: keys, names, kinds, lifetimes,
+  levels, modules, declared and observed dependencies, shadowing and build state.
+- **`AsyncContext` option:** pass an `AsyncLocalStorage` and cycles through captured containers
+  are detected after `await` too.
+- **`PendingTimeoutMs` option:** a resolve still pending after the timeout fails with
+  `IoCResolveTimeoutError` (`IOC_RESOLVE_TIMEOUT`), listing what it waits on.
+- **`Register(symbol, factory)`.**
+- **Node.js and Bun support, checked in CI:** `deno task build:npm` builds an npm package (ESM +
+  `.d.ts`), and `deno task test:runtimes` runs a smoke test on Node.js 20/22/24 and Bun and
+  type-checks a consumer with TypeScript 5.4 (the minimum). JSR now publishes only the library
+  files.
+- **Patterns and framework docs:** `docs/patterns/` (plugin host, CLI app, multi-tenant runtime,
+  agent orchestrator, resolver chains, keyed resources, testing), a guide to building frameworks
+  on the container, a scale guide, and runnable `plugin-host.ts` and `modules-lifecycle.ts`
+  examples.
+- **Documentation:** a full documentation set in `docs/` (tutorial, concepts, guides, reference,
+  error catalog, migration guides) with every example executed in CI; runnable `examples/`;
+  `llms.txt`; CONTRIBUTING, SECURITY, CODE_OF_CONDUCT and issue templates.
+
+### Deprecated
+
+- **`Register`**, the overloaded method that guesses whether it was given a class or a factory.
+  Use `RegisterClass`, `RegisterFactory` or `RegisterValue`. `Register` keeps working and will be
+  removed in 1.0. See [migrating from 0.x](./docs/migration/from-0.x.md#old-call--new-call).
+
+### Changed
+
+- **`Lazy: true` really defers** creation to the first resolve, and now also applies to factory
+  registrations.
+- **Factories run during resolution receive a view of the container** that carries the resolution
+  path. It is not `===` the container.
+- **Copied transient factories receive the `CopyTo` target.**
+- **The factory parameter is typed** in every `Register` form.
+- **Eager factories also receive a view,** so cycles they enter after an `await` are reported.
+- **`Expect()` is recorded at runtime,** so `Validate()` accepts keys each scope provides.
+- **String keys throw** `IOC_INVALID_KEY` with a hint, instead of a `TypeError`.
+- **Re-registering a key reports `IOC_REGISTRATION_REPLACED`** to the `Diagnostics` callback (it
+  still replaces).
+
+### Fixed
+
+- **`Start()` edge cases:** a `Start()` that failed validation can now be retried once the graph is
+  fixed (before, it failed forever). `Dispose()` during `Start()` now stops the module that was
+  starting and makes `Start()` throw `IoCContainerDisposedError` (before, `Start()` succeeded and
+  that module's `OnStop` never ran). `PendingTimeoutMs` now also bounds startup builds and each
+  `OnStart`.
+- `Register` no longer writes `Type` into the caller's options object. Before, reusing an options
+  object registered one class under another's key.
+- Arrow and async factories stored in named variables are no longer constructed as classes.
+- Function-valued services are returned instead of invoked.
+- Two different classes with the same name now resolve their own registrations.
+- A failed async singleton no longer crashes the process with an unhandled rejection. The next
+  resolve retries it.
+- A scoped registration's removal function no longer deletes a later re-registration.
+- Unknown or foreign symbols reject with `IoCServiceNotFoundError` instead of a `TypeError`.
+  Resolving no longer adds empty entries to `services`.
+- Circular dependencies throw `IoCCircularDependencyError` instead of hanging, including cycles
+  entered from both ends at once (`Promise.all`, `Activate()`).
+- A build that failed no longer leaves its sibling resolves rebuilding in the background: after
+  `Activate()` (or a `Promise.all` in a factory) rejects, nothing keeps retrying.
+- Each disposable instance is disposed exactly once, by the container that created it: decorators
+  returning the inner instance, alias factories and `CopyTo` no longer dispose twice, and a scope
+  never disposes its parent's singleton. Instances that finish building after `Dispose()` are
+  disposed instead of leaked.
+- Scopes of a disposed container throw `IoCContainerDisposedError`.
+- `Validate()` checks the constructors subclasses inherit.
+
+## [0.0.36] and earlier
+
+The original container: `Register`, `Resolve`, `CopyTo`, transient and scoped lifetimes, `Lazy`,
+named registrations. Versions 0.0.12–0.0.36 share the same API, and they interoperate with 0.1.x
+in one process (not with 1.0).
+
+[Unreleased]: https://github.com/fathym/ioc/compare/v1.0.0...HEAD
+[1.0.0]: https://jsr.io/@fathym/ioc@1.0.0
+[0.1.0]: https://jsr.io/@fathym/ioc@0.1.0
+[0.0.36]: https://jsr.io/@fathym/ioc@0.0.36
