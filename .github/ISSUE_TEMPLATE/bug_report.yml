@@ -1,0 +1,40 @@
+name: Bug report
+description: Something in the container behaves differently from the docs.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting! First, please check the
+        [error catalog](https://github.com/fathym/ioc/blob/main/docs/reference/errors.md) and
+        [troubleshooting](https://github.com/fathym/ioc/blob/main/docs/troubleshooting.md).
+        Security problems: please report them privately (see SECURITY.md), not here.
+  - type: input
+    id: version
+    attributes:
+      label: '@fathym/ioc version'
+      placeholder: 0.1.0
+    validations:
+      required: true
+  - type: input
+    id: runtime
+    attributes:
+      label: Runtime and version
+      placeholder: Deno 2.9.6 / Node 22 / Bun 1.2
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Minimal reproduction
+      description: A complete, runnable snippet that imports from '@fathym/ioc'.
+      render: ts
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected, and what happened
+      description: Include the full error message, if any.
+    validations:
+      required: true

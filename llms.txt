@@ -1,0 +1,47 @@
+# @fathym/ioc
+
+> Dependency injection for modern TypeScript. No decorators. No metadata. Async from the ground up.
+
+Every code example in these docs is type-checked in CI. Install from JSR (`deno add jsr:@fathym/ioc`); the examples import from `@fathym/ioc`.
+
+## Start here
+
+- [README.md](https://raw.githubusercontent.com/fathym/ioc/main/README.md): 
+- [@fathym/ioc Documentation](https://raw.githubusercontent.com/fathym/ioc/main/docs/README.md): The map of the @fathym/ioc docs - tutorial, reference, migration and design notes.
+
+## Getting started (tutorial)
+
+- [Getting Started](https://raw.githubusercontent.com/fathym/ioc/main/docs/getting-started/README.md): A five-step tutorial that builds a small notes API with @fathym/ioc, from install to tests.
+- [Step 1: Installation](https://raw.githubusercontent.com/fathym/ioc/main/docs/getting-started/installation.md): Add @fathym/ioc to a Deno, Node.js or Bun project and import it.
+- [Step 2: Your First Container](https://raw.githubusercontent.com/fathym/ioc/main/docs/getting-started/first-container.md): Register a class, a factory and a value, use a typed token, and see how lifetimes change what you get back.
+- [Step 3: Async Services](https://raw.githubusercontent.com/fathym/ioc/main/docs/getting-started/async-services.md): Open Deno KV with an async factory, check the wiring with Start(), build it at boot with Activate(), and close everything when the container is disposed.
+- [Step 4: Per-Request Scopes](https://raw.githubusercontent.com/fathym/ioc/main/docs/getting-started/per-request-scopes.md): Serve HTTP with Deno.serve and give every request its own scope, request value and scoped services, disposed when the response is sent.
+- [Step 5: Testing Your App](https://raw.githubusercontent.com/fathym/ioc/main/docs/getting-started/testing-your-app.md): Put the app's wiring in a module, then test the notes service with a fake store - no module mocking needed.
+
+## Guides
+
+- [Guides](https://raw.githubusercontent.com/fathym/ioc/main/docs/guides/README.md): Short how-to recipes for @fathym/ioc - one task per page.
+- [Registering many modules](https://raw.githubusercontent.com/fathym/ioc/main/docs/guides/registering-many-modules.md): Add a folder of modules with one call - a barrel file, or import.meta.glob under Vite - instead of convention-based auto-registration.
+
+## Reference
+
+- [Reference](https://raw.githubusercontent.com/fathym/ioc/main/docs/reference/README.md): Reference material for @fathym/ioc - the API and every error message.
+- [API Reference](https://raw.githubusercontent.com/fathym/ioc/main/docs/reference/api.md): Every public method, option, type and error of @fathym/ioc 1.0 - signature, behavior, edge cases and a runnable example, grouped by task.
+- [Error Catalog](https://raw.githubusercontent.com/fathym/ioc/main/docs/reference/errors.md): Every error message @fathym/ioc 1.0 can produce, keyed by its exact text - what it means and how to fix it - plus the TypeScript errors you will meet.
+
+## Migration
+
+- [Migration](https://raw.githubusercontent.com/fathym/ioc/main/docs/migration/README.md): Upgrade from earlier @fathym/ioc releases to 1.0.
+- [Migrating from 0.x to 1.0](https://raw.githubusercontent.com/fathym/ioc/main/docs/migration/from-0.x.md): Upgrade from @fathym/ioc 0.0.x or 0.1.x to 1.0 - a table of every old call and its replacement, the behavior changes (explicit registration, strict duplicates, lazy builds, timeouts, class keys, modules, scope disposal), and a checklist for a dependent repository.
+
+## Examples
+
+- [Examples](https://raw.githubusercontent.com/fathym/ioc/main/examples/README.md): Small, runnable programs, each showing one @fathym/ioc idea; every one is run in CI.
+
+## Optional
+
+- [Changelog](https://raw.githubusercontent.com/fathym/ioc/main/CHANGELOG.md): Notable changes to @fathym/ioc, newest first, following Keep a Changelog.
+- [Contributing](https://raw.githubusercontent.com/fathym/ioc/main/CONTRIBUTING.md): How to set up, test, document and propose changes to @fathym/ioc.
+- [Dependent Follow-Ups](https://raw.githubusercontent.com/fathym/ioc/main/docs/design/dependent-follow-ups.md): What each package that depends on @fathym/ioc (steward, cli, eac and eac-runtime, fathym-web-runtime, power-ai) changes to move to 1.0, and what it should adopt while it is there.
+- [IoC 1.0](https://raw.githubusercontent.com/fathym/ioc/main/docs/design/ioc-1.0.md): The 1.0 design of @fathym/ioc - a small core that fixes 0.x's defects and replaces what dependents hand-roll, and the features deliberately left out until a dependent needs them.
+- [Versioning and Support Policy](https://raw.githubusercontent.com/fathym/ioc/main/docs/policy.md): What @fathym/ioc promises from 1.0 - semantic versioning and what counts as breaking, the deprecation window, supported runtimes, how releases are made, and how security fixes ship.

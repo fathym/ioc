@@ -1,0 +1,36 @@
+name: Runtimes
+
+# Proves the package works outside Deno: builds the npm package, runs the smoke test on each
+# Node.js version and on Bun, and type-checks a consumer with the oldest supported TypeScript.
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  runtimes:
+    name: Node.js ${{ matrix.node }} + Bun
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['20', '22', '24']
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Build the npm package and run the runtime checks
+        run: deno task test:runtimes --require-all
