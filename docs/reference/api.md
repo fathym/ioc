@@ -291,7 +291,8 @@ console.log((await ioc.Resolve($Handler))('/notes')); // handled /notes
 Frameworks and modules register what an application may replace with `Default: true`:
 
 - If a non-default registration of the key and name already exists, here or in a parent, the
-  `Default` call does nothing.
+  `Default` call does nothing. A parent registration made later also wins over a scope's
+  default.
 - Any later registration replaces a default without `Replace: true`; a later `Default` replaces an
   earlier one.
 
@@ -554,7 +555,12 @@ console.log(ioc.Has($Db), ioc.Has($Db, 'replica')); // false true
   container captured in a closure, after an `await`, the container can't see the cycle: the
   resolve fails at `PendingTimeoutMs` with `IoCResolveTimeoutError` instead.
 - **Timeouts.** A resolve still pending after `PendingTimeoutMs` (30 seconds by default) fails with
-  `IoCResolveTimeoutError`. The build itself is not cancelled.
+  `IoCResolveTimeoutError`. The build itself is not cancelled. When the stuck dependency is
+  reached after an `await`, the error names the service you resolved, not the one that hung.
+- **Async factories.** A factory may return a promise or any thenable; either is awaited once and
+  shared like any other build.
+- **Disposal races.** A build that finishes after its container (or a parent) was disposed is
+  disposed at once, and the `Resolve` waiting for it rejects with `IoCContainerDisposedError`.
 
 ---
 
@@ -602,7 +608,8 @@ Isolate(...keys: (IoCServiceKey<unknown> | readonly [IoCServiceKey<unknown>, str
 
 Gives this scope its own copy of registrations it inherits. A singleton among them gets one
 instance in this scope, built from this scope's registrations (so it sees the scope's overrides of
-its dependencies), instead of sharing the parent's.
+its dependencies), instead of sharing the parent's. A key the scope already registers itself is
+left as it is.
 
 **Throws:** [`Isolate() works on scopes`](./errors.md#isolate-works-on-scopes-call-it-on-a-container-created-with-createscope)
 on a root container, [`IoCNotIsolatableError`](./errors.md#-cant-be-isolated-) for a value (every
@@ -996,7 +1003,8 @@ Override<K extends IoCServiceKey<unknown>>(
 
 Replaces a registration with a value until the returned function is called, which puts back exactly
 what was there before (or removes the override if nothing was). It works on any container or
-scope, and only changes that container.
+scope, and only changes that container. Several overrides of one key can be restored in any
+order: once all are restored, the original is back.
 
 - Instances already built from the old registration keep what they were given. Override before
   resolving the services that use it, or override in a fresh scope.
