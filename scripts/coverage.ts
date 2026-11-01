@@ -34,6 +34,7 @@ await deno(['test', '-A', '--quiet', 'tests/tests.ts', '--parallel', `--coverage
 
 // deno coverage prints a Markdown-style table; strip colors and keep it as is.
 const table = (await deno(['coverage', cov, '--include=^file://.*/src/', '--exclude=tests/'], true))
+  // deno-lint-ignore no-control-regex -- strips ANSI color codes
   .replace(/\x1b\[[0-9;]*m/g, '')
   .trim();
 

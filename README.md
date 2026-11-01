@@ -143,24 +143,33 @@ const Api = DefineModule({
 
 ## How it compares
 
-|                                          | @fathym/ioc | InversifyJS | tsyringe | awilix  | NestJS |
-| ---------------------------------------- | :---------: | :---------: | :------: | :-----: | :----: |
-| No decorators or `reflect-metadata`      |      ✓      |      ✗      |    ✗     |    ✓    |   ✗    |
-| Constructor deps checked at compile time |      ✓      |      ✗      |    ✗     |    ✗    |   ✗    |
-| Async factories                          |      ✓      |      ✓      |    ✗     |    ✗    |   ✓    |
-| Startup validation of the whole wiring   |      ✓      |      ✗      |    ✗     |    ~    |   ✓    |
-| Modules with start/stop lifecycle        |      ✓      |      ~      |    ✗     |    ✗    |   ✓    |
-| Disposal of what it built                |      ✓      |      ~      |    ~     |    ✓    |   ✓    |
-| Standalone library, not a framework      |      ✓      |      ✓      |    ✓     |    ✓    |   ✗    |
-| Synchronous resolve                      |      ✗      |      ✓      |    ✓     |    ✓    |   ✓    |
-| Minified + gzipped                       | **6.1 KB**  |   24.7 KB   | 11.0 KB  | 30.1 KB | 141 KB |
-| Runtime dependencies                     |    **0**    |    6 + 1    |  1 + 1   |   18    | 18 + 2 |
+|                                                        | @fathym/ioc | InversifyJS | tsyringe | awilix  | NestJS |
+| ------------------------------------------------------ | :---------: | :---------: | :------: | :-----: | :----: |
+| No decorators or `reflect-metadata`                    |      ✓      |      ~      |    ✗     |    ✓    |   ✗    |
+| A wrong dependency fails to compile †                  |      ✓      |      ~      |    ✗     |    ✗    |   ✗    |
+| An async dependency is injected ready, not a promise † |      ✓      |      ✓      |    ✗     |    ✗    |   ✓    |
+| A failed async build is retried, not cached †          |      ✓      |      ✗      |    ✗     |    ✗    |   –    |
+| Disposes a service before its dependencies †           |      ✓      |      ✗      |    ✗     |    ✗    |   –    |
+| A missing dependency is found at startup †             |      ✓      |      ✗      |    ✗     |    ✗    |   ✓    |
+| Modules with start/stop lifecycle                      |      ✓      |      ~      |    ✗     |    ✗    |   ✓    |
+| Standalone library, not a framework                    |      ✓      |      ✓      |    ✓     |    ✓    |   ✗    |
+| Synchronous resolve                                    |      ✗      |      ✓      |    ✓     |    ✓    |   ✓    |
+| Minified + gzipped                                     | **6.1 KB**  |   24.7 KB   | 11.0 KB  | 30.1 KB | 141 KB |
+| Runtime dependencies                                   |    **0**    |    6 + 1    |  1 + 1   |   18    | 18 + 2 |
 
-✓ built in · ~ partial · ✗ not available. Features are based on each project's documentation,
-October 2026. Sizes are each whole library bundled with its required polyfill and measured with
-`deno task size --compare` (InversifyJS 8.2, tsyringe 4.10, awilix 13.0, NestJS 12.3 core and
-common). Dependencies count indirect ones; "+ 1" is `reflect-metadata`, and NestJS's "+ 2" adds
-rxjs. awilix's browser build leaves out file scanning and is 3.6 KB.
+✓ yes · ~ partly · ✗ no · – not measured. **Rows marked † are measured, not taken from docs:**
+`deno task compare` runs the same scenarios and benchmarks against each library at pinned versions
+(InversifyJS 8.2, tsyringe 4.10, awilix 13.0) and writes the
+[comparison page](https://github.com/fathym/ioc/blob/main/docs/reference/comparison.md), with the
+code for every cell. InversifyJS checks dependencies at compile time with `toResolvedValue`, not
+with `@inject` decorators, and loads `reflect-metadata` itself. NestJS cells come from its
+documentation. On raw speed the synchronous containers win: a resolve here takes about 5 µs
+against well under 1 µs; the comparison page has the numbers.
+
+Sizes are each whole library bundled with its required polyfill and measured with
+`deno task size --compare` (NestJS 12.3 core and common). Dependencies count indirect ones;
+"+ 1" is `reflect-metadata`, and NestJS's "+ 2" adds rxjs. awilix's browser build leaves out file
+scanning and is 3.6 KB.
 
 Need several implementations of one interface, such as a chain of handlers or one cache per
 region? Register each under a
