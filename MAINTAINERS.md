@@ -16,12 +16,14 @@ References:
 
 # Maintainers
 
-`@fathym/ioc` is maintained by [Fathym](https://github.com/fathym). These people review changes,
-cut releases and answer reports:
+`@fathym/ioc` is maintained by the [Fathym](https://github.com/fathym) team, who build their own
+platform on it. These people review changes, cut releases and answer reports:
 
-| Maintainer                          | Role                      |
-| ----------------------------------- | ------------------------- |
-| [mcgear](https://github.com/mcgear) | Lead maintainer, releases |
+| Maintainer                                    | Role                        |
+| --------------------------------------------- | --------------------------- |
+| [mcgear](https://github.com/mcgear)           | Lead maintainer, releases   |
+| [mpjbusiness](https://github.com/mpjbusiness) | Maintainer                  |
+| The [Fathym](https://github.com/fathym) team  | Reviews, triage and support |
 
 ## Response times
 
