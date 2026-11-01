@@ -1,4 +1,5 @@
 import {
+  IoCAbortedError,
   IoCActivationError,
   IoCCircularDependencyError,
   IoCContainerDisposedError,
@@ -41,6 +42,33 @@ import type { IoCToken } from './IoCToken.ts';
 
 /** Where the container is in its lifecycle (see {@link IoCContainer.State}). */
 export type IoCContainerState = 'idle' | 'starting' | 'started' | 'stopping' | 'disposed';
+
+/**
+ * The platform's `AbortSignal` where the runtime's type definitions declare one (Deno, Node.js,
+ * Bun, browsers), so it can be passed straight to `fetch` and other APIs; otherwise the minimal
+ * shape the container needs.
+ */
+export type IoCAbortSignal = typeof globalThis extends { AbortSignal: { prototype: infer S } } ? S
+  : {
+    readonly aborted: boolean;
+    readonly reason: unknown;
+    addEventListener(type: 'abort', listener: () => void, options?: { once?: boolean }): void;
+    removeEventListener(type: 'abort', listener: () => void): void;
+  };
+
+/** The parts of `AbortSignal` the container uses; typed here so no DOM types are needed. */
+type Signal = {
+  readonly aborted: boolean;
+  readonly reason: unknown;
+  addEventListener(type: 'abort', listener: () => void, options?: { once?: boolean }): void;
+  removeEventListener(type: 'abort', listener: () => void): void;
+};
+
+/** `AbortController` and `AbortSignal.any`, from the runtime. */
+const aborts = globalThis as unknown as {
+  AbortController: new () => { readonly signal: Signal; abort(reason?: unknown): void };
+  AbortSignal: { any(signals: Signal[]): Signal };
+};
 
 /** Options for a container. Its scopes inherit them. */
 export interface IoCContainerOptions {
@@ -466,6 +494,27 @@ export class IoCContainer<TKeys = any> {
   /** @ignore */
   protected disposing?: Promise<void>;
 
+  /**
+   * Aborted when this container is disposed; created on first use.
+   *
+   * @ignore
+   */
+  protected abortController?: { readonly signal: Signal; abort(reason?: unknown): void };
+
+  /**
+   * This container's `Signal`: its own, its parent's and the linked one combined.
+   *
+   * @ignore
+   */
+  protected combinedSignal?: Signal;
+
+  /**
+   * The signal given to `CreateScope({ Signal })`, if any.
+   *
+   * @ignore
+   */
+  protected linkedSignal?: Signal;
+
   /** @ignore */
   protected readonly options: Readonly<IoCContainerOptions>;
 
@@ -823,16 +872,63 @@ export class IoCContainer<TKeys = any> {
    * console.log((await a.Resolve(RequestId)) === (await b.Resolve(RequestId))); // false
    * ```
    */
-  public CreateScope(): IoCContainer<TKeys> {
+  public CreateScope(options?: {
+    /**
+     * Cancels the scope's work when it aborts (an agent run or a request that was cancelled):
+     * resolves waiting in the scope reject with `IoCAbortedError`, new ones are refused, and the
+     * scope's `Signal` aborts, so factories can stop what they started. The scope is still
+     * disposed by its owner.
+     */
+    Signal?: IoCAbortSignal;
+  }): IoCContainer<TKeys> {
     const self = this.self();
 
     self.assertNotDisposed();
+
+    self.assertNotAborted();
 
     const scope = new IoCContainer(self.options);
 
     scope.parent = self;
 
+    scope.linkedSignal = options?.Signal as Signal | undefined;
+
     return scope as unknown as IoCContainer<TKeys>;
+  }
+
+  /**
+   * Aborted when this container or a parent is disposed, or when the signal given to
+   * `CreateScope({ Signal })` (here or in a parent scope) aborts. Factories reach it through their
+   * `ioc` argument and pass it to the work they start, so a cancelled request or agent run stops
+   * its model calls, queries and tools.
+   *
+   * @example
+   * ```ts
+   * import { IoCContainer, IoCToken } from '@fathym/ioc';
+   *
+   * const $Answer = IoCToken<string, 'Answer'>('Answer');
+   *
+   * const app = new IoCContainer().RegisterFactory($Answer, async (ioc) => {
+   *   await new Promise((resolve) => setTimeout(resolve, 10));
+   *
+   *   ioc.Signal.throwIfAborted(); // stop if the request was cancelled meanwhile
+   *
+   *   return 'done';
+   * }, { Lifetime: 'scoped' });
+   *
+   * const request = new AbortController();
+   *
+   * await using scope = app.CreateScope({ Signal: request.signal });
+   *
+   * const answer = scope.Resolve($Answer);
+   *
+   * request.abort('client went away');
+   *
+   * await answer.catch((err) => console.log(err.code)); // IOC_SCOPE_ABORTED
+   * ```
+   */
+  public get Signal(): IoCAbortSignal {
+    return this.self().signal() as IoCAbortSignal;
   }
 
   /**
@@ -1445,11 +1541,103 @@ export class IoCContainer<TKeys = any> {
 
     self.assertNotDisposed();
 
+    self.assertNotAborted();
+
     const frame = this.frame();
 
     const reg = self.lookup(checkKey(key), name || DEFAULT_NAME, frame);
 
-    return self.timed(self.resolveIn(reg, frame), reg.label);
+    const value = self.timed(self.resolveIn(reg, frame), reg.label);
+
+    // Only scopes given a signal pay for watching it.
+    return value instanceof Promise && self.isCancellable() ? self.untilAborted(value) : value;
+  }
+
+  /**
+   * This container's combined signal, created on first use.
+   *
+   * @ignore
+   */
+  protected signal(): Signal {
+    if (this.combinedSignal) return this.combinedSignal;
+
+    this.abortController = new aborts.AbortController();
+
+    if (this.disposing || this.isGone()) {
+      this.abortController.abort(new IoCContainerDisposedError());
+    }
+
+    const sources = [this.abortController.signal];
+
+    if (this.parent) sources.push(this.parent.signal());
+
+    if (this.linkedSignal) sources.push(this.linkedSignal);
+
+    // AbortSignal.any holds its dependents weakly, so short-lived scopes don't pile up listeners.
+    this.combinedSignal = sources.length > 1 ? aborts.AbortSignal.any(sources) : sources[0];
+
+    return this.combinedSignal;
+  }
+
+  /**
+   * True when this container or a parent was given a signal by `CreateScope({ Signal })`.
+   *
+   * @ignore
+   */
+  protected isCancellable(): boolean {
+    for (const c of this.chain()) {
+      if (c.linkedSignal) return true;
+    }
+
+    return false;
+  }
+
+  /**
+   * Throws when a signal given to `CreateScope({ Signal })`, here or in a parent, has aborted.
+   *
+   * @ignore
+   */
+  protected assertNotAborted(): void {
+    for (const c of this.chain()) {
+      if (c.linkedSignal?.aborted) throw new IoCAbortedError(c.linkedSignal.reason);
+    }
+  }
+
+  /**
+   * `value`, or a rejection with `IoCAbortedError` as soon as this container's signal aborts.
+   *
+   * @ignore
+   */
+  protected untilAborted<T>(value: Promise<T>): Promise<T> {
+    const signal = this.signal();
+
+    const reasonError = () =>
+      signal.reason instanceof IoCContainerDisposedError
+        ? signal.reason
+        : new IoCAbortedError(signal.reason);
+
+    if (signal.aborted) {
+      value.catch(noop);
+
+      return Promise.reject(reasonError());
+    }
+
+    return new Promise<T>((resolve, reject) => {
+      const onAbort = () => reject(reasonError());
+
+      signal.addEventListener('abort', onAbort, { once: true });
+
+      value.then(
+        (v) => {
+          signal.removeEventListener('abort', onAbort);
+          resolve(v);
+        },
+        (err) => {
+          signal.removeEventListener('abort', onAbort);
+          reject(err);
+        },
+      );
+    });
   }
 
   /**
@@ -1760,6 +1948,9 @@ export class IoCContainer<TKeys = any> {
   /** @ignore */
   protected async disposeNow(): Promise<void> {
     this.state = 'stopping';
+
+    // Tell work started through this container's Signal to stop.
+    this.abortController?.abort(new IoCContainerDisposedError());
 
     // Modules stop while every service is still alive: the scopes' modules first (they may require
     // this container's), then this container's. A running Start() finishes its current module.

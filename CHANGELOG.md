@@ -30,6 +30,19 @@ supported.
 
 ### Added
 
+- **MCP knowledge server** (`@fathym/ioc/mcp`): serves AI coding agents verified, version-exact
+  knowledge over MCP: `ioc_recipe` (examples CI has run), `ioc_api`, `ioc_explain` (error code or
+  message to cause and fix) and `ioc_search`. No dependencies; Deno, Node.js and Bun.
+  `claude mcp add fathym-ioc -- deno run -A jsr:@fathym/ioc/mcp`.
+- **AI coding benchmark** (`evals/`): Claude Code on the same DI tasks with `@fathym/ioc` and
+  InversifyJS, scored by type-check and hidden tests. Pilot results and what they decided:
+  [docs/ai/benchmark.md](./docs/ai/benchmark.md).
+
+- **Cancellation:** `CreateScope({ Signal })` links a scope to a request's or agent run's
+  `AbortSignal`. When it aborts, the scope's waiting resolves reject with `IoCAbortedError`
+  (`IOC_SCOPE_ABORTED`) and new ones are refused. Every container has a `Signal`, aborted when the
+  container is disposed or a linked signal aborts, which factories pass to the work they start.
+
 - **Agent kit** (`@fathym/ioc/agents`): the conventions AI coding agents follow with
   `@fathym/ioc`, as a Claude Code skill, a Cursor rule, an `AGENTS.md` section and Copilot
   instructions. `deno run -A jsr:@fathym/ioc/init-agents` writes them into a project;

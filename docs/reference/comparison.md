@@ -35,15 +35,16 @@ against the adapter.
 
 ## Lifecycle and wiring
 
-|                                                                |      @fathym/ioc      |                        InversifyJS                         |                            awilix                            |                           tsyringe                           |
-| -------------------------------------------------------------- | :-------------------: | :--------------------------------------------------------: | :----------------------------------------------------------: | :----------------------------------------------------------: |
-| Concurrent first resolves build an async singleton once        |           ✓           |                             ✓                              |                     ✓ the cached promise                     |                     ✓ the cached promise                     |
-| An async dependency is injected as the instance, not a promise |           ✓           |                        ✓ `getAsync`                        |                ✗ injects the pending promise                 |                ✗ injects the pending promise                 |
-| A failed async build is retried, not cached                    |           ✓           |                  ✗ the failure is cached                   |               ✗ the rejected promise is cached               |               ✗ the rejected promise is cached               |
-| A request scope disposes its instances when the request throws | ✓ `await using` scope | ✓ child container + `onDeactivation`, unbound in `finally` |               ✓ `scope.dispose()` in `finally`               |         ✓ child container, `dispose()` in `finally`          |
-| Disposal runs in reverse creation order                        |           ✓           |   ✗ A, B: follows registration order, not creation order   | ✗ A, B: a dependency is disposed before the service using it | ✗ A, B: a dependency is disposed before the service using it |
-| A missing dependency is found at startup, before any resolve   |    ✓ `Validate()`     |        ✗ no validation API; fails at first resolve         |         ✗ no validation API; fails at first resolve          |         ✗ no validation API; fails at first resolve          |
-| A wrong dependency fails to compile                            |           ✓           |                             ✓                              |                              ✗                               |                              ✗                               |
+|                                                                |         @fathym/ioc         |                        InversifyJS                         |                            awilix                            |                           tsyringe                           |
+| -------------------------------------------------------------- | :-------------------------: | :--------------------------------------------------------: | :----------------------------------------------------------: | :----------------------------------------------------------: |
+| Concurrent first resolves build an async singleton once        |              ✓              |                             ✓                              |                     ✓ the cached promise                     |                     ✓ the cached promise                     |
+| An async dependency is injected as the instance, not a promise |              ✓              |                        ✓ `getAsync`                        |                ✗ injects the pending promise                 |                ✗ injects the pending promise                 |
+| A failed async build is retried, not cached                    |              ✓              |                  ✗ the failure is cached                   |               ✗ the rejected promise is cached               |               ✗ the rejected promise is cached               |
+| A request scope disposes its instances when the request throws |    ✓ `await using` scope    | ✓ child container + `onDeactivation`, unbound in `finally` |               ✓ `scope.dispose()` in `finally`               |         ✓ child container, `dispose()` in `finally`          |
+| Disposal runs in reverse creation order                        |              ✓              |   ✗ A, B: follows registration order, not creation order   | ✗ A, B: a dependency is disposed before the service using it | ✗ A, B: a dependency is disposed before the service using it |
+| A missing dependency is found at startup, before any resolve   |       ✓ `Validate()`        |        ✗ no validation API; fails at first resolve         |         ✗ no validation API; fails at first resolve          |         ✗ no validation API; fails at first resolve          |
+| Cancelling a request rejects the builds it waits on            | ✓ `CreateScope({ Signal })` |     ✗ no AbortSignal option in its API (from its docs)     |      ✗ no AbortSignal option in its API (from its docs)      |      ✗ no AbortSignal option in its API (from its docs)      |
+| A wrong dependency fails to compile                            |              ✓              |                             ✓                              |                              ✗                               |                              ✗                               |
 
 What each row does is in [`compare/scenarios.ts`](../../compare/scenarios.ts), and how each library
 does it is in [`compare/adapters/`](../../compare/adapters/ioc.ts). The compile check wires a logger
@@ -62,28 +63,28 @@ about a microsecond per resolve, the container is rarely what limits an applicat
 
 | Library     | Time per iteration | Per second |
 | ----------- | -----------------: | ---------: |
-| tsyringe    |             1.2 µs |    838,223 |
-| @fathym/ioc |            18.1 µs |     55,386 |
-| awilix      |            18.6 µs |     53,818 |
-| InversifyJS |            50.7 µs |     19,732 |
+| tsyringe    |             1.4 µs |    728,640 |
+| awilix      |            15.6 µs |     64,214 |
+| @fathym/ioc |            15.8 µs |     63,480 |
+| InversifyJS |            47.3 µs |     21,151 |
 
 **resolve**
 
 | Library     | Time per iteration | Per second |
 | ----------- | -----------------: | ---------: |
-| InversifyJS |              51 ns | 19,665,279 |
-| awilix      |             134 ns |  7,488,224 |
-| tsyringe    |             180 ns |  5,542,185 |
-| @fathym/ioc |             1.2 µs |    817,166 |
+| InversifyJS |              55 ns | 18,112,623 |
+| awilix      |             120 ns |  8,299,168 |
+| tsyringe    |             170 ns |  5,891,907 |
+| @fathym/ioc |             1.4 µs |    732,157 |
 
 **scope per request**
 
 | Library     | Time per iteration | Per second |
 | ----------- | -----------------: | ---------: |
-| tsyringe    |             4.8 µs |    207,008 |
-| awilix      |            17.4 µs |     57,394 |
-| @fathym/ioc |            25.7 µs |     38,961 |
-| InversifyJS |            72.3 µs |     13,839 |
+| tsyringe    |             2.1 µs |    485,224 |
+| awilix      |             8.8 µs |    113,508 |
+| @fathym/ioc |            17.0 µs |     58,869 |
+| InversifyJS |            30.1 µs |     33,235 |
 
 Source: [`compare/bench.ts`](../../compare/bench.ts).
 

@@ -1,6 +1,7 @@
 // Every error code has a producer, and isIoCError recognizes each one, including the
 // AggregateError-based ones.
 import {
+  IoCAbortedError,
   IoCActivationError,
   IoCCircularDependencyError,
   IoCContainerDisposedError,
@@ -81,6 +82,14 @@ const producers: Record<IoCErrorCode, () => unknown> = {
       .Resolve($Missing),
   IOC_NOT_ISOLATABLE: () =>
     new IoCContainer().RegisterValue($Missing, 'x').CreateScope().Isolate($Missing),
+  IOC_SCOPE_ABORTED: () => {
+    const run = new AbortController();
+
+    run.abort();
+
+    return new IoCContainer().RegisterValue($Missing, 'x').CreateScope({ Signal: run.signal })
+      .Resolve($Missing);
+  },
 };
 
 const codeOf = async (produce: () => unknown): Promise<string | undefined> => {
@@ -130,6 +139,7 @@ Deno.test('Error codes', async (t) => {
       [new IoCModuleCycleError(['A', 'A']), 'IOC_MODULE_CYCLE'],
       [new IoCResolveTimeoutError('X', 1), 'IOC_RESOLVE_TIMEOUT'],
       [new IoCNotIsolatableError('X', 'why'), 'IOC_NOT_ISOLATABLE'],
+      [new IoCAbortedError('why'), 'IOC_SCOPE_ABORTED'],
     ];
 
     for (const [err, code] of errors) {

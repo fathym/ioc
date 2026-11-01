@@ -16,7 +16,8 @@ export type IoCErrorCode =
   | 'IOC_START_FAILED'
   | 'IOC_MODULE_CYCLE'
   | 'IOC_RESOLVE_TIMEOUT'
-  | 'IOC_NOT_ISOLATABLE';
+  | 'IOC_NOT_ISOLATABLE'
+  | 'IOC_SCOPE_ABORTED';
 
 /**
  * True when `error` was thrown by the container, optionally with a specific code. Prefer it to
@@ -420,6 +421,34 @@ export class IoCResolveTimeoutError extends IoCError {
         `(a connection, a lock), or factories may wait on each other through a container ` +
         `captured in a closure; resolve through the factory's parameter. Raise PendingTimeoutMs ` +
         `if it is just slow.`,
+    );
+  }
+}
+
+/**
+ * Thrown when a scope created with `CreateScope({ Signal })` (or a scope inside it) is used after
+ * that signal aborted, and given to resolves still waiting when it aborts. The scope itself is not
+ * disposed: dispose it as usual (`await using`).
+ */
+export class IoCAbortedError extends IoCError {
+  /** The error name, for logs and `instanceof`-free checks. */
+  public override name = 'IoCAbortedError';
+
+  /** The stable error code. */
+  public readonly code = 'IOC_SCOPE_ABORTED' as const;
+
+  /**
+   * Creates the error.
+   *
+   * @param Reason The signal's abort reason.
+   */
+  constructor(public readonly Reason?: unknown) {
+    super(
+      `The scope was cancelled: its signal aborted${
+        Reason === undefined
+          ? ''
+          : ` (${Reason instanceof Error ? Reason.message : String(Reason)})`
+      }. Create a new scope for further work.`,
     );
   }
 }

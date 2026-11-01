@@ -1,0 +1,9 @@
+This project is a small AI agent app that uses dependency injection (see deno.json for the DI library). `App.session()` in src/app.ts is not implemented yet.
+
+Implement it with the DI container:
+
+- each session gets its own `ConversationMemory` and an `Agent` that uses it, both built by the container;
+- sessions must not share memory;
+- closing a session (`session.close()`) must call its memory's `close()` exactly once, and closing the app afterwards must not call it again.
+
+Don't change `Agent`, `ConversationMemory`, `stats` or the exported types in src/app.ts. When you are done, `deno task check` must pass.

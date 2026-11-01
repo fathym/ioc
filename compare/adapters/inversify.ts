@@ -108,6 +108,14 @@ export const inversify: Adapter = {
     };
   },
 
+  CancelledRequestStopsPending() {
+    // No API ties a request's AbortSignal to the container's builds.
+    return Promise.resolve({
+      Pass: false,
+      Note: 'no AbortSignal option in its API (from its docs)',
+    });
+  },
+
   async MissingFoundAtStartup() {
     const c = new Container();
     c.bind<Repo>(RepoId).toResolvedValue((db: Db) => new Repo(db), [DbId]);

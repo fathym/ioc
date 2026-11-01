@@ -1,0 +1,9 @@
+{
+  "minimumDependencyAge": "0",
+  "imports": {
+    "@fathym/ioc": "jsr:@fathym/ioc@1.0.29"
+  },
+  "tasks": {
+    "check": "deno check src/app.ts"
+  }
+}
