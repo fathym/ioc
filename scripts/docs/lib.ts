@@ -279,8 +279,9 @@ export function buildLlmsTxt(files: DocFiles, rawUrl: string): string {
     tagline ?? 'Dependency injection for modern TypeScript. No decorators. No metadata.'
   }\n\n`;
 
-  out += 'Every code example in these docs is type-checked in CI. Install from JSR ' +
-    '(`deno add jsr:@fathym/ioc`); the examples import from `@fathym/ioc`.\n';
+  out += 'Every code example in these docs is type-checked in CI. Install from npm ' +
+    '(`npm install @fathym/ioc`) or JSR (`deno add jsr:@fathym/ioc`); the examples import from ' +
+    '`@fathym/ioc`.\n';
 
   for (const [title, match] of groups) {
     const paths = [...files.keys()].filter((p) => match(p) && p.endsWith('.md')).sort((a, b) => {

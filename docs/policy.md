@@ -4,7 +4,7 @@ DocumentType: Guide
 Title: Versioning and Support Policy
 Summary: What @fathym/ioc promises from 1.0 - semantic versioning and what counts as breaking, the deprecation window, supported runtimes, how releases are made, and how security fixes ship.
 Created: 2026-10-15
-Updated: 2026-10-22
+Updated: 2026-11-01
 Owners:
   - fathym
 References:
@@ -126,10 +126,11 @@ last minor that supports its runtime.
 3. **Checks before publishing:** `deno task build` (format, lint, type check, docs check),
    `deno task test`, `deno task test:runtimes --require-all`, and the test suites of the main
    dependents against the release candidate.
-4. **JSR from CI.** The `fathym/build-n-publish` workflow publishes to
-   [JSR](https://jsr.io/@fathym/ioc). Node.js and Bun projects install it from JSR
-   (`npx jsr add @fathym/ioc`). `deno task build:npm` builds an npm-style package only for the
-   runtime checks; it isn't published to npm.
+4. **JSR and npm from CI.** The `fathym/build-n-publish` workflow publishes to
+   [JSR](https://jsr.io/@fathym/ioc) and tags the release. For each stable release from `main`,
+   the `Publish to npm` workflow then publishes the same version to
+   [npm](https://www.npmjs.com/package/@fathym/ioc), built by `deno task build:npm` and smoke-tested
+   on Node.js first, with provenance. Prereleases stay on JSR only.
 5. **Provenance** (sources, release channels, version pins) is recorded in `UPSTREAM.md`.
 
 The step-by-step checklist is in [CONTRIBUTING](../CONTRIBUTING.md#releasing).

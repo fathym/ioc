@@ -4,7 +4,7 @@ DocumentType: Guide
 Title: 'Step 1: Installation'
 Summary: Add @fathym/ioc to a Deno, Node.js or Bun project and import it.
 Created: 2026-10-13
-Updated: 2026-10-22
+Updated: 2026-11-01
 Owners:
   - fathym
 References:
@@ -36,15 +36,18 @@ This adds an entry to your `deno.json` import map:
 
 ## Node.js and Bun
 
-The package is published on [JSR](https://jsr.io/@fathym/ioc), which serves Node.js and Bun as
-well as Deno:
+The package is published on [npm](https://www.npmjs.com/package/@fathym/ioc):
 
 ```sh
-npx jsr add @fathym/ioc         # npm
-bunx jsr add @fathym/ioc        # Bun
-pnpm add jsr:@fathym/ioc        # pnpm 10.9+
-yarn add jsr:@fathym/ioc        # Yarn 4.9+
+npm install @fathym/ioc         # npm
+bun add @fathym/ioc             # Bun
+pnpm add @fathym/ioc            # pnpm
+yarn add @fathym/ioc            # Yarn
 ```
+
+Every stable release is published to npm and [JSR](https://jsr.io/@fathym/ioc) with the same
+version, so you can also install it from JSR (`npx jsr add @fathym/ioc`,
+`bunx jsr add @fathym/ioc`, `pnpm add jsr:@fathym/ioc`).
 
 You import it as `@fathym/ioc` either way. It is plain ESM with no runtime dependencies, and it
 imports no Deno, Node.js or browser modules.
