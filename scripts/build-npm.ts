@@ -6,7 +6,8 @@
  *   deno task build:npm                 # version from deno.jsonc
  *   deno task build:npm --version=0.1.0 # explicit version
  *
- * Publish with `npm publish dist/npm --access public`.
+ * CI publishes it after each stable release (`.github/workflows/publish-npm.yml`); by hand:
+ * `npm publish dist/npm --access public`.
  */
 import { parse as parseJsonc } from 'jsr:@std/jsonc@1.0.2';
 
@@ -85,7 +86,8 @@ export async function buildNpm(version?: string): Promise<URL> {
   const pkg = {
     name: config.name,
     version: version ?? config.version,
-    description: 'Small, async-first, decorator-free dependency injection for TypeScript.',
+    description:
+      'Dependency injection for modern TypeScript. No decorators, no metadata, async from the ground up.',
     license: 'MIT',
     repository: { type: 'git', url: 'git+https://github.com/fathym/ioc.git' },
     homepage: 'https://github.com/fathym/ioc#readme',

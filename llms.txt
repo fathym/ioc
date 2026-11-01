@@ -2,7 +2,7 @@
 
 > Dependency injection for modern TypeScript. No decorators. No metadata. Async from the ground up.
 
-Every code example in these docs is type-checked in CI. Install from JSR (`deno add jsr:@fathym/ioc`); the examples import from `@fathym/ioc`.
+Every code example in these docs is type-checked in CI. Install from npm (`npm install @fathym/ioc`) or JSR (`deno add jsr:@fathym/ioc`); the examples import from `@fathym/ioc`.
 
 ## Start here
 
