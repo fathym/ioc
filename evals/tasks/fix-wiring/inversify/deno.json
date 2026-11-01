@@ -1,0 +1,14 @@
+{
+  "minimumDependencyAge": "0",
+  "imports": {
+    "inversify": "npm:inversify@8.2.3",
+    "reflect-metadata": "npm:reflect-metadata@0.2.2"
+  },
+  "compilerOptions": {
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true
+  },
+  "tasks": {
+    "check": "deno check src/app.ts"
+  }
+}

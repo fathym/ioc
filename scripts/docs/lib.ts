@@ -272,6 +272,7 @@ function llmsSections(files: DocFiles): { Title: string; Paths: string[] }[] {
     ['Start here', (p) => START_HERE.includes(p)],
     ['Getting started (tutorial)', (p) => p.startsWith('docs/getting-started/')],
     ['Guides', (p) => p.startsWith('docs/guides/')],
+    ['AI', (p) => p.startsWith('docs/ai/')],
     ['Reference', (p) => p.startsWith('docs/reference/') && !START_HERE.includes(p)],
     ['Migration', (p) => p.startsWith('docs/migration/')],
     ['Examples', (p) => p.startsWith('examples/')],

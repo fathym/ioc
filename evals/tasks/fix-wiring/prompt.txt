@@ -1,0 +1,9 @@
+This project is a small AI agent app that uses dependency injection (see deno.json for the DI library). Someone changed `Agent` so it records every prompt in a `Memory`, but didn't update the dependency injection wiring. Now `deno task check` fails and the app can't start.
+
+Fix the wiring so that:
+
+- `Agent` gets its `ModelProvider` and a `Memory`;
+- there is one `Memory` for the whole app (a singleton), shared by everything that uses it;
+- `(await createApp()).ask('hi')` returns the provider's answer, and `app.history()` returns every prompt asked so far, in order.
+
+Don't change `Agent`, `Memory` or the public API in src/app.ts. When you are done, `deno task check` must pass.

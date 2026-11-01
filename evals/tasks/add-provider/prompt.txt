@@ -1,0 +1,9 @@
+This project is a small AI agent app that uses dependency injection (see deno.json for the DI library). It has one model provider, `echo`.
+
+Add a second model provider named `reverse` whose `complete(prompt)` returns the prompt reversed (for example "abc" -> "cba"). Register it with the DI container alongside `echo`, following the project's existing pattern, so that:
+
+- `(await createApp()).providers()` lists both `echo` and `reverse`;
+- `app.ask('abc', 'reverse')` returns `'cba'`;
+- `app.ask('abc')` still uses `echo` by default.
+
+Keep the public API in src/app.ts (createApp and the App type) unchanged. When you are done, `deno task check` must pass.
