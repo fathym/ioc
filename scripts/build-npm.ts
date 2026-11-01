@@ -7,7 +7,7 @@
  *   deno task build:npm --version=0.1.0 # explicit version
  *
  * CI publishes it after each stable release (`.github/workflows/publish-npm.yml`); by hand:
- * `npm publish dist/npm --access public`.
+ * `npm publish ./dist/npm --access public` (the `./` stops npm reading it as a GitHub repo).
  */
 import { parse as parseJsonc } from 'jsr:@std/jsonc@1.0.2';
 
