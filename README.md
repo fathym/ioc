@@ -114,6 +114,26 @@ for (const path of ['/notes', '/users']) {
 }
 ```
 
+**A constructor change the wiring didn't follow** doesn't compile:
+
+```ts
+import { IoCContainer } from '@fathym/ioc';
+
+class Db {}
+class Cache {}
+
+class Repo {
+  constructor(public db: Db, public cache: Cache) {} // gained a Cache parameter
+}
+
+const ioc = new IoCContainer().RegisterClass(Db).RegisterClass(Cache);
+
+ioc.RegisterClass(Repo, {
+  // @ts-expect-error Source has 1 element(s) but target requires 2.
+  Deps: [Db],
+});
+```
+
 **Modules with a lifecycle,** started in order and stopped in reverse:
 
 ```ts
@@ -209,15 +229,32 @@ generated API docs are on [JSR](https://jsr.io/@fathym/ioc/doc), and AI tools ca
 
 ## Built to be depended on
 
-- **Semantic versioning**, with breaking changes only in major releases, each with a migration
-  guide. The [versioning policy](https://github.com/fathym/ioc/blob/main/docs/policy.md) spells
-  out deprecations, supported runtimes and releases.
+- **A stable 1.x API.** Breaking changes only in a major release, each with a migration guide, and
+  anything deprecated keeps working for at least six months. The
+  [versioning policy](https://github.com/fathym/ioc/blob/main/docs/policy.md) defines exactly what
+  counts as breaking.
+- **Proven, not just promised.** The
+  [guarantees](https://github.com/fathym/ioc/blob/main/docs/reference/guarantees.md) list what
+  the container promises about builds, disposal, startup, timeouts and `Validate()`, each linked
+  to the test that proves it. CI fails if a linked test goes away, and test coverage of the source
+  is 98.8% of lines and 97.1% of branches, with CI failing below 97% and 95%.
+- **Measured against the alternatives.** The
+  [comparison](https://github.com/fathym/ioc/blob/main/docs/reference/comparison.md) runs the
+  same scenarios and benchmarks against InversifyJS, awilix and tsyringe, and you can re-run it.
 - **Tested on every runtime it supports:** the full suite on Deno, and the published build on
   Node.js 20, 22 and 24 and Bun, type-checked with TypeScript 5.4 and the latest.
+- **Answered:** security reports are acknowledged within 3 business days and new issues triaged
+  within 5 ([maintainers](https://github.com/fathym/ioc/blob/main/MAINTAINERS.md)).
+- **Yours to own if you need to:** MIT, no dependencies, and about 2,700 lines including
+  documentation comments.
 - **Every change** is in the [changelog](https://github.com/fathym/ioc/blob/main/CHANGELOG.md).
 
-Built and maintained by [Fathym](https://github.com/fathym), and used across Fathym's own
-platform, from the CLI to the runtime.
+Deciding whether to adopt it?
+[Evaluating @fathym/ioc](https://github.com/fathym/ioc/blob/main/docs/evaluating.md) covers
+support, the honest risks, and how to adopt it safely.
+
+Built and maintained by [Fathym](https://github.com/fathym), whose own platform, from the CLI to
+the runtime, is built on it.
 
 ## Contributing
 

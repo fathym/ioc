@@ -254,13 +254,22 @@ export function extractErrorMessages(source: string): string[] {
   return [...messages];
 }
 
+/** The pages listed first in llms.txt: what it is, and what someone evaluating it needs. */
+const START_HERE = [
+  'README.md',
+  'docs/README.md',
+  'docs/evaluating.md',
+  'docs/reference/guarantees.md',
+  'docs/reference/comparison.md',
+];
+
 /** Builds llms.txt from the docs' frontmatter (https://llmstxt.org format). */
 export function buildLlmsTxt(files: DocFiles, rawUrl: string): string {
   const groups: [string, (path: string) => boolean][] = [
-    ['Start here', (p) => p === 'README.md' || p === 'docs/README.md'],
+    ['Start here', (p) => START_HERE.includes(p)],
     ['Getting started (tutorial)', (p) => p.startsWith('docs/getting-started/')],
     ['Guides', (p) => p.startsWith('docs/guides/')],
-    ['Reference', (p) => p.startsWith('docs/reference/')],
+    ['Reference', (p) => p.startsWith('docs/reference/') && !START_HERE.includes(p)],
     ['Migration', (p) => p.startsWith('docs/migration/')],
     ['Examples', (p) => p.startsWith('examples/')],
     [
@@ -310,7 +319,12 @@ export function buildLlmsTxt(files: DocFiles, rawUrl: string): string {
     for (const path of paths) {
       const attrs = splitFrontmatter(files.get(path)!).attrs ?? {};
 
-      out += `- [${attrs.Title ?? path}](${rawUrl}${path}): ${attrs.Summary ?? ''}\n`;
+      // The landing README has no frontmatter: its title is the package name, its summary the tagline.
+      const title = attrs.Title ?? (path === 'README.md' ? '@fathym/ioc' : path);
+
+      const summary = attrs.Summary ?? (path === 'README.md' ? tagline : undefined) ?? '';
+
+      out += `- [${title}](${rawUrl}${path}): ${summary}\n`;
     }
   }
 
