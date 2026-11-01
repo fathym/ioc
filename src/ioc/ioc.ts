@@ -403,71 +403,50 @@ export class IoCContainer<TKeys = any> {
   protected parent?: IoCContainer;
 
   /**
-
    * This scope's instances of `scoped` registrations.
-
    *
-
    * @ignore
    */
   protected readonly scopedHolders: Map<IoCRegistration, IoCHolder> = new Map();
 
   /**
-
    * Instances this container created and must dispose, in creation order.
-
    *
-
    * @ignore
    */
   protected readonly owned: IoCOwned[] = [];
 
   /**
-
    * Keys declared with `Expect()`, by name.
-
    *
-
    * @ignore
    */
   protected readonly expected: Map<IoCKey, Set<string>> = new Map();
 
   /**
-
    * The modules added here, in start order.
-
    *
-
    * @ignore
    */
   protected readonly modules: IoCModule[] = [];
 
   /**
-
    * The modules whose `OnStart` succeeded, in start order.
-
    *
-
    * @ignore
    */
   protected readonly started: IoCModule[] = [];
 
   /**
-
    * Live scopes that own something to dispose.
-
    *
-
    * @ignore
    */
   protected readonly children: Set<IoCContainer> = new Set();
 
   /**
-
    * Whether the parent tracks this scope.
-
    *
-
    * @ignore
    */
   protected retained = false;
@@ -1185,11 +1164,8 @@ export class IoCContainer<TKeys = any> {
   //#region Internals
 
   /**
-
    * The real container behind a view.
-
    *
-
    * @ignore
    */
   protected self(): IoCContainer {
@@ -1197,11 +1173,8 @@ export class IoCContainer<TKeys = any> {
   }
 
   /**
-
    * The resolution frame a view carries, if this is a factory's view.
-
    *
-
    * @ignore
    */
   protected frame(): IoCResolveFrame | undefined {
@@ -1209,11 +1182,8 @@ export class IoCContainer<TKeys = any> {
   }
 
   /**
-
    * This container, then its parents.
-
    *
-
    * @ignore
    */
   protected *chain(): Generator<IoCContainer> {
@@ -1230,11 +1200,8 @@ export class IoCContainer<TKeys = any> {
   }
 
   /**
-
    * The nearest registration of `key` + `name`, if any.
-
    *
-
    * @ignore
    */
   protected find(key: IoCKey, name: string): IoCStored | undefined {
@@ -1248,11 +1215,8 @@ export class IoCContainer<TKeys = any> {
   }
 
   /**
-
    * The nearest registration of `key` + `name`, or a not-found error.
-
    *
-
    * @ignore
    */
   protected lookup(key: IoCKey, name: string, frame: IoCResolveFrame | undefined): IoCStored {
@@ -1278,11 +1242,8 @@ export class IoCContainer<TKeys = any> {
   }
 
   /**
-
    * True when `dep` was declared with `Expect()` here or in a parent.
-
    *
-
    * @ignore
    */
   protected isExpected(dep: IoCDependencyRecord): boolean {
@@ -1294,11 +1255,8 @@ export class IoCContainer<TKeys = any> {
   }
 
   /**
-
    * The registrations visible from here (nearest wins), with their depth.
-
    *
-
    * @ignore
    */
   protected visible(): { reg: IoCStored; depth: number }[] {
@@ -1332,11 +1290,8 @@ export class IoCContainer<TKeys = any> {
   }
 
   /**
-
    * True when `module` was added here or in a parent.
-
    *
-
    * @ignore
    */
   protected hasModule(module: IoCModule): boolean {
@@ -1348,11 +1303,8 @@ export class IoCContainer<TKeys = any> {
   }
 
   /**
-
    * Stores a registration, applying the duplicate and default rules.
-
    *
-
    * @ignore
    */
   protected addRegistration(spec: IoCRegistrationSpec): void {
@@ -1429,11 +1381,8 @@ export class IoCContainer<TKeys = any> {
   }
 
   /**
-
    * Resolves `reg` (found from this container) for the chain `frame`.
-
    *
-
    * @ignore
    */
   protected resolveIn(reg: IoCStored, frame: IoCResolveFrame | undefined): unknown {
@@ -1456,11 +1405,8 @@ export class IoCContainer<TKeys = any> {
   }
 
   /**
-
    * Returns `holder`'s instance, building it in this container when needed.
-
    *
-
    * @ignore
    */
   protected fromHolder(
@@ -1513,11 +1459,8 @@ export class IoCContainer<TKeys = any> {
   }
 
   /**
-
    * Runs `reg`'s factory as one step of the chain `frame`.
-
    *
-
    * @ignore
    */
   protected build(reg: IoCRegistration, frame: IoCResolveFrame | undefined): unknown {
@@ -1548,11 +1491,8 @@ export class IoCContainer<TKeys = any> {
   }
 
   /**
-
    * Records an instance this container created, to dispose it with the container.
-
    *
-
    * @ignore
    */
   protected track(value: unknown, label: string, dispose?: (instance: unknown) => unknown): void {
@@ -1583,11 +1523,8 @@ export class IoCContainer<TKeys = any> {
   }
 
   /**
-
    * Makes the parent track this scope, once it owns something to dispose.
-
    *
-
    * @ignore
    */
   protected retain(): void {
@@ -1601,11 +1538,8 @@ export class IoCContainer<TKeys = any> {
   }
 
   /**
-
    * Bounds `value` (when a promise) by `PendingTimeoutMs`.
-
    *
-
    * @ignore
    */
   protected timed<T>(value: T | Promise<T>, label: string): T | Promise<T> {
@@ -1698,11 +1632,8 @@ export class IoCContainer<TKeys = any> {
   }
 
   /**
-
    * Runs `OnStop` of the started modules, in reverse; returns what failed.
-
    *
-
    * @ignore
    */
   protected async stopModules(): Promise<unknown[]> {
