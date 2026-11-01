@@ -158,6 +158,20 @@ export function extractLinks(markdown: string): string[] {
   return links;
 }
 
+/**
+ * Proof links: links whose text names a test step, `[lazy › step name](../tests/lazy.tests.ts)`.
+ * The docs check requires the step to exist in the linked file, so a documented guarantee can't
+ * outlive the test that proves it.
+ */
+export function extractProofLinks(markdown: string): { step: string; target: string }[] {
+  const body = stripFences(splitFrontmatter(markdown).body);
+
+  return [...body.matchAll(/\[[^\]›]*? › ([^\]]+?)\]\(\s*<?([^)\s>]+)>?\s*\)/g)].map((m) => ({
+    step: m[1].trim(),
+    target: m[2],
+  }));
+}
+
 /** Normalizes a repo-relative path to POSIX form without leading `./`. */
 function clean(path: string): string {
   return normalize(path).replace(/\\/g, '/').replace(/^\.\//, '');
@@ -411,6 +425,20 @@ export function checkDocs(files: DocFiles, options: DocCheckOptions): DocProblem
       if (!linkedFrom.has(resolved.path)) linkedFrom.set(resolved.path, new Set());
 
       linkedFrom.get(resolved.path)!.add(file);
+    }
+
+    for (const { step, target } of extractProofLinks(content)) {
+      const resolved = resolveLink(file, target, options.RepoBlobUrl);
+
+      const source = resolved && files.get(resolved.path);
+
+      if (!resolved || !/\.tests?\.ts$/.test(resolved.path)) {
+        report(file, `proof link must point to a test file: ${target}`);
+      } else if (
+        source && ![`'${step}'`, `"${step}"`, `\`${step}\``].some((q) => source.includes(q))
+      ) {
+        report(file, `proof link names a test step that isn't in ${resolved.path}: ${step}`);
+      }
     }
 
     // Every docs page (other than folder indexes) ends with a "What's Next" section.
