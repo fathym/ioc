@@ -94,7 +94,14 @@ const checks: [string, string[]][] = [
   ['JSDoc examples (type-checked and run)', ['test', '-A', '--quiet', '--doc', ...sources]],
   [
     'API documentation (deno doc --lint)',
-    ['doc', '--lint', 'mod.ts', 'src/agents/.exports.ts', 'src/agents/init.ts'],
+    [
+      'doc',
+      '--lint',
+      'mod.ts',
+      'src/agents/.exports.ts',
+      'src/agents/init.ts',
+      'src/mcp/.exports.ts',
+    ],
   ],
   ...(examples.length ? [['examples', ['check', ...examples]] as [string, string[]]] : []),
 ];

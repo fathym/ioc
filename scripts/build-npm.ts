@@ -62,7 +62,12 @@ export async function buildNpm(version?: string): Promise<URL> {
           rootDir: '..',
           outDir: './npm/esm',
         },
-        files: ['../mod.ts', '../src/agents/.exports.ts', '../src/agents/init.ts'],
+        files: [
+          '../mod.ts',
+          '../src/agents/.exports.ts',
+          '../src/agents/init.ts',
+          '../src/mcp/.exports.ts',
+        ],
       },
       null,
       2,
@@ -105,6 +110,10 @@ export async function buildNpm(version?: string): Promise<URL> {
       './init-agents': {
         types: './esm/src/agents/init.d.ts',
         default: './esm/src/agents/init.js',
+      },
+      './mcp': {
+        types: './esm/src/mcp/.exports.d.ts',
+        default: './esm/src/mcp/.exports.js',
       },
       './package.json': './package.json',
     },
