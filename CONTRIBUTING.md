@@ -101,6 +101,12 @@ The landing `README.md` and the GitHub issue and pull-request templates in `.git
 exceptions to the frontmatter rule. GitHub and JSR render the README as-is, and GitHub pastes the
 templates into new issues and PRs, so they keep no frontmatter. Their links are still checked.
 
+## Response times
+
+New issues are triaged within 5 business days, pull requests get a first review within 5, and
+security reports are acknowledged within 3. Who maintains the project is in
+[MAINTAINERS](./MAINTAINERS.md).
+
 ## Proposing a change
 
 1. **Open an issue first for anything beyond a small fix,** so the design can be discussed.

@@ -235,6 +235,29 @@ Deno.test('docs-check - checkDocs', async (t) => {
     assert(buildLlmsTxt(files, RAW).startsWith('# @fathym/ioc\n\n> The tagline.\n'));
   });
 
+  await t.step('proof links must name a test step that exists in the linked test file', () => {
+    const files = cleanSite();
+
+    files.set(
+      'tests/a.tests.ts',
+      "Deno.test('A', async (t) => { await t.step('works', () => {}); });",
+    );
+
+    files.set(
+      'docs/intro.md',
+      files.get('docs/intro.md')!.replace(
+        '## Getting started',
+        '[a › works](../tests/a.tests.ts) [a › gone](../tests/a.tests.ts) ' +
+          '[intro › nope](./README.md)\n\n## Getting started',
+      ),
+    );
+
+    assertEquals(checkDocs(files, { RepoBlobUrl: BLOB }).map((p) => p.message), [
+      "proof link names a test step that isn't in tests/a.tests.ts: gone",
+      'proof link must point to a test file: ./README.md',
+    ]);
+  });
+
   await t.step("reports orphan pages and missing What's Next sections", () => {
     const files = cleanSite();
 

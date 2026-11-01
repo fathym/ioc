@@ -140,6 +140,9 @@ Deno.test('Types', async () => {
     // @ts-expect-error a number token for a string parameter
     ioc.RegisterClass(Repo, { Deps: [$Db, Logger, IoCToken<number>('N')] });
 
+    // @ts-expect-error one dependency too many (the constructor lost a parameter)
+    ioc.RegisterClass(Repo, { Deps: [$Db, Logger, $Name, $Name] });
+
     // @ts-expect-error a plain symbol as a dependency
     ioc.RegisterClass(Repo, { Deps: [$Db, Logger, Symbol.for('TypesName')] });
   });

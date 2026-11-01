@@ -114,6 +114,26 @@ for (const path of ['/notes', '/users']) {
 }
 ```
 
+**A constructor change the wiring didn't follow** doesn't compile:
+
+```ts
+import { IoCContainer } from '@fathym/ioc';
+
+class Db {}
+class Cache {}
+
+class Repo {
+  constructor(public db: Db, public cache: Cache) {} // gained a Cache parameter
+}
+
+const ioc = new IoCContainer().RegisterClass(Db).RegisterClass(Cache);
+
+ioc.RegisterClass(Repo, {
+  // @ts-expect-error Source has 1 element(s) but target requires 2.
+  Deps: [Db],
+});
+```
+
 **Modules with a lifecycle,** started in order and stopped in reverse:
 
 ```ts
@@ -143,24 +163,33 @@ const Api = DefineModule({
 
 ## How it compares
 
-|                                          | @fathym/ioc | InversifyJS | tsyringe | awilix  | NestJS |
-| ---------------------------------------- | :---------: | :---------: | :------: | :-----: | :----: |
-| No decorators or `reflect-metadata`      |      ✓      |      ✗      |    ✗     |    ✓    |   ✗    |
-| Constructor deps checked at compile time |      ✓      |      ✗      |    ✗     |    ✗    |   ✗    |
-| Async factories                          |      ✓      |      ✓      |    ✗     |    ✗    |   ✓    |
-| Startup validation of the whole wiring   |      ✓      |      ✗      |    ✗     |    ~    |   ✓    |
-| Modules with start/stop lifecycle        |      ✓      |      ~      |    ✗     |    ✗    |   ✓    |
-| Disposal of what it built                |      ✓      |      ~      |    ~     |    ✓    |   ✓    |
-| Standalone library, not a framework      |      ✓      |      ✓      |    ✓     |    ✓    |   ✗    |
-| Synchronous resolve                      |      ✗      |      ✓      |    ✓     |    ✓    |   ✓    |
-| Minified + gzipped                       | **6.1 KB**  |   24.7 KB   | 11.0 KB  | 30.1 KB | 141 KB |
-| Runtime dependencies                     |    **0**    |    6 + 1    |  1 + 1   |   18    | 18 + 2 |
+|                                                        | @fathym/ioc | InversifyJS | tsyringe | awilix  | NestJS |
+| ------------------------------------------------------ | :---------: | :---------: | :------: | :-----: | :----: |
+| No decorators or `reflect-metadata`                    |      ✓      |      ~      |    ✗     |    ✓    |   ✗    |
+| A wrong dependency fails to compile †                  |      ✓      |      ~      |    ✗     |    ✗    |   ✗    |
+| An async dependency is injected ready, not a promise † |      ✓      |      ✓      |    ✗     |    ✗    |   ✓    |
+| A failed async build is retried, not cached †          |      ✓      |      ✗      |    ✗     |    ✗    |   –    |
+| Disposes a service before its dependencies †           |      ✓      |      ✗      |    ✗     |    ✗    |   –    |
+| A missing dependency is found at startup †             |      ✓      |      ✗      |    ✗     |    ✗    |   ✓    |
+| Modules with start/stop lifecycle                      |      ✓      |      ~      |    ✗     |    ✗    |   ✓    |
+| Standalone library, not a framework                    |      ✓      |      ✓      |    ✓     |    ✓    |   ✗    |
+| Synchronous resolve                                    |      ✗      |      ✓      |    ✓     |    ✓    |   ✓    |
+| Minified + gzipped                                     | **6.1 KB**  |   24.7 KB   | 11.0 KB  | 30.1 KB | 141 KB |
+| Runtime dependencies                                   |    **0**    |    6 + 1    |  1 + 1   |   18    | 18 + 2 |
 
-✓ built in · ~ partial · ✗ not available. Features are based on each project's documentation,
-October 2026. Sizes are each whole library bundled with its required polyfill and measured with
-`deno task size --compare` (InversifyJS 8.2, tsyringe 4.10, awilix 13.0, NestJS 12.3 core and
-common). Dependencies count indirect ones; "+ 1" is `reflect-metadata`, and NestJS's "+ 2" adds
-rxjs. awilix's browser build leaves out file scanning and is 3.6 KB.
+✓ yes · ~ partly · ✗ no · – not measured. **Rows marked † are measured, not taken from docs:**
+`deno task compare` runs the same scenarios and benchmarks against each library at pinned versions
+(InversifyJS 8.2, tsyringe 4.10, awilix 13.0) and writes the
+[comparison page](https://github.com/fathym/ioc/blob/main/docs/reference/comparison.md), with the
+code for every cell. InversifyJS checks dependencies at compile time with `toResolvedValue`, not
+with `@inject` decorators, and loads `reflect-metadata` itself. NestJS cells come from its
+documentation. On raw speed the synchronous containers win: a resolve here takes about 5 µs
+against well under 1 µs; the comparison page has the numbers.
+
+Sizes are each whole library bundled with its required polyfill and measured with
+`deno task size --compare` (NestJS 12.3 core and common). Dependencies count indirect ones;
+"+ 1" is `reflect-metadata`, and NestJS's "+ 2" adds rxjs. awilix's browser build leaves out file
+scanning and is 3.6 KB.
 
 Need several implementations of one interface, such as a chain of handlers or one cache per
 region? Register each under a
@@ -200,15 +229,32 @@ generated API docs are on [JSR](https://jsr.io/@fathym/ioc/doc), and AI tools ca
 
 ## Built to be depended on
 
-- **Semantic versioning**, with breaking changes only in major releases, each with a migration
-  guide. The [versioning policy](https://github.com/fathym/ioc/blob/main/docs/policy.md) spells
-  out deprecations, supported runtimes and releases.
+- **A stable 1.x API.** Breaking changes only in a major release, each with a migration guide, and
+  anything deprecated keeps working for at least six months. The
+  [versioning policy](https://github.com/fathym/ioc/blob/main/docs/policy.md) defines exactly what
+  counts as breaking.
+- **Proven, not just promised.** The
+  [guarantees](https://github.com/fathym/ioc/blob/main/docs/reference/guarantees.md) list what
+  the container promises about builds, disposal, startup, timeouts and `Validate()`, each linked
+  to the test that proves it. CI fails if a linked test goes away, and test coverage of the source
+  is 98.8% of lines and 97.1% of branches, with CI failing below 97% and 95%.
+- **Measured against the alternatives.** The
+  [comparison](https://github.com/fathym/ioc/blob/main/docs/reference/comparison.md) runs the
+  same scenarios and benchmarks against InversifyJS, awilix and tsyringe, and you can re-run it.
 - **Tested on every runtime it supports:** the full suite on Deno, and the published build on
   Node.js 20, 22 and 24 and Bun, type-checked with TypeScript 5.4 and the latest.
+- **Answered:** security reports are acknowledged within 3 business days and new issues triaged
+  within 5 ([maintainers](https://github.com/fathym/ioc/blob/main/MAINTAINERS.md)).
+- **Yours to own if you need to:** MIT, no dependencies, and about 2,700 lines including
+  documentation comments.
 - **Every change** is in the [changelog](https://github.com/fathym/ioc/blob/main/CHANGELOG.md).
 
-Built and maintained by [Fathym](https://github.com/fathym), and used across Fathym's own
-platform, from the CLI to the runtime.
+Deciding whether to adopt it?
+[Evaluating @fathym/ioc](https://github.com/fathym/ioc/blob/main/docs/evaluating.md) covers
+support, the honest risks, and how to adopt it safely.
+
+Built and maintained by [Fathym](https://github.com/fathym), whose own platform, from the CLI to
+the runtime, is built on it.
 
 ## Contributing
 
