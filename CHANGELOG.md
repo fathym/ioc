@@ -28,6 +28,15 @@ supported.
 
 ## [Unreleased]
 
+### Changed
+
+- **Faster resolution.** A service whose dependencies are already built (or build synchronously) is
+  now constructed synchronously inside `Resolve`, with no promise or timer per dependency, and
+  synchronous disposers no longer start a timeout timer. Resolving a transient with a singleton
+  dependency went from about 5 µs to about 1 µs, and cold start from about 25 µs to 15 µs
+  (`deno task compare`). Behavior is unchanged: `Resolve` still returns a promise, and pending
+  async work is still bounded by `PendingTimeoutMs`.
+
 ### Added
 
 - **[Guarantees](./docs/reference/guarantees.md):** what the container promises about building,

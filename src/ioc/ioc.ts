@@ -561,7 +561,9 @@ export class IoCContainer<TKeys = any> {
       name: opts.Name,
       kind: 'class',
       ctor: clazz,
-      factory: deps ? async (ioc) => new clazz(...await resolveAll(ioc, deps)) : () => new clazz(),
+      factory: deps
+        ? (ioc) => thenWith(resolveDeps(ioc, deps), (values) => new clazz(...values))
+        : () => new clazz(),
       deps,
       options: opts,
       dispose: opts.Dispose as ((instance: unknown) => unknown) | undefined,
@@ -605,7 +607,9 @@ export class IoCContainer<TKeys = any> {
       key,
       name: opts.Name,
       kind: 'factory',
-      factory: deps ? async (ioc) => call(ioc, ...await resolveAll(ioc, deps)) : (ioc) => call(ioc),
+      factory: deps
+        ? (ioc) => thenWith(resolveDeps(ioc, deps), (values) => call(ioc, ...values))
+        : (ioc) => call(ioc),
       deps,
       options: opts,
       dispose: opts.Dispose as ((instance: unknown) => unknown) | undefined,
@@ -729,15 +733,7 @@ export class IoCContainer<TKeys = any> {
     key: K,
     name?: string,
   ): Promise<IoCServiceOf<K>> {
-    const self = this.self();
-
-    self.assertNotDisposed();
-
-    const frame = this.frame();
-
-    const reg = self.lookup(checkKey(key), name || DEFAULT_NAME, frame);
-
-    return await self.timed(self.resolveIn(reg, frame), reg.label) as IoCServiceOf<K>;
+    return await this.resolveNow(key, name) as IoCServiceOf<K>;
   }
 
   /** Resolves a service, or `undefined` when nothing is registered for it. */
@@ -774,7 +770,7 @@ export class IoCContainer<TKeys = any> {
   >(record: R): Promise<{ -readonly [K in keyof R]: IoCDependencyValue<R[K]> }> {
     const entries = Object.entries(record);
 
-    const values = await resolveAll(this, entries.map(([, dep]) => normalizeDependency(dep)));
+    const values = await resolveDeps(this, entries.map(([, dep]) => normalizeDependency(dep)));
 
     return Object.fromEntries(entries.map(([k], i) => [k, values[i]])) as {
       -readonly [K in keyof R]: IoCDependencyValue<R[K]>;
@@ -1425,7 +1421,26 @@ export class IoCContainer<TKeys = any> {
   }
 
   /**
-   * Resolves `reg` (found from this container) for the chain `frame`.
+   * What `Resolve` does, without forcing a promise: the instance itself when it is ready (or
+   * built synchronously), otherwise a promise of it bounded by `PendingTimeoutMs`.
+   *
+   * @ignore
+   */
+  protected resolveNow(key: IoCServiceKey<unknown>, name: string | undefined): unknown {
+    const self = this.self();
+
+    self.assertNotDisposed();
+
+    const frame = this.frame();
+
+    const reg = self.lookup(checkKey(key), name || DEFAULT_NAME, frame);
+
+    return self.timed(self.resolveIn(reg, frame), reg.label);
+  }
+
+  /**
+   * Resolves `reg` (found from this container) for the chain `frame`: the instance itself when it
+   * is ready (or built synchronously), otherwise a promise of it.
    *
    * @ignore
    */
@@ -1515,7 +1530,9 @@ export class IoCContainer<TKeys = any> {
 
     // The factory gets a view of this container that carries its step of the chain, so what it
     // resolves through it is checked for cycles.
-    const view = Object.create(this, { [IOC_FRAME]: { value: step } });
+    const view = Object.create(this);
+
+    view[IOC_FRAME] = step;
 
     const done = () => {
       step.settled = true;
@@ -1763,9 +1780,37 @@ export class IoCContainer<TKeys = any> {
   //#endregion
 }
 
-/** Resolves dependencies through `ioc` (a factory's view, so the chain continues), in order. */
-function resolveAll(ioc: IoCContainer, deps: IoCDependencyRecord[]): Promise<unknown[]> {
-  return Promise.all(
-    deps.map((d) => ioc.Resolve(d.key as IoCServiceKey<unknown>, d.name)),
-  );
+/**
+ * Resolves dependencies through `ioc` (a factory's view, so the chain continues), in order.
+ * Returns the values directly when every one is available synchronously, so a graph of built or
+ * synchronous services resolves without a promise per step; otherwise a promise of them all.
+ */
+function resolveDeps(
+  ioc: IoCContainer,
+  deps: IoCDependencyRecord[],
+): unknown[] | Promise<unknown[]> {
+  const values: unknown[] = [];
+
+  try {
+    for (const d of deps) {
+      // deno-lint-ignore no-explicit-any
+      values.push((ioc as any).resolveNow(d.key, d.name));
+    }
+  } catch (err) {
+    // Builds already started keep running; their failures are reported by their own callers.
+    for (const v of values) if (isThenable(v)) Promise.resolve(v).catch(noop);
+
+    throw err;
+  }
+
+  return values.some(isThenable) ? Promise.all(values) : values;
+}
+
+/** Applies `fn` to `value` now, or once it settles when it is a promise. */
+function thenWith<T, R>(value: T | Promise<T>, fn: (value: T) => R): R | Promise<Awaited<R>> {
+  return value instanceof Promise ? value.then(fn) as Promise<Awaited<R>> : fn(value);
+}
+
+function isThenable(value: unknown): value is PromiseLike<unknown> {
+  return typeof (value as { then?: unknown } | null)?.then === 'function';
 }

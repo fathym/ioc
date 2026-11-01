@@ -67,8 +67,8 @@ states the risks plainly.
 
 - **It is young.** The stable API dates from November 2026 and the user base is small, so there
   are fewer answers online than for InversifyJS, awilix or tsyringe.
-- **Resolution is always asynchronous.** Every `Resolve` returns a promise. A resolve takes a few
-  microseconds where the synchronous containers take well under one; the
+- **Resolution is always asynchronous.** Every `Resolve` returns a promise. A resolve takes about a
+  microsecond where the synchronous containers take a tenth of that or less; the
   [comparison](./reference/comparison.md#benchmarks) has the numbers. That rarely matters for an
   application, but code that must resolve synchronously can't use it.
 - **Wiring is explicit.** Each class lists its `Deps`. The compiler checks them against the

@@ -117,3 +117,81 @@ Deno.test('Edge cases - thenables', async (t) => {
     assertEquals(disposed, 1);
   });
 });
+
+Deno.test('Edge cases - synchronous fast path', async (t) => {
+  await t.step('a graph of synchronous services builds without waiting on anything', async () => {
+    const order: string[] = [];
+
+    class Config {
+      constructor() {
+        order.push('Config');
+      }
+    }
+
+    class Repo {
+      constructor(public config: Config) {
+        order.push('Repo');
+      }
+    }
+
+    const ioc = new IoCContainer().RegisterClass(Config).RegisterClass(Repo, { Deps: [Config] });
+
+    const pending = ioc.Resolve(Repo);
+
+    // Built synchronously during the call: nothing is left for a later tick.
+    assertEquals(order, ['Config', 'Repo']);
+
+    assert((await pending).config instanceof Config);
+  });
+
+  await t.step(
+    'a dependency that throws while an earlier one is still building rejects, and the other failure is not unhandled',
+    async () => {
+      const $Slow = IoCToken<string>('EdgeSlow');
+      const $Broken = IoCToken<string>('EdgeBroken');
+
+      class Service {
+        constructor(public slow: string, public broken: string) {}
+      }
+
+      const ioc = new IoCContainer()
+        .RegisterFactory($Slow, async () => {
+          await tick(5);
+          throw new Error('slow failed too');
+        })
+        .RegisterFactory($Broken, () => {
+          throw new Error('broken');
+        })
+        .RegisterClass(Service, { Deps: [$Slow, $Broken] });
+
+      await assertRejects(() => ioc.Resolve(Service), Error, 'broken');
+
+      // Let the slow build fail; the test sanitizer would report it if nothing handled it.
+      await tick(10);
+    },
+  );
+
+  await t.step('an asyncDispose that returns a thenable is awaited', async () => {
+    let closed = false;
+
+    class Handle {
+      [Symbol.asyncDispose]() {
+        return {
+          then(resolve: () => void) {
+            setTimeout(() => {
+              closed = true;
+              resolve();
+            }, 5);
+          },
+        } as unknown as Promise<void>;
+      }
+    }
+
+    const ioc = new IoCContainer().RegisterClass(Handle);
+
+    await ioc.Resolve(Handle);
+    await ioc.Dispose();
+
+    assert(closed);
+  });
+});
