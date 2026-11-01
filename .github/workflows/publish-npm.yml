@@ -85,4 +85,5 @@ jobs:
         if: steps.existing.outputs.published != 'true'
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: npm publish dist/npm --access public --provenance
+        # `./` matters: npm reads a bare `dist/npm` as the GitHub repository dist/npm.
+        run: npm publish ./dist/npm --access public --provenance

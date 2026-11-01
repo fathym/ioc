@@ -30,13 +30,25 @@ supported.
 
 ### Added
 
+- **[Guarantees](./docs/reference/guarantees.md):** what the container promises about building,
+  disposal, startup, timeouts and `Validate()`, each linked to the test that proves it. The docs
+  check fails if a linked test step is renamed or removed.
+- **[Comparison](./docs/reference/comparison.md):** `deno task compare` runs the same lifecycle
+  scenarios, a compile check and benchmarks against InversifyJS, awilix and tsyringe, and writes
+  the page. CI fails if `@fathym/ioc` misses a scenario.
+- **Coverage in CI:** `deno task coverage` reports coverage of `src/` and fails below 97% of lines
+  or 95% of branches.
+- **[Evaluating @fathym/ioc](./docs/evaluating.md)** and [MAINTAINERS](./MAINTAINERS.md), with
+  response times.
+
 - **Published to npm** as [`@fathym/ioc`](https://www.npmjs.com/package/@fathym/ioc): every stable
   release now goes to npm and JSR with the same version, so Node.js and Bun projects install it
   with `npm install @fathym/ioc` or `bun add @fathym/ioc`.
 
 ## [1.0.18] - 2026-11-01
 
-The first stable 1.0 release. The release workflow numbers versions from the repository's tags,
+**The 1.x API is stable:** nothing breaks before 2.0 (see the
+[versioning policy](./docs/policy.md)). The first stable 1.0 release. The release workflow numbers versions from the repository's tags,
 so there is no 1.0.0: 1.0.18 is the first 1.0 on `main`.
 
 A small core that fixes 0.x's defects and replaces what Fathym's repositories do by hand. Keys
@@ -105,14 +117,19 @@ timeout.
   `RegisterValue` are never disposed unless they have a `Dispose` option.
 - Concurrent resolves of a singleton share one build, and a failed build is retried.
 
-## [0.1.0]
+## Before 1.0
+
+The development releases before the stable API, kept for history. To upgrade, use
+[migrating from 0.x](./docs/migration/from-0.x.md).
+
+### [0.1.0]
 
 The first minor release: a rewritten container core, typed APIs, scopes and disposal, modules and
 lifecycle, and the full documentation set. Existing code keeps working, and containers from
 0.0.x interoperate in the same process. Upgrading to 1.0:
 [migrating from 0.x](./docs/migration/from-0.x.md).
 
-### Added
+#### Added
 
 - **Typed tokens:** `IoCToken<T>(id)`, so `Resolve($Db)` is typed without generics. Abstract
   classes also work as typed keys. `IoCToken<T, 'Id'>('Id')` also puts the id in the type.
@@ -188,13 +205,13 @@ lifecycle, and the full documentation set. Existing code keeps working, and cont
   error catalog, migration guides) with every example executed in CI; runnable `examples/`;
   `llms.txt`; CONTRIBUTING, SECURITY, CODE_OF_CONDUCT and issue templates.
 
-### Deprecated
+#### Deprecated
 
 - **`Register`**, the overloaded method that guesses whether it was given a class or a factory.
   Use `RegisterClass`, `RegisterFactory` or `RegisterValue`. `Register` keeps working and will be
   removed in 1.0. See [migrating from 0.x](./docs/migration/from-0.x.md#old-call--new-call).
 
-### Changed
+#### Changed
 
 - **`Lazy: true` really defers** creation to the first resolve, and now also applies to factory
   registrations.
@@ -208,7 +225,7 @@ lifecycle, and the full documentation set. Existing code keeps working, and cont
 - **Re-registering a key reports `IOC_REGISTRATION_REPLACED`** to the `Diagnostics` callback (it
   still replaces).
 
-### Fixed
+#### Fixed
 
 - **`Start()` edge cases:** a `Start()` that failed validation can now be retried once the graph is
   fixed (before, it failed forever). `Dispose()` during `Start()` now stops the module that was
@@ -236,7 +253,7 @@ lifecycle, and the full documentation set. Existing code keeps working, and cont
 - Scopes of a disposed container throw `IoCContainerDisposedError`.
 - `Validate()` checks the constructors subclasses inherit.
 
-## [0.0.36] and earlier
+### [0.0.36] and earlier
 
 The original container: `Register`, `Resolve`, `CopyTo`, transient and scoped lifetimes, `Lazy`,
 named registrations. Versions 0.0.12–0.0.36 share the same API, and they interoperate with 0.1.x

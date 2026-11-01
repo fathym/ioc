@@ -1,0 +1,27 @@
+name: Compare
+
+# Runs the comparison scenarios (compare/) against @fathym/ioc and the other DI libraries, and
+# fails if @fathym/ioc misses one, so the comparison page and README can't overstate it.
+# The benchmarks run only with `deno task compare`, which regenerates the page.
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  compare:
+    name: Comparison scenarios
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: Run the scenarios and compile checks
+        run: deno task compare --check

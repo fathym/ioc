@@ -26,6 +26,8 @@
     "test": "deno test -A tests/tests.ts --parallel --coverage=cov",
     "bench": "deno bench -A tests/ioc/resolve.bench.ts",
     "size": "deno run -A scripts/size.ts",
+    "coverage": "deno run -A scripts/coverage.ts",
+    "compare": "deno run -A compare/run.ts",
     "build:npm": "deno run -A scripts/build-npm.ts",
     "test:runtimes": "deno run -A scripts/test-runtimes.ts",
     "docs:check": "deno run -A scripts/docs-check.ts",
@@ -36,7 +38,7 @@
   // Build output (the npm package) is generated, never checked, linted or formatted.
   "exclude": ["dist/", "cov/"],
   "lint": {
-    "include": ["src/", "tests/", "scripts/", "examples/"],
+    "include": ["src/", "tests/", "scripts/", "examples/", "compare/"],
     "exclude": ["tests/fixtures/"],
     "rules": {
       "tags": ["recommended"],
@@ -45,7 +47,7 @@
     }
   },
   "fmt": {
-    "include": ["src/", "tests/", "scripts/", "examples/", "docs/", ".github/", "*.md"],
+    "include": ["src/", "tests/", "scripts/", "examples/", "compare/", "docs/", ".github/", "*.md"],
     "exclude": ["tests/fixtures/"],
     "indentWidth": 2,
     "lineWidth": 100,

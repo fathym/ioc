@@ -158,6 +158,20 @@ export function extractLinks(markdown: string): string[] {
   return links;
 }
 
+/**
+ * Proof links: links whose text names a test step, `[lazy › step name](../tests/lazy.tests.ts)`.
+ * The docs check requires the step to exist in the linked file, so a documented guarantee can't
+ * outlive the test that proves it.
+ */
+export function extractProofLinks(markdown: string): { step: string; target: string }[] {
+  const body = stripFences(splitFrontmatter(markdown).body);
+
+  return [...body.matchAll(/\[[^\]›]*? › ([^\]]+?)\]\(\s*<?([^)\s>]+)>?\s*\)/g)].map((m) => ({
+    step: m[1].trim(),
+    target: m[2],
+  }));
+}
+
 /** Normalizes a repo-relative path to POSIX form without leading `./`. */
 function clean(path: string): string {
   return normalize(path).replace(/\\/g, '/').replace(/^\.\//, '');
@@ -240,13 +254,22 @@ export function extractErrorMessages(source: string): string[] {
   return [...messages];
 }
 
+/** The pages listed first in llms.txt: what it is, and what someone evaluating it needs. */
+const START_HERE = [
+  'README.md',
+  'docs/README.md',
+  'docs/evaluating.md',
+  'docs/reference/guarantees.md',
+  'docs/reference/comparison.md',
+];
+
 /** Builds llms.txt from the docs' frontmatter (https://llmstxt.org format). */
 export function buildLlmsTxt(files: DocFiles, rawUrl: string): string {
   const groups: [string, (path: string) => boolean][] = [
-    ['Start here', (p) => p === 'README.md' || p === 'docs/README.md'],
+    ['Start here', (p) => START_HERE.includes(p)],
     ['Getting started (tutorial)', (p) => p.startsWith('docs/getting-started/')],
     ['Guides', (p) => p.startsWith('docs/guides/')],
-    ['Reference', (p) => p.startsWith('docs/reference/')],
+    ['Reference', (p) => p.startsWith('docs/reference/') && !START_HERE.includes(p)],
     ['Migration', (p) => p.startsWith('docs/migration/')],
     ['Examples', (p) => p.startsWith('examples/')],
     [
@@ -296,7 +319,12 @@ export function buildLlmsTxt(files: DocFiles, rawUrl: string): string {
     for (const path of paths) {
       const attrs = splitFrontmatter(files.get(path)!).attrs ?? {};
 
-      out += `- [${attrs.Title ?? path}](${rawUrl}${path}): ${attrs.Summary ?? ''}\n`;
+      // The landing README has no frontmatter: its title is the package name, its summary the tagline.
+      const title = attrs.Title ?? (path === 'README.md' ? '@fathym/ioc' : path);
+
+      const summary = attrs.Summary ?? (path === 'README.md' ? tagline : undefined) ?? '';
+
+      out += `- [${title}](${rawUrl}${path}): ${summary}\n`;
     }
   }
 
@@ -411,6 +439,20 @@ export function checkDocs(files: DocFiles, options: DocCheckOptions): DocProblem
       if (!linkedFrom.has(resolved.path)) linkedFrom.set(resolved.path, new Set());
 
       linkedFrom.get(resolved.path)!.add(file);
+    }
+
+    for (const { step, target } of extractProofLinks(content)) {
+      const resolved = resolveLink(file, target, options.RepoBlobUrl);
+
+      const source = resolved && files.get(resolved.path);
+
+      if (!resolved || !/\.tests?\.ts$/.test(resolved.path)) {
+        report(file, `proof link must point to a test file: ${target}`);
+      } else if (
+        source && ![`'${step}'`, `"${step}"`, `\`${step}\``].some((q) => source.includes(q))
+      ) {
+        report(file, `proof link names a test step that isn't in ${resolved.path}: ${step}`);
+      }
     }
 
     // Every docs page (other than folder indexes) ends with a "What's Next" section.

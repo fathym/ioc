@@ -21,25 +21,27 @@ References:
 Small, async-first, decorator-free dependency injection for Deno, Node.js and Bun. Every code
 example in these docs is type-checked and run in CI.
 
-| If you…                         | Start with                                                  |
-| ------------------------------- | ----------------------------------------------------------- |
-| Are new to the container        | [Getting started](./getting-started/README.md) _[Tutorial]_ |
-| Have one task to get done       | [Guides](./guides/README.md) _[How-to]_                     |
-| Want to look something up       | [API reference](./reference/api.md) _[Reference]_           |
-| Hit an error                    | [Error catalog](./reference/errors.md) _[Reference]_        |
-| Are upgrading from 0.0.x or 0.1 | [Migrating from 0.x](./migration/from-0.x.md) _[How-to]_    |
-| Want to know why it is this way | [IoC 1.0 design](./design/ioc-1.0.md) _[Explanation]_       |
+| If you…                          | Start with                                                  |
+| -------------------------------- | ----------------------------------------------------------- |
+| Are new to the container         | [Getting started](./getting-started/README.md) _[Tutorial]_ |
+| Have one task to get done        | [Guides](./guides/README.md) _[How-to]_                     |
+| Want to look something up        | [API reference](./reference/api.md) _[Reference]_           |
+| Hit an error                     | [Error catalog](./reference/errors.md) _[Reference]_        |
+| Are upgrading from 0.0.x or 0.1  | [Migrating from 0.x](./migration/from-0.x.md) _[How-to]_    |
+| Want to know why it is this way  | [IoC 1.0 design](./design/ioc-1.0.md) _[Explanation]_       |
+| Are deciding whether to adopt it | [Evaluating @fathym/ioc](./evaluating.md) _[Explanation]_   |
 
 ## All pages
 
-| Folder                                          | What's in it                                                |
-| ----------------------------------------------- | ----------------------------------------------------------- |
-| [getting-started/](./getting-started/README.md) | Install, a first container, async services, scopes, testing |
-| [guides/](./guides/README.md)                   | One-task recipes, such as registering many modules          |
-| [reference/](./reference/README.md)             | The API reference and the error catalog                     |
-| [migration/](./migration/README.md)             | Upgrading from 0.x                                          |
-| [design/](./design/ioc-1.0.md)                  | Why 1.0 looks the way it does, and what dependents change   |
-| [policy.md](./policy.md)                        | Versioning, deprecations, supported runtimes and releases   |
+| Folder                                          | What's in it                                                            |
+| ----------------------------------------------- | ----------------------------------------------------------------------- |
+| [getting-started/](./getting-started/README.md) | Install, a first container, async services, scopes, testing             |
+| [guides/](./guides/README.md)                   | One-task recipes, such as registering many modules                      |
+| [reference/](./reference/README.md)             | The API reference, the error catalog, the guarantees and the comparison |
+| [migration/](./migration/README.md)             | Upgrading from 0.x                                                      |
+| [design/](./design/ioc-1.0.md)                  | Why 1.0 looks the way it does, and what dependents change               |
+| [evaluating.md](./evaluating.md)                | Support, stability, risks and how to adopt it safely                    |
+| [policy.md](./policy.md)                        | Versioning, deprecations, supported runtimes and releases               |
 
 Design notes: [IoC 1.0](./design/ioc-1.0.md) and
 [dependent follow-ups](./design/dependent-follow-ups.md).
