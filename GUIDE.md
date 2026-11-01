@@ -2,9 +2,9 @@
 FrontmatterVersion: 1
 DocumentType: Guide
 Title: IoC Container Guide
-Summary: Playbook for maintaining the Fathym IoC container for Deno runtimes.
+Summary: Playbook for maintaining @fathym/ioc on Deno, Node.js and Bun.
 Created: 2025-11-20
-Updated: 2026-10-26
+Updated: 2026-11-01
 Owners:
   - fathym
 References:
@@ -12,14 +12,8 @@ References:
     Path: ./README.md
   - Label: Project Agents Guide
     Path: ./AGENTS.md
-  - Label: 'Projects: Ref-Arch README'
-    Path: ../README.md
-  - Label: 'Projects: Ref-Arch Guide'
-    Path: ../GUIDE.md
   - Label: IoC 1.0 (design)
     Path: ./docs/design/ioc-1.0.md
-  - Label: Root Workspace Guide
-    Path: ../../../WORKSPACE_GUIDE.md
 ---
 
 # IoC Container Guide
@@ -40,13 +34,13 @@ Use this playbook to keep IoC container work predictable and discoverable.
 - Keep the documentation in `docs/` complete and verified: `deno task docs:check` runs every
   Markdown and JSDoc code block, type-checks `examples/`, and checks links, frontmatter, footers
   and the error catalog; `deno task test` runs the examples.
-- Align APIs with other ref-arch libraries and the CLI where integration
-  matters. See [`docs/design/ioc-1.0.md`](./docs/design/ioc-1.0.md).
+- Keep the API consistent with the libraries that depend on it. See
+  [`docs/design/ioc-1.0.md`](./docs/design/ioc-1.0.md).
 
 ## Workflow
 
-1. **Align scope** in [`README.md`](./README.md): note intended change (feature,
-   fix, release prep) and target repo/branch if it moves.
+1. **Align scope** in an issue or the pull request: note the intended change (feature, fix,
+   release prep).
 2. **Design & docs**: capture API proposals in `docs/design/`, and update the
    user docs (`docs/`, `examples/`) in the same change as the code. Follow the
    conventions in [`CONTRIBUTING.md`](./CONTRIBUTING.md#documentation).
@@ -62,7 +56,5 @@ Use this playbook to keep IoC container work predictable and discoverable.
 
 - `deno task docs:check` passes (links, anchors, frontmatter, orphans, What's
   Next sections, error catalog, `llms.txt`, runnable examples).
-- Ensure links stay relative and parent guides remain discoverable.
-- Keep the roster entry in `../README.md` current when docs or status change.
-- When workspace tasks exist, also run: `deno task prompts:verify-frontmatter`,
-  `deno task link:verify`, `deno task workspace:check`.
+- Docs pages link with relative paths; the landing `README.md` links with absolute GitHub URLs,
+  because JSR renders it too.

@@ -1,12 +1,12 @@
 # @fathym/ioc
 
-> Small, async-first, decorator-free dependency injection for Deno, Node.js and Bun - typed keys, explicit registration, scopes, modules and checked wiring.
+> Dependency injection for modern TypeScript. No decorators. No metadata. Async from the ground up.
 
 Every code example in these docs is type-checked in CI. Install from JSR (`deno add jsr:@fathym/ioc`); the examples import from `@fathym/ioc`.
 
 ## Start here
 
-- [@fathym/ioc](https://raw.githubusercontent.com/fathym/ioc/main/README.md): Small, async-first, decorator-free dependency injection for Deno, Node.js and Bun - typed keys, explicit registration, scopes, modules and checked wiring.
+- [README.md](https://raw.githubusercontent.com/fathym/ioc/main/README.md): 
 - [@fathym/ioc Documentation](https://raw.githubusercontent.com/fathym/ioc/main/docs/README.md): The map of the @fathym/ioc docs - tutorial, reference, migration and design notes.
 
 ## Getting started (tutorial)

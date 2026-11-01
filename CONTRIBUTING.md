@@ -4,7 +4,7 @@ DocumentType: Guide
 Title: Contributing
 Summary: How to set up, test, document and propose changes to @fathym/ioc.
 Created: 2026-10-13
-Updated: 2026-10-15
+Updated: 2026-11-01
 Owners:
   - fathym
 References:
@@ -74,7 +74,7 @@ the [docs hub](./docs/README.md#conventions).
 
 1. **Start with the house frontmatter:** `FrontmatterVersion`, `DocumentType`, `Title`,
    `Summary`, `Created`, `Updated`, `Owners`, `References`. `References` should include the
-   parent folder's `README.md` and `AGENTS.md`.
+   parent folder's `README.md`, and must point to files inside the repository.
 2. **Use the right shape:**
    - how-to: open with `> **Goal:**`;
    - tutorial: one complete program per step;
@@ -97,9 +97,9 @@ the [docs hub](./docs/README.md#conventions).
 - **Public API:** every exported symbol needs JSDoc (`deno doc --lint mod.ts`), and key APIs get an
   `@example`.
 
-The GitHub issue and pull-request templates in `.github/` are the one exception to the frontmatter
-rule. GitHub pastes them into new issues and PRs, so they keep no frontmatter. Their links are
-still checked.
+The landing `README.md` and the GitHub issue and pull-request templates in `.github/` are the
+exceptions to the frontmatter rule. GitHub and JSR render the README as-is, and GitHub pastes the
+templates into new issues and PRs, so they keep no frontmatter. Their links are still checked.
 
 ## Proposing a change
 

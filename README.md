@@ -1,142 +1,208 @@
----
-FrontmatterVersion: 1
-DocumentType: Guide
-Title: '@fathym/ioc'
-Summary: Small, async-first, decorator-free dependency injection for Deno, Node.js and Bun - typed keys, explicit registration, scopes, modules and checked wiring.
-Created: 2025-11-20
-Updated: 2026-10-22
-Owners:
-  - fathym
-References:
-  - Label: Documentation
-    Path: ./docs/README.md
-  - Label: Project Agents Guide
-    Path: ./AGENTS.md
-  - Label: Project Guide
-    Path: ./GUIDE.md
-  - Label: Contributing
-    Path: ./CONTRIBUTING.md
-  - Label: Changelog
-    Path: ./CHANGELOG.md
-  - Label: 'Projects: Ref-Arch README'
-    Path: ../README.md
-  - Label: Root Workspace Guide
-    Path: ../../../WORKSPACE_GUIDE.md
----
-
 # @fathym/ioc
 
-**Small, async-first, decorator-free dependency injection for Deno, Node.js and Bun.**
+### Dependency injection for modern TypeScript. No decorators. No metadata. Async from the ground up.
 
 [![JSR](https://jsr.io/badges/@fathym/ioc)](https://jsr.io/@fathym/ioc)
 [![JSR Score](https://jsr.io/badges/@fathym/ioc/score)](https://jsr.io/@fathym/ioc/score)
 [![Build](https://github.com/fathym/ioc/actions/workflows/build.yml/badge.svg)](https://github.com/fathym/ioc/actions/workflows/build.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/fathym/ioc/blob/main/LICENSE)
 
-Register your services once, resolve them anywhere, and let the container handle creation order,
-async setup, per-request scopes and cleanup. No decorators, no `reflect-metadata`, no build step.
+Most TypeScript DI containers were built for a world of `experimentalDecorators` and
+`reflect-metadata`. They break under esbuild, Vite and Vitest, they resolve synchronously while
+your database connects asynchronously, and they tell you about a missing dependency when the first
+request hits it.
 
-## What you get
+**@fathym/ioc is built for how TypeScript apps are written today.** Plain classes. Typed keys.
+Async factories that just work. Wiring mistakes caught by the compiler, and the rest caught at
+startup. Clean shutdown when you're done. It runs on Deno, Node.js and Bun, with zero
+dependencies.
 
-- **Typed keys.** `IoCToken<T, 'Name'>('Name')` is a typed name: `Symbol.for('Name')`
-  underneath, so packages that use the same name share the key. A class is its own key, by
-  reference.
-- **Explicit registration.** `RegisterClass`, `RegisterFactory` and `RegisterValue`, with
-  `Deps` checked against your constructor at compile time. Registering a key twice throws unless
-  you say `Replace: true`; framework defaults use `Default: true` and yield to the app.
-- **Async-first.** Factories can be `async`. Concurrent resolves share one build, a failed build
-  is retried, and a cycle through a factory's `ioc` throws at once.
-- **Scopes and cleanup.** One scope per request or command, with `await using`. Singletons and
-  scoped instances are disposed by the container that built them, in reverse order; whoever
-  resolves a transient owns it.
-- **Modules.** Units of registrations with `OnStart`/`OnStop`. `Start()` runs them in order, a
-  failed start stops what started, and `Dispose()` stops them in reverse. `DefineModule` types
-  what a module needs and provides.
-- **Checked wiring.** `Validate()` reports missing, cyclic and captive dependencies. Every error
-  has a stable code, and the [error catalog](https://github.com/fathym/ioc/blob/main/docs/reference/errors.md)
-  explains each one and how to fix it.
+```ts
+import { IoCContainer, IoCToken } from '@fathym/ioc';
+
+interface Mailer {
+  send(to: string, body: string): Promise<void>;
+}
+
+class Db {
+  static async connect(url: string) {
+    return new Db(url); // open your real connection pool here
+  }
+
+  constructor(public url: string) {}
+
+  async [Symbol.asyncDispose]() {
+    console.log('db closed');
+  }
+}
+
+class Signup {
+  constructor(private db: Db, private mailer: Mailer) {}
+
+  async register(email: string) {
+    await this.mailer.send(email, `Welcome! (saved to ${this.db.url})`);
+  }
+}
+
+const $Mailer = IoCToken<Mailer>('app/Mailer');
+
+{
+  await using ioc = new IoCContainer()
+    .RegisterFactory(Db, () => Db.connect('postgres://localhost/app')) // async, built once
+    .RegisterValue($Mailer, { send: async (to, body) => console.log(`to ${to}: ${body}`) })
+    .RegisterClass(Signup, { Deps: [Db, $Mailer] }); // checked against the constructor
+
+  ioc.Validate(); // every wiring mistake, reported before anything runs
+
+  const signup = await ioc.Resolve(Signup); // typed as Signup
+
+  await signup.register('ada@example.com'); // to ada@example.com: Welcome! (saved to …)
+} // db closed: whatever the container built is disposed, in reverse order
+```
+
+## Why teams pick it
+
+- **🧩 No decorators, no metadata, no build step.** Your classes stay plain TypeScript. Nothing
+  depends on `emitDecoratorMetadata`, so it works the same under esbuild, Vite, tsx, Vitest, Deno,
+  Node.js and Bun.
+- **🛡️ Mistakes caught by the compiler.** `Deps` is checked against your constructor, in order
+  and by type. Turn on `Typed()` and using a service before it's registered won't compile.
+- **🔍 The rest caught at startup.** `Validate()` lists every missing dependency, cycle and
+  lifetime mistake in one go, without building anything. Put it in one test and wiring bugs never
+  reach production.
+- **⚡ Async is first-class.** Factories can be `async`. Concurrent requests share one build, and a
+  connection that fails is retried on the next resolve instead of being cached as broken.
+- **🧹 Clean shutdown, built in.** One scope per request with `await using`. Everything the
+  container built is disposed in reverse order. Modules start in dependency order and stop in
+  reverse, so your server drains before your database closes.
+- **🧪 Easy to test.** `Override()` swaps any service for a fake and hands you a restore
+  function. Test against the real wiring, not a hand-built copy of it.
+- **📖 Errors that explain themselves.** Every error has a stable code and an
+  [entry in the catalog](https://github.com/fathym/ioc/blob/main/docs/reference/errors.md) with
+  the cause and the fix.
+
+## See it in action
+
+**A scope per request,** cleaned up when the request ends:
+
+```ts
+import { IoCContainer, IoCToken } from '@fathym/ioc';
+
+const $Request = IoCToken<{ path: string }>('app/Request');
+
+class RequestContext {
+  public id = crypto.randomUUID().slice(0, 8);
+}
+
+class Handler {
+  constructor(private req: { path: string }, private ctx: RequestContext) {}
+
+  handle() {
+    return `${this.ctx.id} handled ${this.req.path}`;
+  }
+}
+
+const app = new IoCContainer()
+  .RegisterClass(RequestContext, { Lifetime: 'scoped' }) // one per request
+  .RegisterClass(Handler, { Deps: [$Request, RequestContext], Lifetime: 'transient' });
+
+for (const path of ['/notes', '/users']) {
+  await using scope = app.CreateScope().RegisterValue($Request, { path });
+
+  console.log((await scope.Resolve(Handler)).handle()); // 3f9c1a2b handled /notes …
+}
+```
+
+**Modules with a lifecycle,** started in order and stopped in reverse:
+
+```ts
+import { DefineModule, IoCContainer } from '@fathym/ioc';
+
+const Database = DefineModule({
+  Name: 'Database',
+  Register: (ioc) => ioc,
+  OnStart: () => console.log('database connected'),
+  OnStop: () => console.log('database closed'),
+});
+
+const Api = DefineModule({
+  Name: 'Api',
+  Requires: [Database], // started after Database, stopped before it
+  Register: (ioc) => ioc,
+  OnStart: () => console.log('api listening'),
+  OnStop: () => console.log('api drained'),
+});
+
+{
+  await using app = new IoCContainer().Use(Api);
+
+  await app.Start(); // database connected, api listening
+} // api drained, database closed
+```
+
+## How it compares
+
+|                                          | @fathym/ioc | InversifyJS | tsyringe | awilix | NestJS |
+| ---------------------------------------- | :---------: | :---------: | :------: | :----: | :----: |
+| No decorators or `reflect-metadata`      |      ✓      |      ✗      |    ✗     |   ✓    |   ✗    |
+| Constructor deps checked at compile time |      ✓      |      ✗      |    ✗     |   ✗    |   ✗    |
+| Async factories                          |      ✓      |      ✓      |    ✗     |   ✗    |   ✓    |
+| Startup validation of the whole wiring   |      ✓      |      ✗      |    ✗     |   ~    |   ✓    |
+| Modules with start/stop lifecycle        |      ✓      |      ~      |    ✗     |   ✗    |   ✓    |
+| Disposal of what it built                |      ✓      |      ~      |    ~     |   ✓    |   ✓    |
+| Standalone library, not a framework      |      ✓      |      ✓      |    ✓     |   ✓    |   ✗    |
+| Synchronous resolve                      |      ✗      |      ✓      |    ✓     |   ✓    |   ✓    |
+
+✓ built in · ~ partial · ✗ not available. Based on each project's documentation, October 2026.
+
+**Pick something else if** you need synchronous resolution everywhere, convention-based
+auto-registration (awilix does this well), property injection or tagged bindings (InversifyJS),
+or you're inside a framework with its own DI, such as NestJS or Angular.
 
 ## Install
 
 ```sh
-deno add jsr:@fathym/ioc
+deno add jsr:@fathym/ioc     # Deno
+npx jsr add @fathym/ioc      # Node.js 20+
+bunx jsr add @fathym/ioc     # Bun
 ```
 
-Node.js (20+) and Bun: `npx jsr add @fathym/ioc` (or `bunx jsr add @fathym/ioc`). Requires
-TypeScript 5.4+; see
+TypeScript 5.4 or later. See the
 [requirements](https://github.com/fathym/ioc/blob/main/docs/getting-started/installation.md#requirements).
 
-## Quick start
+## Learn it in 15 minutes
 
-```ts
-import { DefineModule, IoCContainer, IoCToken } from '@fathym/ioc';
-
-interface Logger {
-  log(message: string): void;
-}
-
-// A token is a typed name; any package that uses the same name gets the same key.
-export const $Logger = IoCToken<Logger, 'app/Logger'>('app/Logger');
-
-class Config {
-  public url = 'kv://local';
-}
-
-class Repo {
-  constructor(public config: Config, public logger: Logger) {}
-}
-
-// Default: true lets the app replace the logger.
-const Data = DefineModule({
-  Name: 'Data',
-  Register: (ioc) =>
-    ioc
-      .RegisterClass(Config)
-      .RegisterValue($Logger, { log: (m) => console.log(m) }, { Default: true })
-      .RegisterClass(Repo, { Deps: [Config, $Logger] }), // checked against Repo's constructor
-  OnStart: () => console.log('data ready'),
-});
-
-await using ioc = new IoCContainer().Typed().Use(Data);
-
-await ioc.Start(); // validates the wiring, then runs OnStart: data ready
-
-const repo = await ioc.Resolve(Repo); // typed as Repo
-
-repo.logger.log(`Connected to ${repo.config.url}`);
-```
-
-## Documentation
-
-The full documentation lives in [`docs/`](https://github.com/fathym/ioc/blob/main/docs/README.md).
-Every code example in it is type-checked and run in CI.
-
-| Page                                                                                      |                                                      |
+| Start here                                                                                | What you get                                         |
 | ----------------------------------------------------------------------------------------- | ---------------------------------------------------- |
-| [Getting started](https://github.com/fathym/ioc/blob/main/docs/getting-started/README.md) | _[Tutorial]_ A small app in five short steps         |
-| [API reference](https://github.com/fathym/ioc/blob/main/docs/reference/api.md)            | _[Reference]_ Every method and option                |
-| [Errors](https://github.com/fathym/ioc/blob/main/docs/reference/errors.md)                | _[Reference]_ Every error message, and how to fix it |
-| [Upgrading from 0.x](https://github.com/fathym/ioc/blob/main/docs/migration/from-0.x.md)  | _[How-to]_ Old call to new call                      |
+| [Getting started](https://github.com/fathym/ioc/blob/main/docs/getting-started/README.md) | Five short steps, from a first container to tests    |
+| [API reference](https://github.com/fathym/ioc/blob/main/docs/reference/api.md)            | Every method and option, each with an example        |
+| [Error catalog](https://github.com/fathym/ioc/blob/main/docs/reference/errors.md)         | Every error message: what it means and how to fix it |
+| [Examples](https://github.com/fathym/ioc/blob/main/examples/README.md)                    | Small programs you can run and copy, an HTTP app too |
+| [Upgrading from 0.x](https://github.com/fathym/ioc/blob/main/docs/migration/from-0.x.md)  | Every old call next to its replacement               |
 
-The generated API docs are on [JSR](https://jsr.io/@fathym/ioc/doc). AI tools can start from
+Every code example in the docs is type-checked and run in CI, so what you read is what works. The
+generated API docs are on [JSR](https://jsr.io/@fathym/ioc/doc), and AI tools can start from
 [`llms.txt`](https://github.com/fathym/ioc/blob/main/llms.txt).
 
-## Status
+## Built to be depended on
 
-0.x is used across the Fathym ecosystem (CLI, EaC runtime and libraries); those repositories move
-to 1.0 with the [migration guide](https://github.com/fathym/ioc/blob/main/docs/migration/from-0.x.md).
+- **Semantic versioning**, with breaking changes only in major releases, each with a migration
+  guide. The [versioning policy](https://github.com/fathym/ioc/blob/main/docs/policy.md) spells
+  out deprecations, supported runtimes and releases.
+- **Tested on every runtime it supports:** the full suite on Deno, and the published build on
+  Node.js 20, 22 and 24 and Bun, type-checked with TypeScript 5.4 and the latest.
+- **Every change** is in the [changelog](https://github.com/fathym/ioc/blob/main/CHANGELOG.md).
 
-- Versions follow semantic versioning: breaking changes only in a major release, each with a
-  migration guide. The [versioning policy](https://github.com/fathym/ioc/blob/main/docs/policy.md)
-  covers deprecations, supported runtimes and releases.
-- Every change is listed in the [changelog](https://github.com/fathym/ioc/blob/main/CHANGELOG.md).
+Built and maintained by [Fathym](https://github.com/fathym), and used across Fathym's own
+platform, from the CLI to the runtime.
 
 ## Contributing
 
-Contributions are welcome. See [CONTRIBUTING](https://github.com/fathym/ioc/blob/main/CONTRIBUTING.md)
-for setup, tests and documentation conventions. Please report security issues privately as
-described in [SECURITY](https://github.com/fathym/ioc/blob/main/SECURITY.md). Everyone is expected
-to follow the [Code of Conduct](https://github.com/fathym/ioc/blob/main/CODE_OF_CONDUCT.md).
+Issues and pull requests are welcome. See
+[CONTRIBUTING](https://github.com/fathym/ioc/blob/main/CONTRIBUTING.md) for setup, tests and
+documentation conventions. Please report security issues privately as described in
+[SECURITY](https://github.com/fathym/ioc/blob/main/SECURITY.md), and follow the
+[Code of Conduct](https://github.com/fathym/ioc/blob/main/CODE_OF_CONDUCT.md).
 
 ## License
 

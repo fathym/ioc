@@ -37,14 +37,7 @@ ${body}`;
 
 function cleanSite(): DocFiles {
   return new Map([
-    [
-      'README.md',
-      page(
-        'Home',
-        `# Home\n\n[Docs](${BLOB}docs/README.md)`,
-        '  - Label: Docs\n    Path: ./docs/README.md',
-      ),
-    ],
+    ['README.md', `# Home\n\n### The tagline.\n\n[Docs](${BLOB}docs/README.md)`],
     [
       'docs/README.md',
       page(
@@ -217,19 +210,29 @@ Deno.test('docs-check - checkDocs', async (t) => {
     );
   });
 
-  await t.step('references above the repository root are allowed (monorepo context)', () => {
+  await t.step('reports frontmatter references above the repository root', () => {
     const files = cleanSite();
 
     files.set(
-      'README.md',
-      page(
-        'Home',
-        `# Home\n\n[Docs](${BLOB}docs/README.md)`,
-        '  - Label: Docs\n    Path: ./docs/README.md\n  - Label: Monorepo\n    Path: ../../README.md',
+      'docs/intro.md',
+      files.get('docs/intro.md')!.replace(
+        'Path: ./README.md',
+        'Path: ./README.md\n  - Label: Outside\n    Path: ../../README.md',
       ),
     );
 
+    const messages = checkDocs(files, { RepoBlobUrl: BLOB }).map((p) => p.message);
+
+    assertEquals(messages, [
+      'frontmatter reference "Outside" points to a missing file: ../../README.md',
+    ]);
+  });
+
+  await t.step('the landing README needs no frontmatter, and llms.txt uses its tagline', () => {
+    const files = cleanSite();
+
     assertEquals(checkDocs(files, { RepoBlobUrl: BLOB }), []);
+    assert(buildLlmsTxt(files, RAW).startsWith('# @fathym/ioc\n\n> The tagline.\n'));
   });
 
   await t.step("reports orphan pages and missing What's Next sections", () => {
@@ -308,7 +311,7 @@ Deno.test('docs-check - checkDocs', async (t) => {
   await t.step('llms.txt lists pages with titles and summaries', () => {
     const llms = buildLlmsTxt(cleanSite(), RAW);
 
-    assert(llms.startsWith('# @fathym/ioc\n\n> About Home.'));
+    assert(llms.startsWith('# @fathym/ioc\n\n> The tagline.'));
     assert(llms.includes(`${RAW}docs/README.md)`), llms);
   });
 });

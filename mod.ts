@@ -1,5 +1,6 @@
 /**
- * Small, async-first, decorator-free dependency injection for Deno, Node.js and Bun.
+ * Dependency injection for modern TypeScript. No decorators. No metadata. Async from the ground
+ * up. Runs on Deno, Node.js and Bun, with zero dependencies.
  *
  * Register services once, resolve them anywhere, and let the container handle creation order,
  * async setup, per-request scopes and cleanup. No decorators, no `reflect-metadata`.

@@ -271,10 +271,11 @@ export function buildLlmsTxt(files: DocFiles, rawUrl: string): string {
     return i < 0 ? TUTORIAL.length : i;
   };
 
-  const readme = splitFrontmatter(files.get('README.md') ?? '').attrs;
+  // The landing README carries no frontmatter; its tagline is the first `###` heading.
+  const tagline = (files.get('README.md') ?? '').match(/^### (.+)$/m)?.[1]?.trim();
 
   let out = `# @fathym/ioc\n\n> ${
-    readme?.Summary ?? 'Small, async-first, decorator-free IoC container for Deno.'
+    tagline ?? 'Dependency injection for modern TypeScript. No decorators. No metadata.'
   }\n\n`;
 
   out += 'Every code example in these docs is type-checked in CI. Install from JSR ' +
@@ -328,11 +329,12 @@ export function checkDocs(files: DocFiles, options: DocCheckOptions): DocProblem
     const { attrs, error } = splitFrontmatter(content);
 
     // GitHub inserts these templates into new issues and pull requests verbatim (and issue
-    // templates use frontmatter for their own settings), so the house frontmatter is not applied.
+    // templates use frontmatter for their own settings), and the landing README is rendered as-is
+    // by GitHub and JSR, so the house frontmatter is not applied to them.
     const isGitHubTemplate = file === '.github/pull_request_template.md' ||
       file.startsWith('.github/ISSUE_TEMPLATE/');
 
-    if (isGitHubTemplate) {
+    if (isGitHubTemplate || file === 'README.md') {
       // Links are still checked below.
     } else if (error) report(file, `frontmatter does not parse: ${error}`);
     else if (!attrs) report(file, 'missing frontmatter');
@@ -368,10 +370,9 @@ export function checkDocs(files: DocFiles, options: DocCheckOptions): DocProblem
 
         const resolved = resolveLink(file, String(ref.Path), options.RepoBlobUrl);
 
-        // Paths above the repository root point into the surrounding monorepo; skip those.
-        if (!resolved || resolved.path.startsWith('..')) continue;
+        if (!resolved) continue;
 
-        if (!files.has(resolved.path)) {
+        if (resolved.path.startsWith('..') || !files.has(resolved.path)) {
           report(
             file,
             `frontmatter reference "${ref.Label}" points to a missing file: ${ref.Path}`,

@@ -2,9 +2,9 @@
 FrontmatterVersion: 1
 DocumentType: Guide
 Title: IoC Agents Guide
-Summary: Guardrails for collaborating on the Fathym IoC container pod.
+Summary: Guardrails for humans and AI agents contributing to @fathym/ioc.
 Created: 2025-11-20
-Updated: 2026-10-13
+Updated: 2026-11-01
 Owners:
   - fathym
 References:
@@ -12,18 +12,8 @@ References:
     Path: ./README.md
   - Label: Project Guide
     Path: ./GUIDE.md
-  - Label: 'Projects: Ref-Arch README'
-    Path: ../README.md
-  - Label: 'Projects: Ref-Arch AGENTS'
-    Path: ../AGENTS.md
-  - Label: 'Projects: Ref-Arch Guide'
-    Path: ../GUIDE.md
-  - Label: Root README
-    Path: ../../../README.md
-  - Label: Root Agents Guide
-    Path: ../../../AGENTS.md
-  - Label: Root Workspace Guide
-    Path: ../../../WORKSPACE_GUIDE.md
+  - Label: Contributing
+    Path: ./CONTRIBUTING.md
 ---
 
 # AGENTS: IoC Container
@@ -32,10 +22,10 @@ Guardrails for humans and AI collaborating on the Fathym IoC container.
 
 ## Core Guardrails
 
-1. **Stay scoped.** Keep IoC work under `projects/ref-arch/ioc/` unless
-   coordinating with another pod; link cross-pod dependencies when they exist.
-2. **Frontmatter required.** Every Markdown doc uses frontmatter and
-   document-relative references back to parent guides.
+1. **Stay scoped.** Keep each change to one concern; the core stays small (see the rule in
+   [`docs/design/ioc-1.0.md`](./docs/design/ioc-1.0.md)).
+2. **Frontmatter required.** Every Markdown doc except the landing `README.md` and the GitHub
+   templates uses the house frontmatter, with document-relative references inside the repository.
 3. **API stability.** Avoid breaking registration/resolution semantics without
    migration notes; document changes that affect consumers (CLI, other
    libraries, micro-frameworks).
@@ -56,19 +46,19 @@ conventions. The details are in [CONTRIBUTING](./CONTRIBUTING.md#documentation) 
     renders it too.
   - `docs/` holds the tutorial, the reference, the migration guide, design notes and the policy.
   - `examples/` holds runnable programs.
-- **Every page** has the house frontmatter, is linked from its folder `README.md`, and ends with
+- **Every docs page** has the house frontmatter, is linked from its folder `README.md`, and ends with
   `## What's Next`.
 - **Every TypeScript block is a complete module** importing `'@fathym/ioc'`. Mark a deliberate
   fragment with `ts ignore`, and say so in the prose.
 - **Every new error message gets an entry** in `docs/reference/errors.md`.
 - **After adding or renaming a page,** run `deno task docs:llms`.
 - **Run `deno task docs:check` before committing docs.** `deno task build` includes it.
-- **Exception:** the GitHub issue and PR templates in `.github/` carry no frontmatter, because
-  GitHub pastes them into issues and PRs verbatim.
+- **Exceptions:** the landing `README.md` and the GitHub issue and PR templates in `.github/`
+  carry no frontmatter, because GitHub and JSR render the README as-is and GitHub pastes the
+  templates into issues and PRs verbatim.
 
 ## Communication
 
-- Declare intent before editing; summarize outcomes and next steps in the
-  project README or a short log.
-- Link implementation branches and consumer pods (CLI, other libraries,
-  micro-frameworks) when behavior changes to keep dependencies aligned.
+- Declare intent before editing; summarize outcomes and next steps in the pull request.
+- When behavior changes, record it in the [changelog](./CHANGELOG.md) and, for breaking
+  changes, the migration guide, so dependents can follow.
