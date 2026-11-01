@@ -243,27 +243,33 @@ export function extractErrorMessages(source: string): string[] {
 /** Builds llms.txt from the docs' frontmatter (https://llmstxt.org format). */
 export function buildLlmsTxt(files: DocFiles, rawUrl: string): string {
   const groups: [string, (path: string) => boolean][] = [
-    [
-      'Start here',
-      (p) => p === 'README.md' || p === 'docs/README.md' || p === 'docs/what-is-ioc.md',
-    ],
+    ['Start here', (p) => p === 'README.md' || p === 'docs/README.md'],
     ['Getting started (tutorial)', (p) => p.startsWith('docs/getting-started/')],
-    ['Concepts', (p) => p.startsWith('docs/concepts/')],
-    ['Guides', (p) => p.startsWith('docs/guides/')],
-    [
-      'Reference',
-      (p) =>
-        p.startsWith('docs/reference/') || /^docs\/(troubleshooting|faq|comparison)\.md$/.test(p),
-    ],
+    ['Reference', (p) => p.startsWith('docs/reference/')],
     ['Migration', (p) => p.startsWith('docs/migration/')],
     ['Examples', (p) => p.startsWith('examples/')],
     [
       'Optional',
       (p) =>
-        p.startsWith('docs/design/') || p.startsWith('docs/research/') || p === 'CHANGELOG.md' ||
+        p.startsWith('docs/design/') || p === 'docs/policy.md' || p === 'CHANGELOG.md' ||
         p === 'CONTRIBUTING.md',
     ],
   ];
+
+  // The tutorial in step order; other folders list their README first, then by name.
+  const TUTORIAL = [
+    'README.md',
+    'installation.md',
+    'first-container.md',
+    'async-services.md',
+    'per-request-scopes.md',
+    'testing-your-app.md',
+  ];
+
+  const tutorialRank = (p: string) => {
+    const i = TUTORIAL.indexOf(p.replace('docs/getting-started/', ''));
+    return i < 0 ? TUTORIAL.length : i;
+  };
 
   const readme = splitFrontmatter(files.get('README.md') ?? '').attrs;
 
@@ -271,12 +277,13 @@ export function buildLlmsTxt(files: DocFiles, rawUrl: string): string {
     readme?.Summary ?? 'Small, async-first, decorator-free IoC container for Deno.'
   }\n\n`;
 
-  out += 'Every code example in these docs is type-checked in CI. Import from `jsr:@fathym/ioc`.\n';
+  out += 'Every code example in these docs is type-checked in CI. Install from JSR ' +
+    '(`deno add jsr:@fathym/ioc`); the examples import from `@fathym/ioc`.\n';
 
   for (const [title, match] of groups) {
     const paths = [...files.keys()].filter((p) => match(p) && p.endsWith('.md')).sort((a, b) => {
       const rank = (p: string) => (p.endsWith('README.md') ? 0 : 1);
-      return rank(a) - rank(b) || a.localeCompare(b);
+      return tutorialRank(a) - tutorialRank(b) || rank(a) - rank(b) || a.localeCompare(b);
     });
 
     if (!paths.length) continue;

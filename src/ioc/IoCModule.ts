@@ -41,7 +41,8 @@ import type { IoCContainer, IoCDependencyKey, IoCExpected, IoCNoKeys } from './i
  * ```
  *
  * @typeParam TNeeds Type-only: the keys the module needs from elsewhere (see `DefineModule`).
- * @typeParam TProvides Type-only: the keys the module registers itself (see `DefineModule`). A module written by hand needs and provides nothing, as far as types go.
+ * @typeParam TProvides Type-only: the keys the module registers itself (see `DefineModule`). A
+ * module written by hand needs and provides nothing, as far as types go.
  */
 export interface IoCModule<TNeeds = never, TProvides = never> {
   /** A unique, readable name, used in errors and `Describe()`. */
@@ -58,7 +59,9 @@ export interface IoCModule<TNeeds = never, TProvides = never> {
   // deno-lint-ignore no-explicit-any
   readonly Needs?: readonly (IoCDependencyKey<any> | readonly [IoCDependencyKey<any>, string])[];
 
-  /** Adds the module's registrations. Synchronous: async setup belongs in `OnStart` or factories. */
+  /**
+   * Adds the module's registrations. Synchronous: async setup belongs in `OnStart` or factories.
+   */
   // deno-lint-ignore no-explicit-any
   Register(ioc: IoCContainer<any>): unknown;
 
@@ -157,8 +160,9 @@ export interface IoCModuleDefinition<
 
 /**
  * Defines a typed module. Inside `Register`, the container is typed with the keys the module
- * `Needs` and the keys its `Requires` register themselves, so `Deps` can only name those and the module's own
- * earlier registrations. Return the registration chain: its keys become what the module provides.
+ * `Needs` and the keys its `Requires` register themselves, so `Deps` can only name those and the
+ * module's own earlier registrations. Return the registration chain: its keys become what the
+ * module provides.
  * On a {@link IoCContainer.Typed typed container}, `Use(module)` adds those keys, and only
  * compiles when the container already has what the module needs.
  *

@@ -38,25 +38,25 @@ deno task test
 
 ## Tasks
 
-| Task                      | Does                                                                                                           |
-| ------------------------- | -------------------------------------------------------------------------------------------------------------- |
-| `deno task test`          | All tests: the container suites, the docs checker's tests, and every example                                   |
-| `deno task build`         | Format, lint, type-check, then the docs check and `deno doc --lint` (what CI runs)                             |
-| `deno task docs:check`    | Frontmatter, links and anchors, orphans, footers, error catalog and `llms.txt`; runs every Markdown code block |
-| `deno task docs:llms`     | Regenerate `llms.txt` from the docs' frontmatter                                                               |
-| `deno task bench`         | Hot-path benchmarks (`tests/ioc/resolve.bench.ts`)                                                             |
-| `deno task build:npm`     | Build the npm package into `dist/npm` (ESM + `.d.ts`, compiled by TypeScript)                                  |
-| `deno task test:runtimes` | Build the npm package, run the smoke test on Node.js and Bun, and type-check a consumer with TypeScript 5.4    |
+| Task                      | Does                                                                                                                                        |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `deno task test`          | All tests: the container suites, the docs checker's tests, and every example                                                                |
+| `deno task build`         | Format, lint, type-check, then the docs check and `deno doc --lint` (what CI runs)                                                          |
+| `deno task docs:check`    | Frontmatter, links, orphans, footers, error catalog, `llms.txt`; runs Markdown and JSDoc blocks, type-checks `examples/`, `deno doc --lint` |
+| `deno task docs:llms`     | Regenerate `llms.txt` from the docs' frontmatter                                                                                            |
+| `deno task bench`         | Hot-path benchmarks (`tests/ioc/resolve.bench.ts`)                                                                                          |
+| `deno task build:npm`     | Build the npm package into `dist/npm` (ESM + `.d.ts`, compiled by TypeScript)                                                               |
+| `deno task test:runtimes` | Build the npm package, run the smoke test on Node.js and Bun, and type-check a consumer with TypeScript 5.4                                 |
 
 ## Test suites
 
-| Suite                                         | Protects                                                                                                                                                    |
-| --------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `tests/ioc/*.tests.ts`                        | The container, one file per area: registration, resolution, scopes and levels, modules and lifecycle, sealing, validation, cycles, concurrency, error codes |
-| `tests/ioc/matrix.tests.ts`, `model.tests.ts` | Generated combinations, and seeded random operation sequences against a reference model                                                                     |
-| `tests/ioc/types.tests.ts`, `typed.tests.ts`  | Compile-time types (`@ts-expect-error` checks), typed containers and typed modules                                                                          |
-| `tests/docs/*`                                | The docs checker, and every program in `examples/`                                                                                                          |
-| `tests/runtimes/*`                            | A plain-JavaScript smoke test for Node.js and Bun, and a TypeScript consumer for the oldest supported compiler                                              |
+| Suite                                                                  | Protects                                                                                                                                                 |
+| ---------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `tests/ioc/*.tests.ts`                                                 | The container, one file per area: tokens, registration, resolution, scopes, disposal, modules and lifecycle, validation, cycles, error codes, edge cases |
+| `tests/ioc/matrix.tests.ts`, `model.tests.ts`                          | Generated combinations, and seeded random operation sequences against a reference model                                                                  |
+| `tests/ioc/types.tests.ts`, `typed.tests.ts`, `typed-modules.tests.ts` | Compile-time types (`@ts-expect-error` checks), typed containers and typed modules                                                                       |
+| `tests/docs/*`                                                         | The docs checker, and every program in `examples/`                                                                                                       |
+| `tests/runtimes/*`                                                     | A plain-JavaScript smoke test for Node.js and Bun, and a TypeScript consumer for the oldest supported compiler                                           |
 
 Rules:
 
@@ -78,7 +78,7 @@ the [docs hub](./docs/README.md#conventions).
 2. **Use the right shape:**
    - how-to: open with `> **Goal:**`;
    - tutorial: one complete program per step;
-   - concept: a summary, an explanation, then a table or diagram.
+   - reference: a signature block, the behavior, then one example.
 3. **Make every TypeScript block a complete module** importing from `'@fathym/ioc'`. The docs
    check type-checks _and runs_ it. Mark a deliberate fragment with `` ```ts ignore `` and say in
    the prose that it's a fragment.

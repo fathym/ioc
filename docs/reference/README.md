@@ -2,7 +2,7 @@
 FrontmatterVersion: 1
 DocumentType: Guide
 Title: Reference
-Summary: Reference material for @fathym/ioc - the API, every error message, and the glossary.
+Summary: Reference material for @fathym/ioc - the API and every error message.
 Created: 2026-10-13
 Updated: 2026-10-26
 Owners:

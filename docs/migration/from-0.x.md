@@ -35,32 +35,36 @@ every package that shares one container moves to 1.0 in the same release.
 
 Rows marked _0.0.x_ only apply when you come from 0.0.x; rows marked _0.1_ only from 0.1.
 
-| 0.x                                                                  | 1.0                                                                            | Notes                                                   |
-| -------------------------------------------------------------------- | ------------------------------------------------------------------------------ | ------------------------------------------------------- |
-| `ioc.Register(Clock)`, `Register(Clock, { Lifetime })`               | `ioc.RegisterClass(Clock, { Lifetime })`                                       | Add `Deps` when the constructor takes parameters        |
-| `Register(PgDb, { Type: sym })`                                      | `RegisterClass(PgDb, { Type: $Db })`                                           | The class must satisfy the token's type                 |
-| `Register(Cache, (c) => …)`, `Register(sym, (c) => …)`               | `RegisterFactory(Cache, (c) => …)`, `RegisterFactory($Token, (c) => …)`        |                                                         |
-| `const remove = Register(…); remove()` _0.0.x_                       | `Unregister(key, name?)`                                                       | Registration methods return the container, for chaining |
-| `ioc.Symbol('Db')`, `Symbol.for('Db')`                               | `export const $Db = IoCToken<Db, 'Db'>('Db')`                                  | The same key, now typed                                 |
-| String keys (`Resolve('Db')`)                                        | A token                                                                        | Throws `IOC_INVALID_KEY`                                |
-| `Resolve<Db>(sym)`, `TryResolve<T>`, `ResolveAll<T>`                 | `Resolve($Db)`: the type comes from the key                                    | An explicit type argument no longer compiles            |
-| Registering a key and name again (last one wins)                     | `{ Replace: true }` on the replacement, or `{ Default: true }` on the default  | Otherwise throws `IOC_DUPLICATE_REGISTRATION`           |
-| `{ Lazy: true }`, `LazyByDefault: true`                              | Remove them                                                                    | Everything is built on first resolve                    |
-| `{ Lazy: false }`, eager singletons (the 0.0.x default)              | `await ioc.Activate()` at startup                                              | Builds every singleton, reports every failure           |
-| `new IoCContainer({ Strict: true })`, `IoCContainer.Create()`        | `new IoCContainer()`                                                           | Always strict                                           |
-| `PendingTimeoutMs` unset (wait forever)                              | 30 000 ms by default; `PendingTimeoutMs: 0` to wait forever                    | Also bounds `OnStart`, `OnStop` and disposers           |
-| `AsyncContext: …` _0.1_                                              | Remove it; resolve through the factory's `ioc`                                 | [Cycles](#cycles)                                       |
-| `Diagnostics: (d) => …` _0.1_                                        | Remove it                                                                      |                                                         |
-| `source.CopyTo(target)`                                              | A module: `target.Use(SourceModule)`; or a child scope: `source.CreateScope()` | [Modules instead of CopyTo](#modules-instead-of-copyto) |
-| `ModuleFromContainer('Plugin', pluginIoc, { Defaults: true })` _0.1_ | The plugin exports an `IoCModule` whose registrations use `Default: true`      |                                                         |
-| `RegisterDirect` / `ResolveDirect`                                   | `RegisterValue` / `Resolve`                                                    |                                                         |
-| `ioc.services`, `ioc.symbols`                                        | `ioc.Describe()`, `ioc.Names(key)`, `ioc.Has(key)`                             |                                                         |
-| `CreateScope({ Level })`, `ScopeLevel` _0.1_                         | `CreateScope()`; register per-level services on the scope that owns them       | [Scopes](#scopes)                                       |
-| `Decorate(key, (inner) => …)` _0.1_                                  | Register the inner service under a name and wrap it in a factory               | [Decorate, IoCLazy, IoCAll](#decorate-ioclazy-iocall)   |
-| `IoCLazy($X)` in `Deps` _0.1_                                        | A factory that keeps `ioc` and calls `ioc.Resolve($X)` later                   | [Decorate, IoCLazy, IoCAll](#decorate-ioclazy-iocall)   |
-| `IoCAll($X)` in `Deps` _0.1_                                         | A factory that calls `await ioc.ResolveAll($X)`                                | [Decorate, IoCLazy, IoCAll](#decorate-ioclazy-iocall)   |
-| `err.Symbol` on `IoCServiceNotFoundError`                            | `err.Key` (the token name or class name)                                       |                                                         |
-| Matching messages (`No Service for symbol '…'`)                      | `isIoCError(err, 'IOC_SERVICE_NOT_FOUND')`                                     | Match on codes, not messages                            |
+| 0.x                                                                  | 1.0                                                                            | Notes                                                     |
+| -------------------------------------------------------------------- | ------------------------------------------------------------------------------ | --------------------------------------------------------- |
+| `ioc.Register(Clock)`, `Register(Clock, { Lifetime })`               | `ioc.RegisterClass(Clock, { Lifetime })`                                       | Add `Deps` when the constructor takes parameters          |
+| `Register(PgDb, { Type: sym })`                                      | `RegisterClass(PgDb, { Type: $Db })`                                           | The class must satisfy the token's type                   |
+| `Register(Cache, (c) => …)`, `Register(sym, (c) => …)`               | `RegisterFactory(Cache, (c) => …)`, `RegisterFactory($Token, (c) => …)`        |                                                           |
+| `const remove = Register(…); remove()` _0.0.x_                       | `Unregister(key, name?)`                                                       | Registration methods return the container, for chaining   |
+| `ioc.Symbol('Db')`, `Symbol.for('Db')`                               | `export const $Db = IoCToken<Db, 'Db'>('Db')`                                  | The same key, now typed                                   |
+| String keys (`Resolve('Db')`)                                        | A token                                                                        | Throws `IOC_INVALID_KEY`                                  |
+| `Resolve<Db>(sym)`, `TryResolve<T>`, `ResolveAll<T>`                 | `Resolve($Db)`: the type comes from the key                                    | An explicit type argument no longer compiles              |
+| Registering a key and name again (last one wins)                     | `{ Replace: true }` on the replacement, or `{ Default: true }` on the default  | Otherwise throws `IOC_DUPLICATE_REGISTRATION`             |
+| `{ Lazy: true }`, `LazyByDefault: true`                              | Remove them                                                                    | Everything is built on first resolve                      |
+| `{ Lazy: false }`, eager singletons (the 0.0.x default)              | `await ioc.Activate()` at startup                                              | Builds every singleton, reports every failure             |
+| `new IoCContainer({ Strict: true })`, `IoCContainer.Create()`        | `new IoCContainer()`                                                           | Always strict                                             |
+| `PendingTimeoutMs` unset (wait forever)                              | 30 000 ms by default; `PendingTimeoutMs: 0` to wait forever                    | Also bounds `OnStart`, `OnStop` and disposers             |
+| `AsyncContext: …` _0.1_                                              | Remove it; resolve through the factory's `ioc`                                 | [Cycles](#cycles)                                         |
+| `Diagnostics: (d) => …` _0.1_                                        | Remove it                                                                      |                                                           |
+| `await ioc.Start()` building every singleton _0.1_                   | `await ioc.Start(); await ioc.Activate();`                                     | `Start()` validates and starts modules; it builds nothing |
+| `IoCKeyCollisionError`, `IOC_KEY_COLLISION` _0.1_                    | Remove it                                                                      | Tokens are names; a name is one key by design             |
+| `Describe()` levels, observed deps, build state _0.1_                | `Describe()` lists registrations and modules only                              |                                                           |
+| `source.CopyTo(target)`                                              | A module: `target.Use(SourceModule)`; or a child scope: `source.CreateScope()` | [Modules instead of CopyTo](#modules-instead-of-copyto)   |
+| `ModuleFromContainer('Plugin', pluginIoc, { Defaults: true })` _0.1_ | The plugin exports an `IoCModule` whose registrations use `Default: true`      |                                                           |
+| `RegisterDirect` / `ResolveDirect`                                   | `RegisterValue` / `Resolve`                                                    |                                                           |
+| `ioc.services`, `ioc.symbols`                                        | `ioc.Describe()`, `ioc.Names(key)`, `ioc.Has(key)`                             |                                                           |
+| `CreateScope({ Level })`, `ScopeLevel` _0.1_                         | `CreateScope()`; register per-level services on the scope that owns them       | [Scopes](#scopes)                                         |
+| `Decorate(key, (inner) => …)` _0.1_                                  | Register the inner service under a name and wrap it in a factory               | [Decorate, IoCLazy, IoCAll](#decorate-ioclazy-iocall)     |
+| `IoCLazy`/`IoCAll` in `ResolveRecord` _0.1_                          | Resolve those entries separately, or with a factory                            | [Decorate, IoCLazy, IoCAll](#decorate-ioclazy-iocall)     |
+| `IoCLazy($X)` in `Deps` _0.1_                                        | A factory that keeps `ioc` and calls `ioc.Resolve($X)` later                   | [Decorate, IoCLazy, IoCAll](#decorate-ioclazy-iocall)     |
+| `IoCAll($X)` in `Deps` _0.1_                                         | A factory that calls `await ioc.ResolveAll($X)`                                | [Decorate, IoCLazy, IoCAll](#decorate-ioclazy-iocall)     |
+| `err.Symbol` on `IoCServiceNotFoundError`                            | `err.Key` (the token name or class name)                                       |                                                           |
+| Matching messages (`No Service for symbol '…'`)                      | `isIoCError(err, 'IOC_SERVICE_NOT_FOUND')`                                     | Match on codes, not messages                              |
 
 A typical composition root, after the change:
 
@@ -101,9 +105,9 @@ await ioc.Dispose();
 **0.x:** a second registration of the same key and name replaced the first, silently.
 
 **1.0:** it throws `IoCDuplicateRegistrationError` unless it says `Replace: true`, or the first
-was registered with `Default: true`. A `Default` yields to any other registration of the key and
-name, made before or after it, and to a parent's: frameworks register their replaceable services
-with `Default: true`, and the application registers its own without any flag.
+was registered with `Default: true`. Frameworks register their replaceable services with
+`Default: true`, and the application registers its own without any flag, before or after. The
+exact rules are under [defaults](../reference/api.md#defaults).
 
 ```ts
 import { IoCContainer, IoCToken } from '@fathym/ioc';
@@ -231,7 +235,7 @@ console.log((await ioc.Resolve(Router)).handlers.length); // 1
 2. **Type the keys.** Replace `ioc.Symbol('X')` and bare `Symbol.for('X')` with
    `IoCToken<T, 'X'>('X')`, exported from the package that owns the service. The name stays the
    same, so code you haven't migrated yet keeps finding it.
-3. **Bump the dependency** to `jsr:@fathym/ioc@^1.0.0` (or `npm:@fathym/ioc@^1.0.0`) in every
+3. **Bump the dependency** to `jsr:@fathym/ioc@^1.0.0` (Node.js and Bun: `npx jsr add @fathym/ioc@^1.0.0`) in every
    package that shares a container, in the same release.
 4. **Replace the calls** using [the table](#old-call--new-call), then run `deno check` and fix
    what it reports: explicit `Resolve<T>` arguments, string keys, `Deps` order.

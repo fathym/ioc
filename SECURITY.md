@@ -35,10 +35,10 @@ ships. We credit reporters in the advisory unless you prefer otherwise.
 
 ## Supported versions
 
-| Version          | Supported                                                                                           |
-| ---------------- | --------------------------------------------------------------------------------------------------- |
-| Latest 1.x       | ✓                                                                                                   |
-| 0.x (0.0.x, 0.1) | Fixes go into the latest release; upgrade using the [migration guide](./docs/migration/from-0.x.md) |
+| Version          | Supported                                                                     |
+| ---------------- | ----------------------------------------------------------------------------- |
+| Latest 1.x       | ✓                                                                             |
+| 0.x (0.0.x, 0.1) | ✗ No fixes; upgrade using the [migration guide](./docs/migration/from-0.x.md) |
 
 The [versioning policy](./docs/policy.md) covers semantic versioning, deprecations and supported runtimes.
 

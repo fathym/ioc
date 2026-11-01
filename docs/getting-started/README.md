@@ -27,10 +27,12 @@ learn what you need for most apps:
 - **giving each HTTP request its own scope**;
 - **packaging the app as a module** and **swapping a dependency in a test**.
 
-Each step builds on the last, and every code block is a complete program you can run.
+Each step introduces one idea with a small notes app, and every code block is a complete program
+you can run. The steps share names (`NotesStore`, `Clock`), but each program stands on its own;
+[`examples/per-request-server.ts`](../../examples/per-request-server.ts) puts them together.
 
-> **Note:** You need [Deno](https://deno.com) 2.x. Steps 3–5 use Deno KV, so run them with
-> `--unstable-kv`.
+> **Note:** You need [Deno](https://deno.com) 2.x. Steps 3 and 5 use Deno KV, so run them with
+> `--unstable-kv`; step 4 runs a server, so it needs `--allow-net`.
 
 | Step | Document                                                      | You'll learn                                                           |
 | ---- | ------------------------------------------------------------- | ---------------------------------------------------------------------- |
@@ -44,6 +46,4 @@ When you're done, the [API reference](../reference/api.md) lists every method an
 [error catalog](../reference/errors.md) explains every error message, and the
 [examples](../../examples/README.md) are small programs you can run and copy.
 
-## What's Coming
-
-- A variation of the tutorial on Node.js with `npx jsr add`.
+Start with [step 1: installation](./installation.md).

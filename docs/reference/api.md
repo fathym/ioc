@@ -64,11 +64,10 @@ Creates a root container. With no options it is already strict (registering a ke
 throws), lazy (nothing is built until it is resolved or [`Activate()`](#activate) runs) and
 protected against hangs.
 
-`IoCContainerOptions` has one option:
-
-| Option             | Default | Meaning                                                                                                                                                                                                                          |
-| ------------------ | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `PendingTimeoutMs` | `30000` | A `Resolve`, a module's `OnStart`/`OnStop`, or an instance's disposer still pending after this many milliseconds fails with [`IoCResolveTimeoutError`](./errors.md#-did-not-finish-within-ms). `0` turns it off. Max 2147483647. |
+`IoCContainerOptions` has one option, **`PendingTimeoutMs`** (default `30000`): a `Resolve`, a
+module's `OnStart`/`OnStop`, or an instance's disposer still pending after this many milliseconds
+fails with [`IoCResolveTimeoutError`](./errors.md#-did-not-finish-within-ms). `0` turns it off;
+the maximum is 2147483647.
 
 The options are frozen when the container is created. Scopes inherit them.
 
@@ -89,13 +88,13 @@ console.log(ioc.State); // idle
 get State(): IoCContainerState // 'idle' | 'starting' | 'started' | 'stopping' | 'disposed'
 ```
 
-| State      | Means                                                  |
-| ---------- | ------------------------------------------------------ |
-| `idle`     | Created, or a `Start()` failed and was rolled back     |
-| `starting` | `Start()` is running                                   |
-| `started`  | `Start()` succeeded                                    |
-| `stopping` | `Dispose()` is running                                 |
-| `disposed` | Done; every call except `Dispose()` and `State` throws |
+| State      | Means                                              |
+| ---------- | -------------------------------------------------- |
+| `idle`     | Created, or a `Start()` failed and was rolled back |
+| `starting` | `Start()` is running                               |
+| `started`  | `Start()` succeeded                                |
+| `stopping` | `Dispose()` is running                             |
+| `disposed` | Done; resolving, registering and starting throw    |
 
 A scope has its own state: the parent's `Start()` doesn't start it.
 
@@ -120,8 +119,9 @@ Nothing is built at registration. Registering the same key and name twice in one
 says `Replace: true` or the existing one was registered with `Default: true`. A registration on a
 scope is not a duplicate of the parent's: it overrides it for that scope.
 
-Every registration method returns the container, so calls chain. On a disposed container they
-throw [`IoCContainerDisposedError`](./errors.md#the-ioc-container-has-been-disposed).
+Every registration method returns the container, so calls chain. On a disposed container
+`RegisterClass`, `RegisterFactory`, `RegisterValue` and `Override` throw
+[`IoCContainerDisposedError`](./errors.md#the-ioc-container-has-been-disposed).
 
 ### Keys and IoCToken(name)
 
@@ -135,11 +135,15 @@ A key is either a token or a class.
   it resolves. Two packages that call `IoCToken('Db')` share one key, and a plain `Symbol.for('Db')`
   from 0.x code is the same key at runtime. Pick names that won't collide across packages
   (`'eac/Config'` rather than `'Config'`).
-- **A unique `Symbol()`** works too, as a private key no other package can reach.
+- **A unique symbol** works as a private key if you type it as a token:
+  `Symbol('Secret') as IoCToken<Secret, 'Secret'>`. A bare `Symbol()` or `Symbol.for()` doesn't
+  compile as a key; it carries no service type.
 - **A class is keyed by reference.** Two different classes named `Config` are two keys. Abstract
   classes work as typed "interface" keys for `RegisterFactory`.
 - **Anything else is rejected:** strings, plain objects, arrow functions and other non-class
-  functions throw [`IoCRegistrationError` with `IOC_INVALID_KEY`](./errors.md#keys-must-be-tokens-or-classes-but-a--was-given).
+  functions used as keys throw
+  [`IoCRegistrationError` with `IOC_INVALID_KEY`](./errors.md#keys-must-be-tokens-or-classes-but-a--was-given).
+  (`RegisterClass` given a non-class throws `IOC_INVALID_REGISTRATION` instead.)
 
 The optional second type argument keeps the name in the token's type. A
 [typed container](#typed) needs it to tell apart two tokens of the same service type, such as two
@@ -171,8 +175,10 @@ or the token given as `Type`.
 
 - **`Deps`** lists the services passed to the constructor, in parameter order. Each entry is a key
   or `[key, name]`. It is type-checked against the constructor's parameters, and on a
-  [typed container](#typed) against the keys registered so far. The dependencies are resolved in
-  the container or scope that resolves the class.
+  [typed container](#typed) against the keys registered so far. The dependencies are resolved by
+  the container that builds the instance: for a singleton, the container it is registered in; for
+  `scoped` and `transient` services, the scope that resolves it. To make a singleton see a scope's
+  overrides, [`Isolate`](#isolatekeys) it in that scope.
 - **Without `Deps`** the class is constructed with no arguments. [`Validate()`](#validateoptions)
   reports a class whose constructor declares parameters.
 - **`Type`** registers the class under a token instead (`{ Type: $Db }`). The class's instances
@@ -216,7 +222,8 @@ RegisterFactory<K, TName = '$default', TDeps = []>(
 Registers a function that builds the service, under a token or a class (abstract classes
 included). The return type is checked against the key, and the function may be async.
 
-- **The first parameter is the container** that is resolving the service. Resolve through it, not
+- **The first parameter is the container that builds the service** (the registering container
+  for a singleton, the resolving scope for scoped and transient services). Resolve through it, not
   through a container captured in a closure: then a cycle throws
   [`IoCCircularDependencyError`](./errors.md#circular-dependency-detected-) at once, and a scope
   gets its own scoped services.
@@ -269,17 +276,24 @@ console.log((await ioc.Resolve($Handler))('/notes')); // handled /notes
 
 ### Registration options
 
-| Option     | On                                 | Default      | Meaning                                                                                                                                                                                      |
-| ---------- | ---------------------------------- | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `Lifetime` | `RegisterClass`, `RegisterFactory` | singleton    | Omitted: one shared instance. `'transient'`: a new instance per resolve. `'scoped'`: one instance per [scope](#createscope); resolving it from the root throws `IoCScopeRequiredError`.      |
-| `Name`     | all three                          | `'$default'` | Registers under a name, so several services share one key. Named and unnamed registrations never stand in for each other.                                                                    |
-| `Default`  | all three                          | `false`      | A default that yields to any other registration of the key and name, in any order: if one exists (here or in a parent) the call does nothing, and a later registration replaces it silently. |
-| `Replace`  | all three                          | `false`      | Replaces an existing registration in this container on purpose. Without it, registering a key and name again throws.                                                                         |
-| `Dispose`  | all three                          | none         | `(instance) => …`: cleanup run when the owning container is disposed, for resources without `Symbol.asyncDispose` / `Symbol.dispose` (`(kv) => kv.close()`).                                 |
-| `Deps`     | `RegisterClass`, `RegisterFactory` | none         | The services to inject, in order: keys or `[key, name]`.                                                                                                                                     |
-| `Type`     | `RegisterClass`                    | the class    | The token to register the class under; the class must satisfy its type.                                                                                                                      |
+| Option     | On                                 | Default      | Meaning                                                                                                                                                                                                    |
+| ---------- | ---------------------------------- | ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Lifetime` | `RegisterClass`, `RegisterFactory` | singleton    | `'singleton'` (or omitted): one shared instance. `'transient'`: a new instance per resolve. `'scoped'`: one instance per [scope](#createscope); resolving it from the root throws `IoCScopeRequiredError`. |
+| `Name`     | all three                          | `'$default'` | Registers under a name, so several services share one key. Named and unnamed registrations never stand in for each other.                                                                                  |
+| `Default`  | all three                          | `false`      | A replaceable default; see [defaults](#defaults) below.                                                                                                                                                    |
+| `Replace`  | all three                          | `false`      | Replaces an existing registration in this container on purpose. Without it, registering a key and name again throws.                                                                                       |
+| `Dispose`  | all three                          | none         | `(instance) => …`: cleanup run when the owning container is disposed, for resources without `Symbol.asyncDispose` / `Symbol.dispose` (`(kv) => kv.close()`).                                               |
+| `Deps`     | `RegisterClass`, `RegisterFactory` | none         | The services to inject, in order: keys or `[key, name]`.                                                                                                                                                   |
+| `Type`     | `RegisterClass`                    | the class    | The token to register the class under; the class must satisfy its type.                                                                                                                                    |
+
+#### Defaults
 
 Frameworks and modules register what an application may replace with `Default: true`:
+
+- If a non-default registration of the key and name already exists, here or in a parent, the
+  `Default` call does nothing.
+- Any later registration replaces a default without `Replace: true`; a later `Default` replaces an
+  earlier one.
 
 ```ts
 import { IoCContainer, IoCToken } from '@fathym/ioc';
@@ -330,6 +344,9 @@ Typed(): IoCContainer<IoCNoKeys>
 Returns the same container, typed with an empty registry. Each registration then adds its key (or
 `[key, name]` for a named registration) to the type. Give tokens a name type argument
 (`IoCToken<string, 'Url'>('Url')`) so that tokens of the same service type stay distinct.
+
+TypeScript compares classes by shape, so an unregistered class with the same members as a
+registered one passes the check; a class with a private field doesn't. `Validate()` catches it.
 
 ```ts
 import { IoCContainer, IoCToken } from '@fathym/ioc';
@@ -553,8 +570,10 @@ Creates a child container, for one request, command, job or test.
 
 - The scope resolves everything its parent can. Singletons stay shared with the parent.
 - `scoped` registrations get one instance per scope, built in and disposed with that scope.
-- Registrations made on the scope override the parent's, for this scope only. A `Default`
-  registered on a scope yields to the parent's registration.
+- Registrations made on the scope override the parent's, for this scope only. Services the scope
+  builds (scoped and transient ones) see those overrides; a parent's singleton doesn't, since the
+  parent builds it. [`Isolate`](#isolatekeys) gives the scope its own copy of a singleton that
+  does. A `Default` on a scope yields to a parent's non-default registration.
 - A scope skips modules its parent already has, and has its own `Start()` and `State`.
 - Dispose it when done (`await using scope = ioc.CreateScope()`). Disposing the parent disposes its
   live scopes too, and a scope can't be used once its parent is disposed.
@@ -629,10 +648,12 @@ Adds modules, each after the modules it `Requires`. Each module's `Register` run
 with this container. A module already added here or in a parent is skipped, so shared
 requirements are registered once.
 
-- **Before `Start()` only.** A module added to a container that isn't `idle` throws
+- **Before `Start()` only.** A new module added to a container that isn't `idle` throws
   [`Module '…' was added after Start()`](./errors.md#module--was-added-after-start). Late plugins
   go in a scope: `ioc.CreateScope().Use(plugin)`, then `scope.Start()`.
 - **Not all-or-nothing.** If a module's `Register` throws, the modules registered before it stay.
+- **One container per module.** A module added to a scope and then to its parent is added (and
+  started) twice; add shared modules to the parent first.
 - **On a [typed container](#typed),** `Use()` doesn't compile until every key the modules `Needs`
   is registered, and what [typed modules](#definemoduledefinition) register is added to the type.
 
@@ -831,8 +852,9 @@ Shuts the container down, in this order:
 
 Every step runs even if an earlier one fails. The failures are thrown together as one
 [`IoCDisposeError`](./errors.md#errors-occurred-while-disposing-the-ioc-container) (an
-`AggregateError`). Calling it again returns the same promise. Afterwards, every method except
-`Dispose()` and `State` throws `IoCContainerDisposedError`.
+`AggregateError`). Calling it again returns the same promise. Afterwards, resolving, registering,
+`Use()`, `CreateScope()`, `Start()` and `Activate()` throw `IoCContainerDisposedError`; inspection
+(`Has`, `Names`, `Describe`, `Validate`) still works.
 
 ```ts
 import { IoCContainer } from '@fathym/ioc';

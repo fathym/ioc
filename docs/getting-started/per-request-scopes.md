@@ -59,12 +59,14 @@ console.log(await res.json()); // { requestId: "…", path: "/notes" }
 await server.shutdown();
 ```
 
+Run it with `deno run --allow-net main.ts`.
+
 ## What just happened
 
 - **`CreateScope()` makes a cheap child container.** It can resolve everything the root can.
-  Nothing is copied. Once the scope owns something to dispose (here, its `RequestContext`), the
-  root keeps track of it until it is disposed, so even a forgotten scope is closed when the root
-  is disposed. A scope that owns nothing isn't tracked at all.
+  Nothing is copied. A scope that owns something to dispose (a disposable scoped instance) is
+  tracked by the root, so even a forgotten scope is closed when the root is disposed. This one
+  owns nothing to dispose, so it isn't tracked at all.
 - **`scoped` services get one instance per scope.** Every service in this request shares the same
   `RequestContext`; the next request gets a new one.
 - **Registrations on a scope stay in that scope.** `$Request` exists only inside this request's
@@ -73,8 +75,8 @@ await server.shutdown();
   its registration wins inside the scope.
 - **Transient services built in a scope receive the scope.** That's how `NotesHandler` sees this
   request's `$Request` and `RequestContext`.
-- **`await using` disposes the scope** when the handler finishes, cleaning up anything the scope
-  created.
+- **`await using` disposes the scope** when the handler finishes, disposing the scoped instances
+  it built.
 
 > **Warning:** A scope is a child container _you_ create. It is not tied to an HTTP request
 > unless you create one per request, as above. A singleton is built once, by the container it is

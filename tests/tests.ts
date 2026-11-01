@@ -23,6 +23,7 @@ import './ioc/typed-modules.tests.ts';
 import './ioc/records.tests.ts';
 import './ioc/deps.tests.ts';
 import './ioc/validate.tests.ts';
+import './ioc/edge-cases.tests.ts';
 import './ioc/edges.tests.ts';
 import './docs/docs-check.tests.ts';
 import './docs/examples.tests.ts';

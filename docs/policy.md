@@ -33,7 +33,7 @@ Releases follow [Semantic Versioning 2.0.0](https://semver.org/):
 | Release             | May contain                                                                                 |
 | ------------------- | ------------------------------------------------------------------------------------------- |
 | **Patch** (`1.0.x`) | Bug fixes and documentation. No new API.                                                    |
-| **Minor** (`1.x.0`) | New API, new options, new error codes and events, deprecations. Nothing breaks.             |
+| **Minor** (`1.x.0`) | New API, new options, new error codes and validation kinds, deprecations. Nothing breaks.   |
 | **Major** (`x.0.0`) | Breaking changes, each listed in the changelog with a migration guide in `docs/migration/`. |
 
 ### What counts as breaking
@@ -126,10 +126,10 @@ last minor that supports its runtime.
 3. **Checks before publishing:** `deno task build` (format, lint, type check, docs check),
    `deno task test`, `deno task test:runtimes --require-all`, and the test suites of the main
    dependents against the release candidate.
-4. **JSR from CI, npm from the same commit.** The `fathym/build-n-publish` workflow publishes to
-   [JSR](https://jsr.io/@fathym/ioc), the primary registry. The npm package is built from the same
-   released commit with `deno task build:npm --version=<version>` and published with the same
-   version number.
+4. **JSR from CI.** The `fathym/build-n-publish` workflow publishes to
+   [JSR](https://jsr.io/@fathym/ioc). Node.js and Bun projects install it from JSR
+   (`npx jsr add @fathym/ioc`). `deno task build:npm` builds an npm-style package only for the
+   runtime checks; it isn't published to npm.
 5. **Provenance** (sources, release channels, version pins) is recorded in `UPSTREAM.md`.
 
 The step-by-step checklist is in [CONTRIBUTING](../CONTRIBUTING.md#releasing).

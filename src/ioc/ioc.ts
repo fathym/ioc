@@ -119,15 +119,15 @@ export type IoCServiceOptions = {
    * `singleton` (default): one shared instance. `transient`: a new instance per resolve.
    * `scoped`: one instance per scope (see {@link IoCContainer.CreateScope}).
    */
-  Lifetime?: 'transient' | 'scoped';
+  Lifetime?: 'singleton' | 'transient' | 'scoped';
 
   /** Registers under a name, so several services can share one key (`$default` when omitted). */
   Name?: string;
 
   /**
-   * Registers a default that yields to any other registration of the same key and name, whatever
-   * the order: if one exists (here or in a parent) this call does nothing, and a later
-   * registration replaces it. Frameworks use it for the services an application may replace.
+   * Registers a replaceable default. If a non-default registration of the key and name exists,
+   * here or in a parent, this call does nothing; any later registration replaces it without
+   * `Replace: true`. Frameworks use it for the services an application may replace.
    */
   Default?: boolean;
 
@@ -183,8 +183,7 @@ export type IoCFactoryDependency<TKeys = any> = IoCDependency<any> & IoCAllowedK
  * or `[key, name]` for a named registration.
  */
 export type IoCRegistered<TKey, TName extends string = '$default'> = TKey extends // deno-lint-ignore no-explicit-any
-IoCToken<any, string> | IoCServiceKeyConstructor<any>
-  ? (string extends TName ? readonly [TKey, string]
+IoCDependencyKey<any> ? (string extends TName ? readonly [TKey, string]
     : TName extends '$default' ? TKey
     : readonly [TKey, TName])
   : never;
@@ -225,8 +224,9 @@ export type IoCRegisterClassOptions<
     /**
      * The services to pass to the constructor, in parameter order, checked against the
      * constructor's parameter types (and, on a {@link IoCContainer.Typed typed container},
-     * against the keys registered so far). The container resolves them (in the resolving scope)
-     * and calls `new clazz(...deps)`. Declared dependencies are also checked by `Validate()`.
+     * against the keys registered so far). The container that builds the instance resolves them
+     * (for a singleton, the container it is registered in) and calls `new clazz(...deps)`.
+     * Declared dependencies are also checked by `Validate()`.
      */
     Deps?: IoCDependenciesFor<ConstructorParameters<C>, TKeys>;
 
@@ -308,6 +308,9 @@ interface IoCRegistrationSpec {
 interface IoCStored extends IoCRegistration {
   readonly owner: IoCContainer;
 }
+
+/** What each override replaced, so restores can run in any order (see `Override`). */
+const OVERRIDDEN: WeakMap<object, IoCStored | undefined> = new WeakMap();
 
 /** An instance a container must dispose. */
 interface IoCOwned {
@@ -686,16 +689,34 @@ export class IoCContainer<TKeys = any> {
 
     self.RegisterValue(key, value, { Name: name, Replace: true });
 
-    const override = self.registrations.get(k)?.get(name);
+    const override = self.registrations.get(k)!.get(name)!;
+
+    OVERRIDDEN.set(override, previous);
 
     return () => {
       const bank = self.registrations.get(k);
 
-      // Something replaced the override since; leave it alone.
-      if (!bank || bank.get(name) !== override) return;
+      const current = bank?.get(name);
 
-      if (previous) bank.set(name, previous);
-      else bank.delete(name);
+      if (!bank || !current) return;
+
+      const before = OVERRIDDEN.get(override);
+
+      if (current === override) {
+        if (before) bank.set(name, before);
+        else bank.delete(name);
+
+        return;
+      }
+
+      // Restored out of order: a later override is in place; make it restore past this one.
+      for (let r: IoCStored | undefined = current; r && OVERRIDDEN.has(r); r = OVERRIDDEN.get(r)) {
+        if (OVERRIDDEN.get(r) === override) {
+          OVERRIDDEN.set(r, before);
+
+          return;
+        }
+      }
     };
   }
 
@@ -839,6 +860,9 @@ export class IoCContainer<TKeys = any> {
     for (const item of keys) {
       const { key, name } = normalizeDependency(item);
 
+      // The scope already has its own registration: nothing to isolate.
+      if (self.registrations.get(key)?.has(name)) continue;
+
       const reg = self.parent.lookup(key, name, undefined);
 
       if (reg.kind === 'value') {
@@ -978,8 +1002,9 @@ export class IoCContainer<TKeys = any> {
   /**
    * Shuts the container down: waits for a running `Start()`, runs `OnStop` of every started module
    * (its live scopes' modules first, then its own, in reverse start order), disposes its live
-   * scopes, then disposes every instance it created, in reverse creation order. Every step runs even if an earlier one fails; failures are thrown
-   * together as an `IoCDisposeError`. Calling it again returns the same promise.
+   * scopes, then disposes every instance it created, in reverse creation order. Every step runs
+   * even if an earlier one fails; failures are thrown together as an `IoCDisposeError`. Calling it
+   * again returns the same promise.
    */
   public Dispose(): Promise<void> {
     const self = this.self();
@@ -1034,7 +1059,11 @@ export class IoCContainer<TKeys = any> {
 
     const visible = self.visible().map(({ reg }) => reg);
 
-    const find = (dep: IoCDependencyRecord) => self.find(dep.key, dep.name);
+    // Dependencies resolve in the container that builds the service: a singleton's in the
+    // container it is registered in, anything else's in the container resolving it (here, or the
+    // builder of the singleton that needs it).
+    const builderOf = (reg: IoCStored, from: IoCContainer) =>
+      reg.lifetime === 'singleton' ? reg.owner : from;
 
     for (const reg of visible) {
       if (reg.kind === 'class' && !reg.deps && reg.ctor) {
@@ -1050,8 +1079,10 @@ export class IoCContainer<TKeys = any> {
         }
       }
 
+      const builder = builderOf(reg, self);
+
       for (const dep of reg.deps ?? []) {
-        if (!find(dep) && !self.isExpected(dep)) {
+        if (!builder.find(dep.key, dep.name) && !builder.isExpected(dep)) {
           issues.push({
             Kind: 'missing',
             Service: reg.label,
@@ -1066,7 +1097,7 @@ export class IoCContainer<TKeys = any> {
 
         const visit = (current: IoCRegistration, via: string[]) => {
           for (const dep of current.deps ?? []) {
-            const target = find(dep);
+            const target = builder.find(dep.key, dep.name);
 
             if (!target || seen.has(target)) continue;
 
@@ -1095,7 +1126,7 @@ export class IoCContainer<TKeys = any> {
 
     const reported = new Set<string>();
 
-    const walk = (reg: IoCRegistration, path: IoCRegistration[]) => {
+    const walk = (reg: IoCStored, from: IoCContainer, path: IoCRegistration[]) => {
       if (state.get(reg) === 'done') return;
 
       if (state.get(reg) === 'visiting') {
@@ -1118,16 +1149,18 @@ export class IoCContainer<TKeys = any> {
 
       state.set(reg, 'visiting');
 
-      for (const dep of reg.deps ?? []) {
-        const target = find(dep);
+      const builder = builderOf(reg, from);
 
-        if (target) walk(target, [...path, reg]);
+      for (const dep of reg.deps ?? []) {
+        const target = builder.find(dep.key, dep.name);
+
+        if (target) walk(target, builder, [...path, reg]);
       }
 
       state.set(reg, 'done');
     };
 
-    for (const reg of visible) walk(reg, []);
+    for (const reg of visible) walk(reg, self, []);
 
     if (issues.length && options?.Throw !== false) throw new IoCValidationError(issues);
 
@@ -1205,13 +1238,18 @@ export class IoCContainer<TKeys = any> {
    * @ignore
    */
   protected find(key: IoCKey, name: string): IoCStored | undefined {
+    let fallback: IoCStored | undefined;
+
     for (const c of this.chain()) {
       const reg = c.registrations.get(key)?.get(name);
 
-      if (reg) return reg;
+      // A default yields to a non-default registration further up, whenever that was made.
+      if (reg && !reg.default) return reg;
+
+      fallback ??= reg;
     }
 
-    return undefined;
+    return fallback;
   }
 
   /**
@@ -1338,6 +1376,12 @@ export class IoCContainer<TKeys = any> {
       ? 'singleton'
       : options.Lifetime ?? 'singleton';
 
+    if (!['singleton', 'transient', 'scoped'].includes(lifetime)) {
+      throw new IoCRegistrationError(
+        `${label} has an unknown Lifetime '${lifetime}'; use 'singleton', 'transient' or 'scoped'.`,
+      );
+    }
+
     const value = spec.value;
 
     // A value belongs to whoever created it: nobody disposes it unless a Dispose option says how.
@@ -1442,6 +1486,9 @@ export class IoCContainer<TKeys = any> {
 
       this.track(value, reg.label, reg.dispose);
 
+      // Built after the container was disposed: the instance was disposed at once (see `track`).
+      if (this.isGone()) throw new IoCContainerDisposedError();
+
       return value;
     };
 
@@ -1484,6 +1531,15 @@ export class IoCContainer<TKeys = any> {
       throw err;
     }
 
+    // A thenable that isn't a native promise is treated as one, so it is shared, awaited once,
+    // disposed and bounded like any async build.
+    if (
+      !(result instanceof Promise) && typeof (result as { then?: unknown } | null)?.then ===
+        'function'
+    ) {
+      result = Promise.resolve(result);
+    }
+
     if (result instanceof Promise) result.then(done, done);
     else done();
 
@@ -1510,8 +1566,8 @@ export class IoCContainer<TKeys = any> {
 
     const owned: IoCOwned = { value, label, dispose };
 
-    if (this.disposed) {
-      // Finished building after the container was disposed: dispose it now.
+    if (this.isGone()) {
+      // Finished building after the container (or a parent) was disposed: dispose it now.
       void this.disposeEntry(owned).catch(noop);
 
       return;
@@ -1520,6 +1576,19 @@ export class IoCContainer<TKeys = any> {
     this.owned.push(owned);
 
     this.retain();
+  }
+
+  /**
+   * True when this container or a parent has been disposed.
+   *
+   * @ignore
+   */
+  protected isGone(): boolean {
+    for (const c of this.chain()) {
+      if (c.disposed) return true;
+    }
+
+    return false;
   }
 
   /**
@@ -1559,6 +1628,8 @@ export class IoCContainer<TKeys = any> {
   /** @ignore */
   protected async startNow(options?: { Validate?: boolean }): Promise<void> {
     this.assertNotDisposed();
+
+    if (this.disposing) throw new IoCContainerDisposedError();
 
     this.state = 'starting';
 

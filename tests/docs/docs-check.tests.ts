@@ -309,6 +309,6 @@ Deno.test('docs-check - checkDocs', async (t) => {
     const llms = buildLlmsTxt(cleanSite(), RAW);
 
     assert(llms.startsWith('# @fathym/ioc\n\n> About Home.'));
-    assert(llms.includes(`- [Guides](${RAW}docs/guides/README.md): About Guides.`));
+    assert(llms.includes(`${RAW}docs/README.md)`), llms);
   });
 });

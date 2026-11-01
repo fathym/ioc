@@ -143,8 +143,8 @@ console.log(notes.appName); // Notes
 ```
 
 Move `.RegisterClass(Clock)` below `NotesService` and the code no longer compiles. The error names
-what is registered so far, so you know what to move. The rest of this tutorial uses typed
-containers.
+what is registered so far, so you know what to move. Typed containers are optional; later steps
+use them where they help.
 
 ## Same instance, or a new one?
 

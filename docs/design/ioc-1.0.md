@@ -72,7 +72,8 @@ day a dependent needs it.
   but forced every repository to agree which package owns each token and to release together.
   Names keep 0.x behavior: `IoCToken('X')` and `Symbol.for('X')` are the same key, so a
   repository can migrate file by file. Collisions are avoided by naming (`'eac/Config'`). A unique
-  `Symbol()` still works for a key that must stay private.
+  symbol typed as a token (`Symbol('Secret') as IoCToken<Secret, 'Secret'>`) still works for a key
+  that must stay private.
 - **Modules get the container itself.** Without sealing there is nothing for a facade to protect.
 - **Lazy by default.** `Start()` validates and starts modules; it doesn't open every connection.
   `Activate()` is there for apps that want every singleton built at boot.

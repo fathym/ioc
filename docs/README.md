@@ -50,7 +50,8 @@ page.
 - **Frontmatter on every page** in the house schema (`FrontmatterVersion`, `DocumentType`,
   `Title`, `Summary`, `Created`, `Updated`, `Owners`, `References`).
 - **One idea per example.** Each example is a complete module that type-checks and runs in CI.
-  Tokens are written `IoCToken<T, 'Name'>('Name')`.
+  Tokens are written `IoCToken<T, 'Name'>('Name')` where a typed container needs the name in the
+  type, and `IoCToken<T>('Name')` otherwise.
 - **1.0 as it is.** Pages describe the current API only; changes from 0.x live in the
   [migration guide](./migration/from-0.x.md) and the [changelog](../CHANGELOG.md).
 - **Links are tagged by type** (_[Tutorial]_, _[How-to]_, _[Explanation]_, _[Reference]_), and

@@ -160,7 +160,8 @@ The IoC container has been disposed.
 
 `IoCContainerDisposedError` (`IOC_CONTAINER_DISPOSED`). A container, or a scope whose parent was
 disposed, was used after `Dispose()`. `Start()` also rejects with it when `Dispose()` runs while
-it is starting. **Fix:** keep a container alive while it is used; create a new one (or a new
+it is starting, and so does a `Resolve` whose build finishes after the container was disposed
+(the instance is disposed at once). **Fix:** keep a container alive while it is used; create a new one (or a new
 scope) instead of reusing a disposed one.
 
 ## IoC activation failed for: …
@@ -282,7 +283,7 @@ Keys must be tokens or classes, but a string was given. Create a token with IoCT
 ```
 
 Code `IOC_INVALID_KEY`. A string, plain object or plain function was used as a key. **Fix:** use
-a token (`IoCToken<T>('Name')`, or any symbol) or a class.
+a token (`IoCToken<T>('Name')`) or a class.
 
 ### RegisterClass expects a class
 
@@ -291,6 +292,15 @@ RegisterClass expects a class; register functions with RegisterFactory and other
 ```
 
 **Fix:** register a function with `RegisterFactory`, and any other value with `RegisterValue`.
+
+### … has an unknown Lifetime '…'; use 'singleton', 'transient' or 'scoped'.
+
+```text
+Session has an unknown Lifetime 'Scoped'; use 'singleton', 'transient' or 'scoped'.
+```
+
+A `Lifetime` value that isn't one of the three, usually from JavaScript or a cast. **Fix:** use
+`'singleton'` (or leave it out), `'transient'` or `'scoped'`, in lower case.
 
 ### RegisterFactory expects a factory function.
 
@@ -340,7 +350,14 @@ Errors the compiler reports for typed keys, `Deps` and typed containers.
 
 ### `Argument of type 'string' is not assignable to parameter of type 'IoCServiceKey<unknown>'`
 
-A string (or an untyped symbol) was used as a key. Use a token: `IoCToken<T>('Name')`.
+The same message names `'symbol'` or `'typeof k'` when an untyped symbol (`Symbol.for('Db')`,
+`Symbol('Db')`) is used. A key must be a typed token: `IoCToken<T>('Name')`, or a symbol cast to
+one (`Symbol('Db') as IoCToken<Db, 'Db'>`).
+
+### `Type 'string' does not satisfy the constraint 'IoCServiceKey<unknown>'`
+
+An explicit type argument from 0.x code, such as `Resolve<Db>($Db)`. The type now comes from the
+key: write `Resolve($Db)`.
 
 ### `Type 'typeof X' is not assignable to type 'IoCDependency<Y> …'`
 
@@ -348,9 +365,10 @@ A `Deps` entry doesn't match the constructor parameter at that position: wrong o
 or a missing entry (`Source has 1 element(s) but target requires 2`). Make `Deps` follow the
 constructor's parameters, in order.
 
-### `… is missing the following properties from type 'IoCTypeMismatch<X, Y>'`
+### `Type 'IoCToken<Db, "Db">' is not assignable to type 'IoCTypeMismatch<NotDb, Db> | undefined'`
 
-`RegisterClass(X, { Type: $Y })` where instances of `X` don't satisfy the token's type. Make the
+`RegisterClass(NotDb, { Type: $Db })` where instances of the class don't satisfy the token's
+type. Make the
 class implement the type, or use the right token.
 
 ### `Property ''@fathym/ioc/no-keys'' is missing` or `… is not assignable to type 'IoCNoKeys | …'`

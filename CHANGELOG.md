@@ -45,8 +45,11 @@ that share a container upgrade together.
   `symbols` maps.
 - The `Strict`, `Lazy`, `LazyByDefault`, `Diagnostics` and `AsyncContext` options, and
   `IoCContainer.Create()`.
-- From 0.1: `Decorate`, `IoCLazy`, `IoCAll`, scope levels (`Levels`, `ScopeLevel`,
-  `CreateScope({ Level })`), and the async-context tracking of resolution chains.
+- From 0.1: `Decorate`, `IoCLazy`, `IoCAll` (also in `ResolveRecord`), scope levels (`Levels`,
+  `ScopeLevel`, `CreateScope({ Level })`), the async-context tracking of resolution chains, and
+  `IoCKeyCollisionError`.
+- From 0.1's `Describe()`: scope levels, observed dependencies and build state. It now lists
+  registrations (key, name, kind, lifetime, default, `Deps`, depth) and modules.
 - The cross-version protocol and the 0.x interop fixtures.
 
 ### Changed
@@ -56,16 +59,21 @@ that share a container upgrade together.
 - **Tokens are typed names:** `IoCToken<T, 'Name'>('Name')` returns `Symbol.for('Name')`, so
   existing `Symbol.for` keys keep working. Class keys are the class itself, never matched by name.
 - **Registering a key and name twice throws** (`IOC_DUPLICATE_REGISTRATION`) unless it says
-  `Replace: true` or the existing registration is a `Default: true`. A default yields to any
-  other registration, before or after it, including a parent's.
+  `Replace: true` or the existing registration is a `Default: true`. A default does nothing when
+  a non-default registration exists, here or in a parent; any later registration replaces it.
 - **Lazy by default:** services are built on first resolve. `Activate()` builds every singleton
-  now.
+  now. **`Start()` no longer builds singletons** (it did in 0.1); call `Activate()` after it to
+  keep that behavior.
 - **Timeouts by default:** anything pending after `PendingTimeoutMs` (30 s; `0` turns it off)
   fails with `IoCResolveTimeoutError`, including `OnStart`, `OnStop` and disposers.
 - **Scopes:** disposing a container disposes its live scopes, then its own instances in reverse
   creation order.
 
 ### Added
+
+Compared with 0.0.x. Most of these first shipped in 0.1.0; new since 0.1 are `DefineModule`,
+module `Needs`, `State`, `IoCModuleCycleError`, `IoCNotIsolatableError` and the 30-second default
+timeout.
 
 - **Modules:** `IoCModule` (`Name`, `Requires`, `Needs`, `Register`, `OnStart`, `OnStop`),
   `Use()`, `Start()` and `State`. `Start()` validates, then runs `OnStart` one module at a time in

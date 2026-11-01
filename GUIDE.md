@@ -38,7 +38,8 @@ Use this playbook to keep IoC container work predictable and discoverable.
 - Follow the [versioning policy](./docs/policy.md): breaking changes only in a
   major release, each with a migration guide.
 - Keep the documentation in `docs/` complete and verified: `deno task docs:check` runs every
-  example and checks links, frontmatter, footers and the error catalog.
+  Markdown and JSDoc code block, type-checks `examples/`, and checks links, frontmatter, footers
+  and the error catalog; `deno task test` runs the examples.
 - Align APIs with other ref-arch libraries and the CLI where integration
   matters. See [`docs/design/ioc-1.0.md`](./docs/design/ioc-1.0.md).
 

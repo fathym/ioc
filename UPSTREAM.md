@@ -34,15 +34,15 @@ References:
 
 ## Versions
 
-| Version | Status                 | Notes                                                                                                                                                   |
-| ------- | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 0.0.36  | Latest published       | The original container; 0.0.12–0.0.36 share one API                                                                                                     |
-| 0.1.0   | Superseded by 1.0      | Typed tokens, scopes, disposal, `Validate`, error codes, `Default`, strict mode, modules and lifecycle, scope levels, `Describe`                        |
-| 1.0.0   | Releasing (major bump) | Reference keys, sealed module registrations, typed modules, safe defaults, layered lifecycle; no 0.x compatibility ([design](./docs/design/ioc-1.0.md)) |
+| Version | Status                 | Notes                                                                                                                                                                                                                                                                   |
+| ------- | ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0.0.36  | Latest published       | The original container; 0.0.12–0.0.36 share one API                                                                                                                                                                                                                     |
+| 0.1.0   | Superseded by 1.0      | Typed tokens, scopes, disposal, `Validate`, error codes, `Default`, strict mode, modules and lifecycle, scope levels, `Describe`                                                                                                                                        |
+| 1.0.0   | Releasing (major bump) | Typed name tokens (`Symbol.for`), explicit registration, strict duplicates with `Default`/`Replace`, scopes and disposal, modules with ordered `Start()`/`Dispose()`, typed modules, `Validate()`, pending timeout; no 0.x interop ([design](./docs/design/ioc-1.0.md)) |
 
-**Versions pinned by dependents** (from the dependent survey in
-[dependent-follow-ups.md](./docs/design/dependent-follow-ups.md)): 0.0.12 (`eac-runtime`), 0.0.35 (`eac-applications`)
-and 0.0.36 (`cli`, `eac`). 1.0 does not interoperate with 0.x containers; each dependent moves to
+**Versions pinned by dependents** (at the time of the 1.0 work): 0.0.12 (`eac-runtime`),
+0.0.35 (`eac-applications`) and 0.0.36 (`cli`, `eac`); what each changes is in
+[dependent-follow-ups.md](./docs/design/dependent-follow-ups.md). 1.0 does not interoperate with 0.x containers; each dependent moves to
 1.0 with the [migration guide](./docs/migration/from-0.x.md).
 
 ## Publishing checklist

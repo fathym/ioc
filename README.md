@@ -46,13 +46,15 @@ async setup, per-request scopes and cleanup. No decorators, no `reflect-metadata
   you say `Replace: true`; framework defaults use `Default: true` and yield to the app.
 - **Async-first.** Factories can be `async`. Concurrent resolves share one build, a failed build
   is retried, and a cycle through a factory's `ioc` throws at once.
-- **Scopes and cleanup.** One scope per request or command, with `await using`. Instances are
-  disposed by the container that built them, in reverse order.
+- **Scopes and cleanup.** One scope per request or command, with `await using`. Singletons and
+  scoped instances are disposed by the container that built them, in reverse order; whoever
+  resolves a transient owns it.
 - **Modules.** Units of registrations with `OnStart`/`OnStop`. `Start()` runs them in order, a
   failed start stops what started, and `Dispose()` stops them in reverse. `DefineModule` types
   what a module needs and provides.
 - **Checked wiring.** `Validate()` reports missing, cyclic and captive dependencies. Every error
-  has a stable code and names the fix.
+  has a stable code, and the [error catalog](https://github.com/fathym/ioc/blob/main/docs/reference/errors.md)
+  explains each one and how to fix it.
 
 ## Install
 
@@ -121,7 +123,8 @@ The generated API docs are on [JSR](https://jsr.io/@fathym/ioc/doc). AI tools ca
 
 ## Status
 
-Used across the Fathym ecosystem (CLI, EaC runtime and libraries).
+0.x is used across the Fathym ecosystem (CLI, EaC runtime and libraries); those repositories move
+to 1.0 with the [migration guide](https://github.com/fathym/ioc/blob/main/docs/migration/from-0.x.md).
 
 - Versions follow semantic versioning: breaking changes only in a major release, each with a
   migration guide. The [versioning policy](https://github.com/fathym/ioc/blob/main/docs/policy.md)

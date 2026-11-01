@@ -158,8 +158,8 @@ export class IoCValidationError extends IoCError {
 
 /**
  * Thrown when resolving a service would require the service itself, directly or through other
- * services (`A -> B -> A`), including when two resolutions running at the same time wait on each
- * other. Without this check such a graph would wait on itself forever.
+ * services (`A -> B -> A`), when the chain is followed through factories' `ioc` or `Deps`. Without
+ * this check such a graph would wait on itself forever.
  */
 export class IoCCircularDependencyError extends IoCError {
   /** The error name, for logs and `instanceof`-free checks. */
@@ -179,9 +179,10 @@ export class IoCCircularDependencyError extends IoCError {
 }
 
 /**
- * Thrown when a call is invalid: a key that isn't a token or class (`IOC_INVALID_KEY`), a
- * factory that isn't a function, a value passed where a class is expected, invalid options, or a
- * module calling a method only the application may call (`IOC_INVALID_REGISTRATION`).
+ * Thrown when a call is invalid: a key that isn't a token or class (`IOC_INVALID_KEY`); or a
+ * non-class given to `RegisterClass`, a non-function factory, an unknown `Lifetime`, a non-module
+ * given to `Use()`, a module added after `Start()`, `Isolate()` on a root container, or an
+ * out-of-range `PendingTimeoutMs` (`IOC_INVALID_REGISTRATION`).
  */
 export class IoCRegistrationError extends IoCError {
   /** The error name, for logs and `instanceof`-free checks. */
@@ -266,7 +267,10 @@ export class IoCActivationError extends AggregateError {
   }
 }
 
-/** Thrown by `Dispose()`, wrapping every error raised while disposing. It is an `AggregateError` too. */
+/**
+ * Thrown by `Dispose()`, wrapping every error raised while disposing. It is an `AggregateError`
+ * too.
+ */
 export class IoCDisposeError extends AggregateError {
   /** The error name, for logs and `instanceof`-free checks. */
   public override name = 'IoCDisposeError';

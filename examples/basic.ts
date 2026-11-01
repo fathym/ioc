@@ -1,5 +1,5 @@
 /**
- * Basic registration and resolution: a value, a class, declared dependencies and a factory.
+ * Basic registration and resolution: a value, classes and declared dependencies.
  *
  * Run: deno run examples/basic.ts
  */

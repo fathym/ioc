@@ -8,8 +8,9 @@
  *   that use the same name share the key); a class key is the class itself.
  * - **Explicit registration:** `RegisterClass`, `RegisterFactory` and `RegisterValue`. Registering
  *   a key twice throws unless it says `Replace: true`; framework defaults use `Default: true`.
- * - **Scopes and cleanup:** {@link IoCContainer.CreateScope} per request or command; instances
- *   are disposed with the container (or scope) that built them, `await using` included.
+ * - **Scopes and cleanup:** {@link IoCContainer.CreateScope} per request or command; singleton
+ *   and scoped instances are disposed with the container (or scope) that built them, `await using`
+ *   included.
  * - **Modules:** units of registrations with `OnStart`/`OnStop`, started in order by
  *   {@link IoCContainer.Start} and stopped in reverse by `Dispose()`. {@link DefineModule} types
  *   what a module needs and provides.

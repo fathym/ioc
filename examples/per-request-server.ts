@@ -63,7 +63,8 @@ ioc.RegisterClass(NotesHandler, {
   Lifetime: 'transient',
 });
 
-await ioc.Start(); // validates the wiring and opens KV now, so a bad setup fails at startup
+await ioc.Start(); // validates the wiring
+await ioc.Activate(); // opens KV now, so a bad setup fails at startup
 
 const server = Deno.serve({ port: 0, onListen() {} }, async (req) => {
   await using scope = ioc.CreateScope();

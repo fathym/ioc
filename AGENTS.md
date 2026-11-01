@@ -54,7 +54,7 @@ conventions. The details are in [CONTRIBUTING](./CONTRIBUTING.md#documentation) 
 - **Where things go:**
   - `README.md` is the landing page; it links into `docs/` with absolute GitHub URLs, because JSR
     renders it too.
-  - `docs/` holds the tutorial, concepts, guides, reference and migration guides.
+  - `docs/` holds the tutorial, the reference, the migration guide, design notes and the policy.
   - `examples/` holds runnable programs.
 - **Every page** has the house frontmatter, is linked from its folder `README.md`, and ends with
   `## What's Next`.

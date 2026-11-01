@@ -1,9 +1,9 @@
 // Validate(): missing, cycle, captive and arguments problems, from declared Deps only, without
 // building anything.
-import { IoCValidationError } from '../../src/ioc/errors.ts';
+import { IoCServiceNotFoundError, IoCValidationError } from '../../src/ioc/errors.ts';
 import { IoCContainer } from '../../src/ioc/ioc.ts';
 import { IoCToken } from '../../src/ioc/IoCToken.ts';
-import { assertEquals, assertThrows } from '../test.deps.ts';
+import { assertEquals, assertRejects, assertThrows } from '../test.deps.ts';
 
 const $Url = IoCToken<string>('ValUrl');
 
@@ -164,11 +164,43 @@ Deno.test('Validate - behavior', async (t) => {
   });
 
   await t.step('a scope validates against its parents, and its own registrations win', () => {
-    const root = new IoCContainer().RegisterClass(Repo, { Deps: [$Url] });
+    const root = new IoCContainer().RegisterClass(Repo, { Deps: [$Url], Lifetime: 'scoped' });
 
     assertEquals(kinds(root), ['missing']);
 
     const scope = root.CreateScope().RegisterValue($Url, 'kv://scope');
+
+    assertEquals(kinds(scope), []);
+  });
+
+  await t.step("a parent's singleton is checked where it is built, not in the scope", async () => {
+    // The root builds Repo, so a $Url registered only on the scope never reaches it.
+    const root = new IoCContainer().RegisterClass(Repo, { Deps: [$Url] });
+
+    const scope = root.CreateScope().RegisterValue($Url, 'kv://scope');
+
+    assertEquals(kinds(scope), ['missing']);
+    await assertRejects(() => scope.Resolve(Repo), IoCServiceNotFoundError);
+
+    // Isolated in the scope, it is built there and sees the scope's $Url.
+    const isolated = root.CreateScope().RegisterValue($Url, 'kv://scope').Isolate(Repo);
+
+    assertEquals(kinds(isolated), []);
+    assertEquals((await isolated.Resolve(Repo)).url, 'kv://scope');
+  });
+
+  await t.step("a scope's shadowing registration doesn't make a parent singleton captive", () => {
+    class Svc {
+      constructor(public url: string) {}
+    }
+
+    const root = new IoCContainer()
+      .RegisterValue($Url, 'kv://root')
+      .RegisterClass(Svc, { Deps: [$Url] });
+
+    const scope = root.CreateScope().RegisterFactory($Url, () => 'kv://scope', {
+      Lifetime: 'scoped',
+    });
 
     assertEquals(kinds(scope), []);
   });

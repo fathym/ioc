@@ -1,8 +1,9 @@
 // Every instance has exactly one owner (the container that first created it), which disposes it
 // exactly once; values handed in are never disposed; late arrivals are not leaked.
+import { IoCContainerDisposedError } from '../../src/ioc/errors.ts';
 import { IoCContainer } from '../../src/ioc/ioc.ts';
 import { IoCToken } from '../../src/ioc/IoCToken.ts';
-import { assert, assertEquals } from '../test.deps.ts';
+import { assertEquals, assertRejects } from '../test.deps.ts';
 
 class Counted {
   public disposed = 0;
@@ -65,24 +66,26 @@ Deno.test('Ownership', async (t) => {
   });
 
   await t.step(
-    'an instance that finishes building after Dispose() is disposed on arrival',
+    'an instance that finishes building after Dispose() is disposed on arrival, and the resolve rejects',
     async () => {
       const $Slow = IoCToken<Counted>('OwnSlow');
 
+      let late: Counted | undefined;
+
       const ioc = new IoCContainer().RegisterFactory($Slow, async () => {
         await tick(10);
-        return new Counted();
+        return late = new Counted();
       });
 
       const pending = ioc.Resolve($Slow);
 
       await ioc.Dispose();
 
-      const late = await pending;
+      await assertRejects(() => pending, IoCContainerDisposedError);
 
       await tick();
 
-      assertEquals(late.disposed, 1);
+      assertEquals(late?.disposed, 1);
     },
   );
 
@@ -106,10 +109,8 @@ Deno.test('Ownership', async (t) => {
     const pending = ioc.Resolve($Late);
 
     await ioc.Dispose();
-    await pending;
+    await assertRejects(() => pending, IoCContainerDisposedError);
     await tick();
-
-    assert(await pending instanceof Failing);
   });
 
   await t.step('scoped instances are still owned and disposed by their scope', async () => {
