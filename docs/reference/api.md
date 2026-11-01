@@ -4,7 +4,7 @@ DocumentType: Guide
 Title: API Reference
 Summary: Every public method, option, type and error of @fathym/ioc 1.0 - signature, behavior, edge cases and a runnable example, grouped by task.
 Created: 2026-10-13
-Updated: 2026-10-22
+Updated: 2026-11-01
 Owners:
   - fathym
 References:
@@ -932,7 +932,8 @@ Checks the registrations visible from this container without building anything, 
 | `arguments` | A class registered without `Deps` whose constructor declares parameters                                          |
 
 Only declared `Deps` are checked: what a factory resolves in its body is only known when it runs.
-Each issue is `{ Kind, Service, Message }`.
+Each issue is `{ Kind, Service, Message, Hint }`; `Hint` says what to change, and the thrown
+error's message shows it as a `Fix:` line under each problem.
 
 ```ts
 import { IoCContainer, IoCToken } from '@fathym/ioc';
@@ -1089,7 +1090,7 @@ registry; `any` (the default) means untyped.
 | `IoCServiceResolver<T>`   | `(ioc: IoCContainer) => T \| Promise<T>`: a factory without dependencies       |
 | `IoCDescription`          | What `Describe()` returns                                                      |
 | `IoCServiceDescription`   | One entry of `Describe().Services`                                             |
-| `IoCValidationIssue`      | One problem found by `Validate()`: `{ Kind, Service, Message }`                |
+| `IoCValidationIssue`      | One problem found by `Validate()`: `{ Kind, Service, Message, Hint }`          |
 | `IoCErrorCode`            | The union of every error code                                                  |
 
 ---
@@ -1121,6 +1122,8 @@ other class extends the abstract `IoCError`.
 | `IoCNotIsolatableError`         | `IOC_NOT_ISOLATABLE`                          | `Service`, `Reason`                             |
 | `IoCResolveTimeoutError`        | `IOC_RESOLVE_TIMEOUT`                         | `Service`, `TimeoutMs`                          |
 
+Every error class also has `DocsUrl`, the link to its code's section in the
+[error catalog](./errors.md#error-codes); `ioCErrorDocsUrl(code)` gives the same link for a code.
 Each message, its causes and its fix are in the [error catalog](./errors.md).
 
 ```ts

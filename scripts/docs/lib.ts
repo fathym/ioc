@@ -26,6 +26,9 @@ export type DocCheckOptions = {
   /** Path of the generated llms.txt, checked for staleness when set. */
   LlmsTxt?: string;
 
+  /** Path of llms-full.txt (the full text of the docs); checked to be up to date when set. */
+  LlmsFullTxt?: string;
+
   /** Raw-content URL prefix used for llms.txt links, e.g. `https://raw.githubusercontent.com/o/r/main/`. */
   RepoRawUrl?: string;
 };
@@ -263,8 +266,8 @@ const START_HERE = [
   'docs/reference/comparison.md',
 ];
 
-/** Builds llms.txt from the docs' frontmatter (https://llmstxt.org format). */
-export function buildLlmsTxt(files: DocFiles, rawUrl: string): string {
+/** The llms.txt groups, each with its pages in reading order. */
+function llmsSections(files: DocFiles): { Title: string; Paths: string[] }[] {
   const groups: [string, (path: string) => boolean][] = [
     ['Start here', (p) => START_HERE.includes(p)],
     ['Getting started (tutorial)', (p) => p.startsWith('docs/getting-started/')],
@@ -295,28 +298,36 @@ export function buildLlmsTxt(files: DocFiles, rawUrl: string): string {
     return i < 0 ? TUTORIAL.length : i;
   };
 
-  // The landing README carries no frontmatter; its tagline is the first `###` heading.
-  const tagline = (files.get('README.md') ?? '').match(/^### (.+)$/m)?.[1]?.trim();
+  return groups.map(([title, match]) => ({
+    Title: title,
+    Paths: [...files.keys()].filter((p) => match(p) && p.endsWith('.md')).sort((a, b) => {
+      const rank = (p: string) => (p.endsWith('README.md') ? 0 : 1);
+      return tutorialRank(a) - tutorialRank(b) || rank(a) - rank(b) || a.localeCompare(b);
+    }),
+  })).filter((section) => section.Paths.length);
+}
 
-  let out = `# @fathym/ioc\n\n> ${
-    tagline ?? 'Dependency injection for modern TypeScript. No decorators. No metadata.'
-  }\n\n`;
+/** The README tagline (its first `###` heading), used as the package summary. */
+function taglineOf(files: DocFiles): string {
+  return (files.get('README.md') ?? '').match(/^### (.+)$/m)?.[1]?.trim() ??
+    'Dependency injection for modern TypeScript. No decorators. No metadata.';
+}
+
+/** Builds llms.txt from the docs' frontmatter (https://llmstxt.org format). */
+export function buildLlmsTxt(files: DocFiles, rawUrl: string): string {
+  const tagline = taglineOf(files);
+
+  let out = `# @fathym/ioc\n\n> ${tagline}\n\n`;
 
   out += 'Every code example in these docs is type-checked in CI. Install from npm ' +
     '(`npm install @fathym/ioc`) or JSR (`deno add jsr:@fathym/ioc`); the examples import from ' +
-    '`@fathym/ioc`.\n';
+    '`@fathym/ioc`. The full text of the docs, in one file: ' +
+    `[llms-full.txt](${rawUrl}llms-full.txt).\n`;
 
-  for (const [title, match] of groups) {
-    const paths = [...files.keys()].filter((p) => match(p) && p.endsWith('.md')).sort((a, b) => {
-      const rank = (p: string) => (p.endsWith('README.md') ? 0 : 1);
-      return tutorialRank(a) - tutorialRank(b) || rank(a) - rank(b) || a.localeCompare(b);
-    });
+  for (const { Title, Paths } of llmsSections(files)) {
+    out += `\n## ${Title}\n\n`;
 
-    if (!paths.length) continue;
-
-    out += `\n## ${title}\n\n`;
-
-    for (const path of paths) {
+    for (const path of Paths) {
       const attrs = splitFrontmatter(files.get(path)!).attrs ?? {};
 
       // The landing README has no frontmatter: its title is the package name, its summary the tagline.
@@ -326,6 +337,36 @@ export function buildLlmsTxt(files: DocFiles, rawUrl: string): string {
 
       out += `- [${title}](${rawUrl}${path}): ${summary}\n`;
     }
+  }
+
+  return out;
+}
+
+/**
+ * Builds llms-full.txt: the text of every page llms.txt lists (except the optional history and
+ * design notes), then the runnable example programs, in one file an AI agent can read at once.
+ */
+export function buildLlmsFullTxt(files: DocFiles, rawUrl: string): string {
+  let out = `# @fathym/ioc: the complete documentation\n\n> ${taglineOf(files)}\n\n` +
+    'Every page of the docs in reading order, then the example programs. Every TypeScript block ' +
+    'and example here is type-checked and run in CI against this version. The index is ' +
+    `[llms.txt](${rawUrl}llms.txt).\n`;
+
+  for (const { Title, Paths } of llmsSections(files)) {
+    if (Title === 'Optional') continue;
+
+    for (const path of Paths) {
+      const { attrs, body } = splitFrontmatter(files.get(path)!);
+
+      out += `\n---\n\nSource: ${rawUrl}${path}${attrs?.Title ? ` (${attrs.Title})` : ''}\n\n` +
+        `${body.trim()}\n`;
+    }
+  }
+
+  const programs = [...files.keys()].filter((p) => /^examples\/[^/]+\.ts$/.test(p)).sort();
+
+  for (const path of programs) {
+    out += `\n---\n\nSource: ${rawUrl}${path}\n\n\`\`\`ts\n${files.get(path)!.trim()}\n\`\`\`\n`;
   }
 
   return out;
@@ -498,6 +539,15 @@ export function checkDocs(files: DocFiles, options: DocCheckOptions): DocProblem
             );
           }
         }
+
+        // Every error code has its own section, which errors link to as `DocsUrl`.
+        const anchors = anchorsOf(options.ErrorCatalog);
+
+        for (const [, code] of (files.get(source) ?? '').matchAll(/\| '(IOC_[A-Z_]+)'/g)) {
+          if (!anchors.has(code.toLowerCase())) {
+            report(options.ErrorCatalog, `has no section for the error code ${code}`);
+          }
+        }
       }
     }
   }
@@ -507,6 +557,14 @@ export function checkDocs(files: DocFiles, options: DocCheckOptions): DocProblem
 
     if (files.get(options.LlmsTxt) !== expected) {
       report(options.LlmsTxt, 'is out of date; run `deno task docs:llms`');
+    }
+  }
+
+  if (options.LlmsFullTxt && options.RepoRawUrl) {
+    const expected = buildLlmsFullTxt(files, options.RepoRawUrl);
+
+    if (files.get(options.LlmsFullTxt) !== expected) {
+      report(options.LlmsFullTxt, 'is out of date; run `deno task docs:llms`');
     }
   }
 

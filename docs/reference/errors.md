@@ -4,7 +4,7 @@ DocumentType: Guide
 Title: Error Catalog
 Summary: Every error message @fathym/ioc 1.0 can produce, keyed by its exact text - what it means and how to fix it - plus the TypeScript errors you will meet.
 Created: 2026-10-13
-Updated: 2026-10-26
+Updated: 2026-11-01
 Owners:
   - fathym
 References:
@@ -54,6 +54,90 @@ try {
   if (isIoCError(err, 'IOC_SERVICE_NOT_FOUND')) console.log('not registered');
 }
 ```
+
+Every error also has a `DocsUrl` that links to its code's section below, and `Validate()` puts a
+`Fix:` line under each problem. Both are written so that a person or a coding agent can act on
+them directly.
+
+## Error codes
+
+### `IOC_SERVICE_NOT_FOUND`
+
+`IoCServiceNotFoundError`: nothing is registered for the key and name being resolved.
+[Details](#no-service-is-registered-for-). **Fix:** register it, check the `Name`, or `Use()` the
+module that provides it.
+
+### `IOC_CIRCULAR_DEPENDENCY`
+
+`IoCCircularDependencyError`: resolving a service would need the service itself.
+[Details](#circular-dependency-detected-). **Fix:** move what both sides need into a third service,
+or resolve one side later, in a method instead of a constructor.
+
+### `IOC_VALIDATION_FAILED`
+
+`IoCValidationError`: `Validate()` (or `Start()`) found problems in the wiring; each one comes with
+a `Fix:` line. [Details](#ioc-validation-failed-).
+
+### `IOC_CONTAINER_DISPOSED`
+
+`IoCContainerDisposedError`: the container, or a parent of the scope, was already disposed.
+[Details](#the-ioc-container-has-been-disposed). **Fix:** don't use a container after
+`Dispose()`; create a new scope per request.
+
+### `IOC_ACTIVATION_FAILED`
+
+`IoCActivationError` (an `AggregateError`): `Activate()` could not build one or more singletons.
+[Details](#ioc-activation-failed-for-). **Fix:** read `errors` for each cause; `Activate()` can be
+called again.
+
+### `IOC_DISPOSE_FAILED`
+
+`IoCDisposeError` (an `AggregateError`): one or more disposers or `OnStop` hooks threw; the rest
+still ran. [Details](#errors-occurred-while-disposing-the-ioc-container). **Fix:** read `errors`.
+
+### `IOC_RESOLVE_TIMEOUT`
+
+`IoCResolveTimeoutError`: a build, `OnStart`, `OnStop` or disposer took longer than
+`PendingTimeoutMs`. [Details](#-did-not-finish-within-ms). **Fix:** find the slow factory or hook,
+give it its own timeout, or raise `PendingTimeoutMs`.
+
+### `IOC_SCOPE_REQUIRED`
+
+`IoCScopeRequiredError`: a scoped service was resolved from the root container.
+[Details](#scoped-service--was-resolved-outside-a-scope). **Fix:** resolve it from
+`ioc.CreateScope()`.
+
+### `IOC_DUPLICATE_REGISTRATION`
+
+`IoCDuplicateRegistrationError`: the key and name are already registered.
+[Details](#-is-already-registered). **Fix:** pass `Replace: true` to replace it on purpose, or give
+it a different `Name`.
+
+### `IOC_MODULE_CYCLE`
+
+`IoCModuleCycleError`: modules require each other in a loop. [Details](#module-dependency-cycle-).
+**Fix:** move the shared registrations into a module both require.
+
+### `IOC_START_FAILED`
+
+`IoCStartError`: a module's `OnStart` failed; the modules already started were stopped again.
+[Details](#module--failed-to-start-). **Fix:** read `cause`; `Start()` can be called again.
+
+### `IOC_NOT_ISOLATABLE`
+
+`IoCNotIsolatableError`: `Isolate()` was given a key it can't copy into the scope.
+[Details](#-cant-be-isolated-). **Fix:** isolate only singletons registered in a parent.
+
+### `IOC_INVALID_REGISTRATION`
+
+`IoCRegistrationError`: a registration or call was malformed.
+[Details](#registration-errors). **Fix:** follow the message; each variant is listed there.
+
+### `IOC_INVALID_KEY`
+
+`IoCRegistrationError`: a key was neither a token nor a class (a string, say).
+[Details](#keys-must-be-tokens-or-classes-but-a--was-given). **Fix:** use
+`IoCToken<T>('name')` or the class itself.
 
 ---
 
@@ -117,12 +201,15 @@ console.log(await (await ioc.Resolve(Orders)).billing.total()); // 30
 ```text
 IoC validation failed:
   - Repo depends on Url, which is not registered.
+    Fix: Register Url with RegisterClass, RegisterFactory or RegisterValue, or Use() the module that provides it. If a scope or the host registers it later, declare it with Expect().
   - singleton Cache depends on scoped Session; it would keep one instance for its whole life. Make Cache scoped, or resolve Session where it is used, from the scope at hand.
+    Fix: Register Cache with Lifetime: 'scoped', or remove Session from its Deps and resolve it from the request's scope where it is needed.
+Docs: https://github.com/fathym/ioc/blob/main/docs/reference/errors.md#ioc_validation_failed
 ```
 
 `IoCValidationError` (`IOC_VALIDATION_FAILED`), from `Validate()` and from `Start()`, which
-validates first. It lists every problem at once; `Issues` holds them as
-`{ Kind, Service, Message }` and `Problems` as messages. Only declared `Deps` are checked.
+validates first. It lists every problem at once, each with a `Fix:` line; `Issues` holds them as
+`{ Kind, Service, Message, Hint }` and `Problems` as messages. Only declared `Deps` are checked.
 
 ### Validation problems
 

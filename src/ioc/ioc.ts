@@ -1071,6 +1071,9 @@ export class IoCContainer<TKeys = any> {
             Service: reg.label,
             Message: `${reg.label} is constructed without arguments, but its constructor ` +
               `declares ${arity} parameter(s); register it with Deps or with a factory.`,
+            Hint: `List the constructor's ${arity} parameter(s) in order: ` +
+              `RegisterClass(${reg.label}, { Deps: [/* one key per parameter */] }), or build ` +
+              `it with RegisterFactory.`,
           });
         }
       }
@@ -1084,6 +1087,13 @@ export class IoCContainer<TKeys = any> {
             Service: reg.label,
             Message: `${reg.label} depends on ${labelFor(dep.key, dep.name)}, which is not ` +
               `registered.`,
+            Hint:
+              `Register ${labelFor(dep.key, dep.name)} with RegisterClass, RegisterFactory or ` +
+              `RegisterValue${
+                dep.name && dep.name !== DEFAULT_NAME ? ` (Name: '${dep.name}')` : ''
+              }, or Use() the module ` +
+              `that provides it. If a scope or the host registers it later, declare it with ` +
+              `Expect().`,
           });
         }
       }
@@ -1108,6 +1118,8 @@ export class IoCContainer<TKeys = any> {
                   `${via.length ? ` (through ${via.join(' -> ')})` : ''}; it would keep one ` +
                   `instance for its whole life. Make ${reg.label} scoped, or resolve ` +
                   `${target.label} where it is used, from the scope at hand.`,
+                Hint: `Register ${reg.label} with Lifetime: 'scoped', or remove ${target.label} ` +
+                  `from its Deps and resolve it from the request's scope where it is needed.`,
               });
             }
           }
@@ -1137,6 +1149,8 @@ export class IoCContainer<TKeys = any> {
             Kind: 'cycle',
             Service: reg.label,
             Message: `Circular dependency: ${[...cycle, reg.label].join(' -> ')}.`,
+            Hint: `Remove one edge of the cycle: move what both need into a third service, or ` +
+              `have one side resolve the other later (in a method, not its constructor).`,
           });
         }
 

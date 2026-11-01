@@ -7,6 +7,7 @@
 import { walk } from 'jsr:@std/fs@1.0.24/walk';
 import { fromFileUrl } from 'jsr:@std/path@1.1.6';
 import {
+  buildLlmsFullTxt,
   buildLlmsTxt,
   checkDocs,
   type DocFiles,
@@ -26,12 +27,14 @@ const options = {
     'docs/README.md',
     'docs/reference/errors.md',
     'llms.txt',
+    'llms-full.txt',
     'CHANGELOG.md',
     'CONTRIBUTING.md',
   ],
   ErrorCatalog: 'docs/reference/errors.md',
   ErrorSources: ['src/ioc/ioc.ts', 'src/ioc/errors.ts'],
   LlmsTxt: 'llms.txt',
+  LlmsFullTxt: 'llms-full.txt',
 };
 
 const files: DocFiles = new Map();
@@ -58,7 +61,13 @@ if (Deno.args.includes('--write')) {
 
   files.set(options.LlmsTxt, llms);
 
-  console.log(`Wrote ${options.LlmsTxt}`);
+  const full = buildLlmsFullTxt(files, options.RepoRawUrl);
+
+  await Deno.writeTextFile(`${root}/${options.LlmsFullTxt}`, full);
+
+  files.set(options.LlmsFullTxt, full);
+
+  console.log(`Wrote ${options.LlmsTxt} and ${options.LlmsFullTxt}`);
 }
 
 const problems = checkDocs(files, options);
@@ -83,7 +92,10 @@ const checks: [string, string[]][] = [
     ...markdown,
   ]],
   ['JSDoc examples (type-checked and run)', ['test', '-A', '--quiet', '--doc', ...sources]],
-  ['API documentation (deno doc --lint)', ['doc', '--lint', 'mod.ts']],
+  [
+    'API documentation (deno doc --lint)',
+    ['doc', '--lint', 'mod.ts', 'src/agents/.exports.ts', 'src/agents/init.ts'],
+  ],
   ...(examples.length ? [['examples', ['check', ...examples]] as [string, string[]]] : []),
 ];
 

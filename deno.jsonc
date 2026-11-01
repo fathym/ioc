@@ -9,7 +9,9 @@
   // Already the house default in 29 sibling repos.
   "minimumDependencyAge": "0",
   "exports": {
-    ".": "./mod.ts"
+    ".": "./mod.ts",
+    "./agents": "./src/agents/.exports.ts",
+    "./init-agents": "./src/agents/init.ts"
   },
   // What JSR publishes: the library and its landing docs (the full docs live on GitHub).
   "publish": {

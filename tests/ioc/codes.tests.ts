@@ -7,6 +7,7 @@ import {
   IoCDisposeError,
   IoCDuplicateRegistrationError,
   type IoCErrorCode,
+  ioCErrorDocsUrl,
   IoCModuleCycleError,
   IoCNotIsolatableError,
   IoCRegistrationError,
@@ -98,6 +99,21 @@ Deno.test('Error codes', async (t) => {
       assertEquals(await codeOf(produce), code);
     });
   }
+
+  await t.step('every error links to its code section in the error catalog (DocsUrl)', async () => {
+    for (const [code, produce] of Object.entries(producers)) {
+      let docsUrl: unknown;
+
+      try {
+        await produce();
+      } catch (err) {
+        docsUrl = (err as { DocsUrl?: string }).DocsUrl;
+      }
+
+      assertEquals(docsUrl, ioCErrorDocsUrl(code as IoCErrorCode), code);
+      assert(String(docsUrl).endsWith(`errors.md#${code.toLowerCase()}`));
+    }
+  });
 
   await t.step('isIoCError recognizes every error class, by code or in general', () => {
     const errors: [unknown, IoCErrorCode][] = [
