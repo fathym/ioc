@@ -296,12 +296,14 @@ example in these docs is type-checked and run in CI.
 | Are upgrading from 0.0.x or 0.1  | [Migrating from 0.x](./migration/from-0.x.md) _[How-to]_    |
 | Want to know why it is this way  | [IoC 1.0 design](./design/ioc-1.0.md) _[Explanation]_       |
 | Are deciding whether to adopt it | [Evaluating @fathym/ioc](./evaluating.md) _[Explanation]_   |
+| Build with AI coding agents      | [@fathym/ioc and AI](./ai/README.md) _[How-to]_             |
 
 ## All pages
 
 | Folder                                          | What's in it                                                            |
 | ----------------------------------------------- | ----------------------------------------------------------------------- |
 | [getting-started/](./getting-started/README.md) | Install, a first container, async services, scopes, testing             |
+| [ai/](./ai/README.md)                           | Using it with AI coding agents, and the AI coding benchmark             |
 | [guides/](./guides/README.md)                   | One-task recipes, such as registering many modules                      |
 | [reference/](./reference/README.md)             | The API reference, the error catalog, the guarantees and the comparison |
 | [migration/](./migration/README.md)             | Upgrading from 0.x                                                      |
@@ -444,15 +446,16 @@ against the adapter.
 
 ## Lifecycle and wiring
 
-|                                                                |      @fathym/ioc      |                        InversifyJS                         |                            awilix                            |                           tsyringe                           |
-| -------------------------------------------------------------- | :-------------------: | :--------------------------------------------------------: | :----------------------------------------------------------: | :----------------------------------------------------------: |
-| Concurrent first resolves build an async singleton once        |           ✓           |                             ✓                              |                     ✓ the cached promise                     |                     ✓ the cached promise                     |
-| An async dependency is injected as the instance, not a promise |           ✓           |                        ✓ `getAsync`                        |                ✗ injects the pending promise                 |                ✗ injects the pending promise                 |
-| A failed async build is retried, not cached                    |           ✓           |                  ✗ the failure is cached                   |               ✗ the rejected promise is cached               |               ✗ the rejected promise is cached               |
-| A request scope disposes its instances when the request throws | ✓ `await using` scope | ✓ child container + `onDeactivation`, unbound in `finally` |               ✓ `scope.dispose()` in `finally`               |         ✓ child container, `dispose()` in `finally`          |
-| Disposal runs in reverse creation order                        |           ✓           |   ✗ A, B: follows registration order, not creation order   | ✗ A, B: a dependency is disposed before the service using it | ✗ A, B: a dependency is disposed before the service using it |
-| A missing dependency is found at startup, before any resolve   |    ✓ `Validate()`     |        ✗ no validation API; fails at first resolve         |         ✗ no validation API; fails at first resolve          |         ✗ no validation API; fails at first resolve          |
-| A wrong dependency fails to compile                            |           ✓           |                             ✓                              |                              ✗                               |                              ✗                               |
+|                                                                |         @fathym/ioc         |                        InversifyJS                         |                            awilix                            |                           tsyringe                           |
+| -------------------------------------------------------------- | :-------------------------: | :--------------------------------------------------------: | :----------------------------------------------------------: | :----------------------------------------------------------: |
+| Concurrent first resolves build an async singleton once        |              ✓              |                             ✓                              |                     ✓ the cached promise                     |                     ✓ the cached promise                     |
+| An async dependency is injected as the instance, not a promise |              ✓              |                        ✓ `getAsync`                        |                ✗ injects the pending promise                 |                ✗ injects the pending promise                 |
+| A failed async build is retried, not cached                    |              ✓              |                  ✗ the failure is cached                   |               ✗ the rejected promise is cached               |               ✗ the rejected promise is cached               |
+| A request scope disposes its instances when the request throws |    ✓ `await using` scope    | ✓ child container + `onDeactivation`, unbound in `finally` |               ✓ `scope.dispose()` in `finally`               |         ✓ child container, `dispose()` in `finally`          |
+| Disposal runs in reverse creation order                        |              ✓              |   ✗ A, B: follows registration order, not creation order   | ✗ A, B: a dependency is disposed before the service using it | ✗ A, B: a dependency is disposed before the service using it |
+| A missing dependency is found at startup, before any resolve   |       ✓ `Validate()`        |        ✗ no validation API; fails at first resolve         |         ✗ no validation API; fails at first resolve          |         ✗ no validation API; fails at first resolve          |
+| Cancelling a request rejects the builds it waits on            | ✓ `CreateScope({ Signal })` |     ✗ no AbortSignal option in its API (from its docs)     |      ✗ no AbortSignal option in its API (from its docs)      |      ✗ no AbortSignal option in its API (from its docs)      |
+| A wrong dependency fails to compile                            |              ✓              |                             ✓                              |                              ✗                               |                              ✗                               |
 
 What each row does is in [`compare/scenarios.ts`](../../compare/scenarios.ts), and how each library
 does it is in [`compare/adapters/`](../../compare/adapters/ioc.ts). The compile check wires a logger
@@ -471,28 +474,28 @@ about a microsecond per resolve, the container is rarely what limits an applicat
 
 | Library     | Time per iteration | Per second |
 | ----------- | -----------------: | ---------: |
-| tsyringe    |             1.2 µs |    838,223 |
-| @fathym/ioc |            18.1 µs |     55,386 |
-| awilix      |            18.6 µs |     53,818 |
-| InversifyJS |            50.7 µs |     19,732 |
+| tsyringe    |             1.4 µs |    728,640 |
+| awilix      |            15.6 µs |     64,214 |
+| @fathym/ioc |            15.8 µs |     63,480 |
+| InversifyJS |            47.3 µs |     21,151 |
 
 **resolve**
 
 | Library     | Time per iteration | Per second |
 | ----------- | -----------------: | ---------: |
-| InversifyJS |              51 ns | 19,665,279 |
-| awilix      |             134 ns |  7,488,224 |
-| tsyringe    |             180 ns |  5,542,185 |
-| @fathym/ioc |             1.2 µs |    817,166 |
+| InversifyJS |              55 ns | 18,112,623 |
+| awilix      |             120 ns |  8,299,168 |
+| tsyringe    |             170 ns |  5,891,907 |
+| @fathym/ioc |             1.4 µs |    732,157 |
 
 **scope per request**
 
 | Library     | Time per iteration | Per second |
 | ----------- | -----------------: | ---------: |
-| tsyringe    |             4.8 µs |    207,008 |
-| awilix      |            17.4 µs |     57,394 |
-| @fathym/ioc |            25.7 µs |     38,961 |
-| InversifyJS |            72.3 µs |     13,839 |
+| tsyringe    |             2.1 µs |    485,224 |
+| awilix      |             8.8 µs |    113,508 |
+| @fathym/ioc |            17.0 µs |     58,869 |
+| InversifyJS |            30.1 µs |     33,235 |
 
 Source: [`compare/bench.ts`](../../compare/bench.ts).
 
@@ -639,8 +642,16 @@ functions 99% (November 2026), with CI failing below 97% of lines or 95% of bran
 - **A timeout rejects the caller; it doesn't cancel the build.** The build keeps running, and if
   it succeeds its result is cached, so the factory isn't called again.
   - [guarantees › after a timeout the build keeps running, and its late result is cached](../../tests/ioc/guarantees.tests.ts)
-- **There is no cancellation.** The container doesn't pass an `AbortSignal` to factories. A factory
-  that needs one uses its own, such as `AbortSignal.timeout(ms)`.
+- **A scope created with `CreateScope({ Signal })` is cancelled when that signal aborts.** Its
+  waiting resolves reject with `IoCAbortedError`, new ones are refused, and its `Signal` (and its
+  inner scopes' signals) abort, so factories can stop the work they started. It is still disposed
+  by its owner. Every container's `Signal` also aborts when the container is disposed. Scopes
+  without a signal pay nothing for this.
+  - [guarantees › aborting a scope signal rejects its pending resolves and refuses new ones](../../tests/ioc/guarantees.tests.ts)
+  - [guarantees › a scope signal follows its parent and its own abort, and the scope still disposes](../../tests/ioc/guarantees.tests.ts)
+  - [guarantees › a container's Signal aborts when the container is disposed](../../tests/ioc/guarantees.tests.ts)
+- **A timeout doesn't cancel the build.** A factory that should stop on time uses its scope's
+  `Signal`, or its own `AbortSignal.timeout(ms)`.
 
 ## What `Validate()` can see
 
@@ -1502,6 +1513,118 @@ the bundle is built. `Start()` still validates the wiring and fails with every p
 
 ---
 
+Source: https://raw.githubusercontent.com/fathym/ioc/main/docs/ai/README.md (@fathym/ioc and AI)
+
+# @fathym/ioc and AI
+
+Explicit, typed wiring is something an AI coding agent can read, check and change: every
+registration and `Deps` list is in the code, the compiler checks `Deps` against constructors, and
+`Validate()` returns every wiring problem with a `Fix:` line. These pages cover how to give agents
+what they need, and what we have measured.
+
+| Page                                                                      | What it covers                                                      |
+| ------------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| [Working with AI coding agents](../guides/ai-coding-agents.md) _[How-to]_ | The agent kit, `llms-full.txt`, the MCP server, and the fix loop    |
+| [The AI coding benchmark](./benchmark.md) _[Reference]_                   | Claude Code on the same DI tasks with `@fathym/ioc` and InversifyJS |
+
+## The MCP knowledge server
+
+`@fathym/ioc/mcp` serves verified, version-exact knowledge to agents over MCP: examples CI has
+type-checked and run (`ioc_recipe`), the API reference (`ioc_api`), every error code with its fix
+(`ioc_explain`), and the docs (`ioc_search`). For Claude Code:
+
+```sh
+claude mcp add fathym-ioc -- deno run -A jsr:@fathym/ioc/mcp
+```
+
+## What's Next
+
+- Give your agent the conventions: [working with AI coding agents](../guides/ai-coding-agents.md)
+  _[How-to]_
+- What the measurements say: [the AI coding benchmark](./benchmark.md) _[Reference]_
+
+---
+
+Source: https://raw.githubusercontent.com/fathym/ioc/main/docs/ai/benchmark.md (The AI coding benchmark)
+
+# The AI coding benchmark
+
+AI coding agents know the popular DI containers from their training data and `@fathym/ioc` much
+less. This benchmark measures that gap, and how much of it the docs and the MCP server close. The
+harness is [`evals/run.ts`](../../evals/run.ts); the tasks, starters and hidden checks are in
+[`evals/tasks/`](../../evals/tasks/add-provider/prompt.txt).
+
+## How it works
+
+Each run gives Claude Code (headless, `claude -p`) one task in a fresh copy of a small AI-agent
+app. The same app is written once with each library, behind the same public API, so one hidden
+test scores both. Web tools are off, no MCP servers load except the arm's own, and Bash is limited
+to `deno`. A run passes when `deno task check` and the hidden test pass.
+
+| Arm | Library       | What the agent gets                      |
+| --- | ------------- | ---------------------------------------- |
+| A   | InversifyJS   | Its own knowledge only (the bar to beat) |
+| C   | `@fathym/ioc` | Its own knowledge only                   |
+| D   | `@fathym/ioc` | `llms-full.txt` in the project           |
+| F   | `@fathym/ioc` | The `@fathym/ioc` MCP knowledge server   |
+
+Tasks: **add-provider** (add a second model provider next to the first), **fix-wiring** (a
+constructor gained a dependency the wiring doesn't provide), **per-session** (give each session its
+own memory, built by the container and closed exactly once). Every task was first solved by hand
+with each library to check that it is fair.
+
+## Pilot results (November 2026)
+
+Model `claude-sonnet-5-5`, 3 tasks × 4 arms × 3 runs = 36 runs, $4.11 in total. Raw results:
+[`evals/results/pilot-2026-11-01.json`](../../evals/results/pilot-2026-11-01.json).
+
+| Arm                              | Passed | Avg turns | Avg cost (USD) | Avg time |
+| -------------------------------- | -----: | --------: | -------------: | -------: |
+| A: InversifyJS, own knowledge    |    9/9 |       8.2 |          0.090 |      22s |
+| C: `@fathym/ioc`, own knowledge  |    9/9 |      16.2 |          0.143 |      31s |
+| D: `@fathym/ioc` + llms-full.txt |    9/9 |       9.4 |          0.107 |      22s |
+| F: `@fathym/ioc` + MCP server    |    9/9 |      13.6 |          0.117 |      25s |
+
+| Task         | A turns | C turns | D turns | F turns (MCP calls) |
+| ------------ | ------: | ------: | ------: | ------------------: |
+| add-provider |     8.3 |     8.7 |     8.7 |          10.7 (0.0) |
+| fix-wiring   |     6.0 |    16.0 |     8.7 |          11.3 (2.0) |
+| per-session  |    10.3 |    24.0 |    11.0 |          18.7 (5.0) |
+
+## What the pilot shows
+
+- **Every arm solved every task.** These tasks are too easy to separate the arms by pass rate.
+  The full benchmark needs harder tasks.
+- **The familiarity gap is real, and it is cost, not failure.** Working from its own knowledge,
+  the agent needed about twice the turns with `@fathym/ioc` as with InversifyJS (16.2 against
+  8.2), most of all on the per-session task (24 against 10).
+- **The docs close most of it.** With `llms-full.txt` in the project the agent needed 9.4 turns,
+  within about 15% of InversifyJS, and matched it on time.
+- **The MCP server, as built, closes less of it than the file.** 13.6 turns: better than nothing,
+  but the agent skipped it entirely on the simplest task, and each lookup costs a turn.
+
+## The decision
+
+The data works; how it is delivered matters more than expected. Before the full benchmark:
+
+1. **Lead with the file and the agent kit.** `llms-full.txt` and the kit (which points to it) are
+   what closed the gap. Add the kit as an arm (E) in the full run.
+2. **Make the MCP server earn its turns.** Give it one call that returns a compact guide plus the
+   best recipe for the task, sharpen its tool descriptions, and add the verification tools
+   (`ioc_check`, `ioc_validate`) that a file can't provide. Re-test it as arms F and G.
+3. **Make the tasks discriminate.** Add harder tasks (modules with typed needs, wrappers, a
+   cancellation scope, refactors across files) and a smaller model, where missing knowledge shows
+   up as failures rather than only extra turns.
+
+## What's Next
+
+- Give your agent what closed the gap: [working with AI coding agents](../guides/ai-coding-agents.md)
+  _[How-to]_
+- The same libraries compared on behavior, not on agents: [comparison](../reference/comparison.md)
+  _[Reference]_
+
+---
+
 Source: https://raw.githubusercontent.com/fathym/ioc/main/docs/reference/README.md (Reference)
 
 # Reference
@@ -1546,7 +1669,7 @@ code block is a complete, runnable example, checked in CI.
   [ResolveAll](#resolveallkey), [ResolveNamed](#resolvenamedkey),
   [ResolveRecord](#resolverecordrecord), [Names](#nameskey), [Has](#haskey-name),
   [how resolution behaves](#how-resolution-behaves)
-- **Scopes:** [CreateScope](#createscope), [Isolate](#isolatekeys)
+- **Scopes:** [CreateScope](#createscopeoptions), [Signal](#signal), [Isolate](#isolatekeys)
 - **Modules:** [Use](#usemodules), [IoCModule](#iocmodule),
   [DefineModule](#definemoduledefinition)
 - **Lifecycle:** [Start](#startoptions), [Activate](#activate), [Dispose](#dispose),
@@ -1784,15 +1907,15 @@ console.log((await ioc.Resolve($Handler))('/notes')); // handled /notes
 
 ### Registration options
 
-| Option     | On                                 | Default      | Meaning                                                                                                                                                                                                    |
-| ---------- | ---------------------------------- | ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `Lifetime` | `RegisterClass`, `RegisterFactory` | singleton    | `'singleton'` (or omitted): one shared instance. `'transient'`: a new instance per resolve. `'scoped'`: one instance per [scope](#createscope); resolving it from the root throws `IoCScopeRequiredError`. |
-| `Name`     | all three                          | `'$default'` | Registers under a name, so several services share one key. Named and unnamed registrations never stand in for each other.                                                                                  |
-| `Default`  | all three                          | `false`      | A replaceable default; see [defaults](#defaults) below.                                                                                                                                                    |
-| `Replace`  | all three                          | `false`      | Replaces an existing registration in this container on purpose. Without it, registering a key and name again throws.                                                                                       |
-| `Dispose`  | all three                          | none         | `(instance) => …`: cleanup run when the owning container is disposed, for resources without `Symbol.asyncDispose` / `Symbol.dispose` (`(kv) => kv.close()`).                                               |
-| `Deps`     | `RegisterClass`, `RegisterFactory` | none         | The services to inject, in order: keys or `[key, name]`.                                                                                                                                                   |
-| `Type`     | `RegisterClass`                    | the class    | The token to register the class under; the class must satisfy its type.                                                                                                                                    |
+| Option     | On                                 | Default      | Meaning                                                                                                                                                                                                           |
+| ---------- | ---------------------------------- | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Lifetime` | `RegisterClass`, `RegisterFactory` | singleton    | `'singleton'` (or omitted): one shared instance. `'transient'`: a new instance per resolve. `'scoped'`: one instance per [scope](#createscopeoptions); resolving it from the root throws `IoCScopeRequiredError`. |
+| `Name`     | all three                          | `'$default'` | Registers under a name, so several services share one key. Named and unnamed registrations never stand in for each other.                                                                                         |
+| `Default`  | all three                          | `false`      | A replaceable default; see [defaults](#defaults) below.                                                                                                                                                           |
+| `Replace`  | all three                          | `false`      | Replaces an existing registration in this container on purpose. Without it, registering a key and name again throws.                                                                                              |
+| `Dispose`  | all three                          | none         | `(instance) => …`: cleanup run when the owning container is disposed, for resources without `Symbol.asyncDispose` / `Symbol.dispose` (`(kv) => kv.close()`).                                                      |
+| `Deps`     | `RegisterClass`, `RegisterFactory` | none         | The services to inject, in order: keys or `[key, name]`.                                                                                                                                                          |
+| `Type`     | `RegisterClass`                    | the class    | The token to register the class under; the class must satisfy its type.                                                                                                                                           |
 
 #### Defaults
 
@@ -2074,10 +2197,10 @@ console.log(ioc.Has($Db), ioc.Has($Db, 'replica')); // false true
 
 ## Scopes
 
-### CreateScope()
+### CreateScope(options?)
 
 ```ts ignore
-CreateScope(): IoCContainer<TKeys>
+CreateScope(options?: { Signal?: AbortSignal }): IoCContainer<TKeys>
 ```
 
 Creates a child container, for one request, command, job or test.
@@ -2091,6 +2214,10 @@ Creates a child container, for one request, command, job or test.
 - A scope skips modules its parent already has, and has its own `Start()` and `State`.
 - Dispose it when done (`await using scope = ioc.CreateScope()`). Disposing the parent disposes its
   live scopes too, and a scope can't be used once its parent is disposed.
+- **`Signal`** cancels the scope's work when it aborts, for a request or agent run that was
+  cancelled: resolves waiting in the scope reject with
+  [`IoCAbortedError`](./errors.md#ioc_scope_aborted), new ones are refused, and the scope's
+  [`Signal`](#signal) aborts so factories can stop. The scope is still disposed by its owner.
 
 ```ts
 import { IoCContainer } from '@fathym/ioc';
@@ -2106,6 +2233,42 @@ await using b = ioc.CreateScope();
 
 console.log((await a.Resolve(RequestId)) === (await a.Resolve(RequestId))); // true
 console.log((await a.Resolve(RequestId)) === (await b.Resolve(RequestId))); // false
+```
+
+### Signal
+
+```ts ignore
+get Signal(): AbortSignal
+```
+
+Aborted when this container or a parent is disposed, or when the signal given to
+`CreateScope({ Signal })` (here or in a parent scope) aborts. Factories reach it through their
+`ioc` argument and pass it to the work they start (model calls, queries, tools), so a cancelled
+request stops that work too. It is the platform's `AbortSignal`, so it can go straight to `fetch`.
+
+```ts
+import { IoCContainer, IoCToken } from '@fathym/ioc';
+
+const $Page = IoCToken<string, 'app/Page'>('app/Page');
+
+const app = new IoCContainer().RegisterFactory($Page, async (ioc) => {
+  // Pass the scope's signal on: here a timer stands in for fetch(url, { signal: ioc.Signal }).
+  await new Promise((resolve) => setTimeout(resolve, 10));
+
+  ioc.Signal.throwIfAborted();
+
+  return '<html>';
+}, { Lifetime: 'scoped' });
+
+const request = new AbortController();
+
+await using scope = app.CreateScope({ Signal: request.signal });
+
+const page = scope.Resolve($Page);
+
+request.abort('client disconnected');
+
+await page.catch((err) => console.log(err.code)); // IOC_SCOPE_ABORTED
 ```
 
 ### Isolate(...keys)
@@ -2628,6 +2791,7 @@ other class extends the abstract `IoCError`.
 | `IoCModuleCycleError`           | `IOC_MODULE_CYCLE`                            | `Path`                                          |
 | `IoCStartError`                 | `IOC_START_FAILED`                            | `Module`, `cause`, `RollbackErrors`             |
 | `IoCNotIsolatableError`         | `IOC_NOT_ISOLATABLE`                          | `Service`, `Reason`                             |
+| `IoCAbortedError`               | `IOC_SCOPE_ABORTED`                           | `Reason`                                        |
 | `IoCResolveTimeoutError`        | `IOC_RESOLVE_TIMEOUT`                         | `Service`, `TimeoutMs`                          |
 
 Every error class also has `DocsUrl`, the link to its code's section in the
@@ -2678,6 +2842,7 @@ here, and CI fails if a new one is added without an entry.
 | `IoCModuleCycleError`           | `IOC_MODULE_CYCLE`                            | [Module dependency cycle: …](#module-dependency-cycle-)                                                 |
 | `IoCStartError`                 | `IOC_START_FAILED`                            | [Module '…' failed to start: …](#module--failed-to-start-)                                              |
 | `IoCNotIsolatableError`         | `IOC_NOT_ISOLATABLE`                          | [… can't be isolated: …](#-cant-be-isolated-)                                                           |
+| `IoCAbortedError`               | `IOC_SCOPE_ABORTED`                           | [The scope was cancelled: …](#the-scope-was-cancelled-its-signal-aborted-)                              |
 | `IoCRegistrationError`          | `IOC_INVALID_REGISTRATION`, `IOC_INVALID_KEY` | [Registration and usage mistakes](#registration-errors)                                                 |
 | TypeScript                      | —                                             | [Compile errors](#typescript-errors)                                                                    |
 
@@ -2781,6 +2946,12 @@ it a different `Name`.
 `IoCRegistrationError`: a key was neither a token nor a class (a string, say).
 [Details](#keys-must-be-tokens-or-classes-but-a--was-given). **Fix:** use
 `IoCToken<T>('name')` or the class itself.
+
+### `IOC_SCOPE_ABORTED`
+
+`IoCAbortedError`: the signal given to `CreateScope({ Signal })` aborted, so the scope's waiting
+and new resolves were refused. [Details](#the-scope-was-cancelled-its-signal-aborted-). **Fix:**
+expected after a cancellation; dispose the scope and create a new one for further work.
 
 ---
 
@@ -3001,6 +3172,18 @@ Url can't be isolated: it is a value, which every scope shares as is.
 
 `IoCNotIsolatableError` (`IOC_NOT_ISOLATABLE`), from `Isolate()`. Values are shared as they are;
 there is nothing to build per scope. **Fix:** register a different value on the scope instead.
+
+## The scope was cancelled: its signal aborted …
+
+```text
+The scope was cancelled: its signal aborted (client went away). Create a new scope for further work.
+```
+
+`IoCAbortedError` (`IOC_SCOPE_ABORTED`), from a resolve in a scope created with
+`CreateScope({ Signal })`, or in a scope inside it, once that signal has aborted; resolves already
+waiting when it aborts get it too. `Reason` is the signal's abort reason. The scope is not
+disposed: its owner still disposes it (`await using`). **Fix:** this is the expected result of a
+cancellation; stop the request's work, dispose the scope, and use a new scope for new work.
 
 ## Registration errors
 

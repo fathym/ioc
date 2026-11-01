@@ -35,6 +35,7 @@ here, and CI fails if a new one is added without an entry.
 | `IoCModuleCycleError`           | `IOC_MODULE_CYCLE`                            | [Module dependency cycle: …](#module-dependency-cycle-)                                                 |
 | `IoCStartError`                 | `IOC_START_FAILED`                            | [Module '…' failed to start: …](#module--failed-to-start-)                                              |
 | `IoCNotIsolatableError`         | `IOC_NOT_ISOLATABLE`                          | [… can't be isolated: …](#-cant-be-isolated-)                                                           |
+| `IoCAbortedError`               | `IOC_SCOPE_ABORTED`                           | [The scope was cancelled: …](#the-scope-was-cancelled-its-signal-aborted-)                              |
 | `IoCRegistrationError`          | `IOC_INVALID_REGISTRATION`, `IOC_INVALID_KEY` | [Registration and usage mistakes](#registration-errors)                                                 |
 | TypeScript                      | —                                             | [Compile errors](#typescript-errors)                                                                    |
 
@@ -138,6 +139,12 @@ it a different `Name`.
 `IoCRegistrationError`: a key was neither a token nor a class (a string, say).
 [Details](#keys-must-be-tokens-or-classes-but-a--was-given). **Fix:** use
 `IoCToken<T>('name')` or the class itself.
+
+### `IOC_SCOPE_ABORTED`
+
+`IoCAbortedError`: the signal given to `CreateScope({ Signal })` aborted, so the scope's waiting
+and new resolves were refused. [Details](#the-scope-was-cancelled-its-signal-aborted-). **Fix:**
+expected after a cancellation; dispose the scope and create a new one for further work.
 
 ---
 
@@ -358,6 +365,18 @@ Url can't be isolated: it is a value, which every scope shares as is.
 
 `IoCNotIsolatableError` (`IOC_NOT_ISOLATABLE`), from `Isolate()`. Values are shared as they are;
 there is nothing to build per scope. **Fix:** register a different value on the scope instead.
+
+## The scope was cancelled: its signal aborted …
+
+```text
+The scope was cancelled: its signal aborted (client went away). Create a new scope for further work.
+```
+
+`IoCAbortedError` (`IOC_SCOPE_ABORTED`), from a resolve in a scope created with
+`CreateScope({ Signal })`, or in a scope inside it, once that signal has aborted; resolves already
+waiting when it aborts get it too. `Reason` is the signal's abort reason. The scope is not
+disposed: its owner still disposes it (`await using`). **Fix:** this is the expected result of a
+cancellation; stop the request's work, dispose the scope, and use a new scope for new work.
 
 ## Registration errors
 

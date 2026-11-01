@@ -163,7 +163,8 @@ Deno.test('MCP server - knowledge', async (t) => {
   await t.step('the knowledge base covers the docs, examples, API and every error code', () => {
     assert(IOC_KNOWLEDGE.Sections.length > 100);
     assert(IOC_KNOWLEDGE.Recipes.length > 40);
-    assertEquals(IOC_KNOWLEDGE.Errors.length, 14);
+    assertEquals(IOC_KNOWLEDGE.Errors.length, 15);
+    assert(IOC_KNOWLEDGE.Errors.some((e) => e.Code === 'IOC_SCOPE_ABORTED'));
 
     for (
       const name of ['RegisterClass', 'RegisterFactory', 'CreateScope', 'Validate', 'IoCToken']

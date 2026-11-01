@@ -27,6 +27,11 @@ Every code example in these docs is type-checked in CI. Install from npm (`npm i
 - [Working with AI coding agents](https://raw.githubusercontent.com/fathym/ioc/main/docs/guides/ai-coding-agents.md): Give Claude Code, Cursor, Copilot and other coding agents the @fathym/ioc conventions, the full docs, and a fix loop they can act on.
 - [Registering many modules](https://raw.githubusercontent.com/fathym/ioc/main/docs/guides/registering-many-modules.md): Add a folder of modules with one call - a barrel file, or import.meta.glob under Vite - instead of convention-based auto-registration.
 
+## AI
+
+- [@fathym/ioc and AI](https://raw.githubusercontent.com/fathym/ioc/main/docs/ai/README.md): Using @fathym/ioc with AI coding agents, and the benchmark that measures how well agents work with it.
+- [The AI coding benchmark](https://raw.githubusercontent.com/fathym/ioc/main/docs/ai/benchmark.md): Claude Code given the same dependency-injection tasks with @fathym/ioc and with InversifyJS, with and without docs or the MCP server; pilot results and what they decide.
+
 ## Reference
 
 - [Reference](https://raw.githubusercontent.com/fathym/ioc/main/docs/reference/README.md): Reference material for @fathym/ioc - the API, every error message, and the guarantees with their tests.

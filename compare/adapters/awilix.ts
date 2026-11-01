@@ -115,6 +115,14 @@ export const awilix: Adapter = {
     };
   },
 
+  CancelledRequestStopsPending() {
+    // No API ties a request's AbortSignal to the container's builds.
+    return Promise.resolve({
+      Pass: false,
+      Note: 'no AbortSignal option in its API (from its docs)',
+    });
+  },
+
   MissingFoundAtStartup() {
     const c = createContainer();
     c.register({ repo: asFunction(({ db }: { db: Db }) => new Repo(db)) });
