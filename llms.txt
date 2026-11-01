@@ -18,6 +18,11 @@ Every code example in these docs is type-checked in CI. Install from JSR (`deno 
 - [Step 4: Per-Request Scopes](https://raw.githubusercontent.com/fathym/ioc/main/docs/getting-started/per-request-scopes.md): Serve HTTP with Deno.serve and give every request its own scope, request value and scoped services, disposed when the response is sent.
 - [Step 5: Testing Your App](https://raw.githubusercontent.com/fathym/ioc/main/docs/getting-started/testing-your-app.md): Put the app's wiring in a module, then test the notes service with a fake store - no module mocking needed.
 
+## Guides
+
+- [Guides](https://raw.githubusercontent.com/fathym/ioc/main/docs/guides/README.md): Short how-to recipes for @fathym/ioc - one task per page.
+- [Registering many modules](https://raw.githubusercontent.com/fathym/ioc/main/docs/guides/registering-many-modules.md): Add a folder of modules with one call - a barrel file, or import.meta.glob under Vite - instead of convention-based auto-registration.
+
 ## Reference
 
 - [Reference](https://raw.githubusercontent.com/fathym/ioc/main/docs/reference/README.md): Reference material for @fathym/ioc - the API and every error message.

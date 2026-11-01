@@ -245,6 +245,7 @@ export function buildLlmsTxt(files: DocFiles, rawUrl: string): string {
   const groups: [string, (path: string) => boolean][] = [
     ['Start here', (p) => p === 'README.md' || p === 'docs/README.md'],
     ['Getting started (tutorial)', (p) => p.startsWith('docs/getting-started/')],
+    ['Guides', (p) => p.startsWith('docs/guides/')],
     ['Reference', (p) => p.startsWith('docs/reference/')],
     ['Migration', (p) => p.startsWith('docs/migration/')],
     ['Examples', (p) => p.startsWith('examples/')],

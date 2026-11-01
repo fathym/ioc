@@ -14,8 +14,8 @@ request hits it.
 
 **@fathym/ioc is built for how TypeScript apps are written today.** Plain classes. Typed keys.
 Async factories that just work. Wiring mistakes caught by the compiler, and the rest caught at
-startup. Clean shutdown when you're done. It runs on Deno, Node.js and Bun, with zero
-dependencies.
+startup. Clean shutdown when you're done. It runs on Deno, Node.js and Bun, in about 6 KB gzipped,
+with zero dependencies.
 
 ```ts
 import { IoCContainer, IoCToken } from '@fathym/ioc';
@@ -142,22 +142,35 @@ const Api = DefineModule({
 
 ## How it compares
 
-|                                          | @fathym/ioc | InversifyJS | tsyringe | awilix | NestJS |
-| ---------------------------------------- | :---------: | :---------: | :------: | :----: | :----: |
-| No decorators or `reflect-metadata`      |      ✓      |      ✗      |    ✗     |   ✓    |   ✗    |
-| Constructor deps checked at compile time |      ✓      |      ✗      |    ✗     |   ✗    |   ✗    |
-| Async factories                          |      ✓      |      ✓      |    ✗     |   ✗    |   ✓    |
-| Startup validation of the whole wiring   |      ✓      |      ✗      |    ✗     |   ~    |   ✓    |
-| Modules with start/stop lifecycle        |      ✓      |      ~      |    ✗     |   ✗    |   ✓    |
-| Disposal of what it built                |      ✓      |      ~      |    ~     |   ✓    |   ✓    |
-| Standalone library, not a framework      |      ✓      |      ✓      |    ✓     |   ✓    |   ✗    |
-| Synchronous resolve                      |      ✗      |      ✓      |    ✓     |   ✓    |   ✓    |
+|                                          | @fathym/ioc | InversifyJS | tsyringe | awilix  | NestJS |
+| ---------------------------------------- | :---------: | :---------: | :------: | :-----: | :----: |
+| No decorators or `reflect-metadata`      |      ✓      |      ✗      |    ✗     |    ✓    |   ✗    |
+| Constructor deps checked at compile time |      ✓      |      ✗      |    ✗     |    ✗    |   ✗    |
+| Async factories                          |      ✓      |      ✓      |    ✗     |    ✗    |   ✓    |
+| Startup validation of the whole wiring   |      ✓      |      ✗      |    ✗     |    ~    |   ✓    |
+| Modules with start/stop lifecycle        |      ✓      |      ~      |    ✗     |    ✗    |   ✓    |
+| Disposal of what it built                |      ✓      |      ~      |    ~     |    ✓    |   ✓    |
+| Standalone library, not a framework      |      ✓      |      ✓      |    ✓     |    ✓    |   ✗    |
+| Synchronous resolve                      |      ✗      |      ✓      |    ✓     |    ✓    |   ✓    |
+| Minified + gzipped                       | **6.1 KB**  |   24.7 KB   | 11.0 KB  | 30.1 KB | 141 KB |
+| Runtime dependencies                     |    **0**    |    6 + 1    |  1 + 1   |   18    | 18 + 2 |
 
-✓ built in · ~ partial · ✗ not available. Based on each project's documentation, October 2026.
+✓ built in · ~ partial · ✗ not available. Features are based on each project's documentation,
+October 2026. Sizes are each whole library bundled with its required polyfill and measured with
+`deno task size --compare` (InversifyJS 8.2, tsyringe 4.10, awilix 13.0, NestJS 12.3 core and
+common). Dependencies count indirect ones; "+ 1" is `reflect-metadata`, and NestJS's "+ 2" adds
+rxjs. awilix's browser build leaves out file scanning and is 3.6 KB.
 
-**Pick something else if** you need synchronous resolution everywhere, convention-based
-auto-registration (awilix does this well), property injection or tagged bindings (InversifyJS),
-or you're inside a framework with its own DI, such as NestJS or Angular.
+Need several implementations of one interface, such as a chain of handlers or one cache per
+region? Register each under a
+[name](https://github.com/fathym/ioc/blob/main/docs/reference/api.md#resolveallkey) and
+collect them with `ResolveAll`. A whole folder of modules registers with one call, too: see
+[registering many modules](https://github.com/fathym/ioc/blob/main/docs/guides/registering-many-modules.md).
+
+**Pick something else if** you need synchronous resolution everywhere, auto-registration by
+scanning files and naming conventions (awilix does this well), property injection or bindings
+chosen by tags and injection target (InversifyJS), or you're inside a framework with its own DI,
+such as NestJS or Angular.
 
 ## Install
 
