@@ -120,8 +120,9 @@ release:
    every other commit bumps the patch version.
 2. Run `deno task test:runtimes --require-all` (CI runs it on Node.js 20, 22 and 24 and Bun).
 3. Run the test suites of the main dependents against the release candidate.
-4. JSR is the primary registry. To publish to npm as well, run
-   `deno task build:npm --version=<version>`, then `npm publish dist/npm --access public`.
+4. Merging to `main` publishes the stable version to JSR, then the `Publish to npm` workflow
+   publishes the same version to npm. To publish a tagged release to npm again (or retry one),
+   run that workflow by hand with the tag, for example `v1.0.18`.
 5. Record provenance in `UPSTREAM.md`, as described in `AGENTS.md`.
 
 ## What's Next

@@ -1,0 +1,88 @@
+name: Publish to npm
+
+# After Build & Publish releases a stable version from main (to JSR, tagged vX.Y.Z), publishes the
+# same version to npm as @fathym/ioc. Prereleases from other branches stay on JSR only.
+#
+# Auth: the NPM_TOKEN secret when it is set; otherwise npm trusted publishing (OIDC), once
+# @fathym/ioc on npmjs.com trusts this repository and workflow file.
+#
+# To publish a release that is already tagged (or retry one), run this workflow by hand with its
+# tag, e.g. v1.0.18.
+
+on:
+  workflow_run:
+    workflows: ['Build & Publish']
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to publish, e.g. v1.0.18'
+        required: true
+
+permissions:
+  contents: read
+  id-token: write # npm provenance and trusted publishing
+
+concurrency:
+  group: publish-npm
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || inputs.tag }}
+          fetch-depth: 0
+
+      - name: Find the release version
+        id: release
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          tag="${INPUT_TAG:-$(git tag --points-at HEAD | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n 1)}"
+          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::No stable release tag (vX.Y.Z) on $(git rev-parse --short HEAD); nothing to publish."
+            exit 1
+          fi
+          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+          echo "Releasing @fathym/ioc@${tag#v} to npm"
+
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Use an npm that supports trusted publishing
+        run: npm install --global npm@11
+
+      - name: Skip versions already on npm
+        id: existing
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          if npm view "@fathym/ioc@${VERSION}" version > /dev/null 2>&1; then
+            echo "@fathym/ioc@${VERSION} is already on npm; skipping."
+            echo "published=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build and smoke-test the package
+        if: steps.existing.outputs.published != 'true'
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          deno task test:runtimes
+          deno task build:npm --version="${VERSION}"
+
+      - name: Publish
+        if: steps.existing.outputs.published != 'true'
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish dist/npm --access public --provenance

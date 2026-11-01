@@ -4,7 +4,7 @@ DocumentType: Guide
 Title: Upstream and Provenance
 Summary: Where @fathym/ioc comes from, where it is published, its versions and the versions pinned by dependents.
 Created: 2026-10-13
-Updated: 2026-10-15
+Updated: 2026-11-01
 Owners:
   - fathym
 References:
@@ -27,18 +27,18 @@ References:
 
 ## Release channels
 
-| Channel | Package                                               | Built by                                                |
-| ------- | ----------------------------------------------------- | ------------------------------------------------------- |
-| JSR     | [`@fathym/ioc`](https://jsr.io/@fathym/ioc) (primary) | The shared `fathym/build-n-publish` workflow            |
-| npm     | `@fathym/ioc` (ESM + `.d.ts`)                         | `deno task build:npm --version=<version>`, then publish |
+| Channel | Package                                                                    | Built by                                                                                                    |
+| ------- | -------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| JSR     | [`@fathym/ioc`](https://jsr.io/@fathym/ioc)                                | The shared `fathym/build-n-publish` workflow, every push to `main` (stable) and other branches (prerelease) |
+| npm     | [`@fathym/ioc`](https://www.npmjs.com/package/@fathym/ioc) (ESM + `.d.ts`) | `.github/workflows/publish-npm.yml`, after each stable release from `main`, same version as JSR             |
 
 ## Versions
 
 | Version | Status                 | Notes                                                                                                                                                                                                                                                                   |
 | ------- | ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 0.0.36  | Latest published       | The original container; 0.0.12–0.0.36 share one API                                                                                                                                                                                                                     |
+| 0.0.36  | Previous line          | The original container; 0.0.12–0.0.36 share one API                                                                                                                                                                                                                     |
 | 0.1.0   | Superseded by 1.0      | Typed tokens, scopes, disposal, `Validate`, error codes, `Default`, strict mode, modules and lifecycle, scope levels, `Describe`                                                                                                                                        |
-| 1.0.0   | Releasing (major bump) | Typed name tokens (`Symbol.for`), explicit registration, strict duplicates with `Default`/`Replace`, scopes and disposal, modules with ordered `Start()`/`Dispose()`, typed modules, `Validate()`, pending timeout; no 0.x interop ([design](./docs/design/ioc-1.0.md)) |
+| 1.0.18  | First stable 1.0 (JSR) | Typed name tokens (`Symbol.for`), explicit registration, strict duplicates with `Default`/`Replace`, scopes and disposal, modules with ordered `Start()`/`Dispose()`, typed modules, `Validate()`, pending timeout; no 0.x interop ([design](./docs/design/ioc-1.0.md)) |
 
 **Versions pinned by dependents** (at the time of the 1.0 work): 0.0.12 (`eac-runtime`),
 0.0.35 (`eac-applications`) and 0.0.36 (`cli`, `eac`); what each changes is in

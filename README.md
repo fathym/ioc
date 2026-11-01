@@ -2,6 +2,7 @@
 
 ### Dependency injection for modern TypeScript. No decorators. No metadata. Async from the ground up.
 
+[![npm](https://img.shields.io/npm/v/@fathym/ioc)](https://www.npmjs.com/package/@fathym/ioc)
 [![JSR](https://jsr.io/badges/@fathym/ioc)](https://jsr.io/@fathym/ioc)
 [![JSR Score](https://jsr.io/badges/@fathym/ioc/score)](https://jsr.io/@fathym/ioc/score)
 [![Build](https://github.com/fathym/ioc/actions/workflows/build.yml/badge.svg)](https://github.com/fathym/ioc/actions/workflows/build.yml)
@@ -175,9 +176,9 @@ such as NestJS or Angular.
 ## Install
 
 ```sh
+npm install @fathym/ioc      # Node.js 20+ (or pnpm add, yarn add)
+bun add @fathym/ioc          # Bun
 deno add jsr:@fathym/ioc     # Deno
-npx jsr add @fathym/ioc      # Node.js 20+
-bunx jsr add @fathym/ioc     # Bun
 ```
 
 TypeScript 5.4 or later. See the

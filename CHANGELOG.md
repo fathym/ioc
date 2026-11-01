@@ -4,7 +4,7 @@ DocumentType: Guide
 Title: Changelog
 Summary: Notable changes to @fathym/ioc, newest first, following Keep a Changelog.
 Created: 2026-10-13
-Updated: 2026-10-26
+Updated: 2026-11-01
 Owners:
   - fathym
 References:
@@ -21,16 +21,23 @@ References:
 # Changelog
 
 All notable changes to this project are documented here. The format follows
-[Keep a Changelog](https://keepachangelog.com/en/1.1.0/). From 1.0.0 the project follows
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/). From 1.0 the project follows
 [Semantic Versioning](https://semver.org/); the [versioning and support policy](./docs/policy.md)
 says what counts as breaking, how long deprecated APIs keep working, and which runtimes are
 supported.
 
 ## [Unreleased]
 
-Nothing yet.
+### Added
 
-## [1.0.0]
+- **Published to npm** as [`@fathym/ioc`](https://www.npmjs.com/package/@fathym/ioc): every stable
+  release now goes to npm and JSR with the same version, so Node.js and Bun projects install it
+  with `npm install @fathym/ioc` or `bun add @fathym/ioc`.
+
+## [1.0.18] - 2026-11-01
+
+The first stable 1.0 release. The release workflow numbers versions from the repository's tags,
+so there is no 1.0.0: 1.0.18 is the first 1.0 on `main`.
 
 A small core that fixes 0.x's defects and replaces what Fathym's repositories do by hand. Keys
 don't change: a token is still `Symbol.for(name)`, now typed. Most code needs small, mechanical
@@ -235,7 +242,7 @@ The original container: `Register`, `Resolve`, `CopyTo`, transient and scoped li
 named registrations. Versions 0.0.12–0.0.36 share the same API, and they interoperate with 0.1.x
 in one process (not with 1.0).
 
-[Unreleased]: https://github.com/fathym/ioc/compare/v1.0.0...HEAD
-[1.0.0]: https://jsr.io/@fathym/ioc@1.0.0
+[Unreleased]: https://github.com/fathym/ioc/compare/v1.0.18...HEAD
+[1.0.18]: https://jsr.io/@fathym/ioc@1.0.18
 [0.1.0]: https://jsr.io/@fathym/ioc@0.1.0
 [0.0.36]: https://jsr.io/@fathym/ioc@0.0.36
