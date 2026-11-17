@@ -237,6 +237,21 @@ Every code example in the docs is type-checked and run in CI, so what you read i
 generated API docs are on [JSR](https://jsr.io/@fathym/ioc/doc), and AI tools can start from
 [`llms.txt`](https://github.com/fathym/ioc/blob/main/llms.txt).
 
+## Working with an AI coding agent
+
+Give your agent the conventions and verified, version-exact answers instead of guesses:
+
+```sh
+deno run -A jsr:@fathym/ioc/init-agents                      # writes the agent kit into your project
+claude mcp add fathym-ioc -- deno run -A jsr:@fathym/ioc/mcp  # the MCP knowledge server, for Claude Code
+```
+
+The agent kit is a Claude Code skill, a Cursor rule, an `AGENTS.md` section and Copilot
+instructions. The MCP server answers with examples CI has run, the API reference and every error
+code with its fix. All of the docs are also in one file,
+[`llms-full.txt`](https://github.com/fathym/ioc/blob/main/llms-full.txt). See
+[working with AI coding agents](https://github.com/fathym/ioc/blob/main/docs/guides/ai-coding-agents.md).
+
 ## Built to be depended on
 
 - **A stable 1.x API.** Breaking changes only in a major release, each with a migration guide, and
