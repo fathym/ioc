@@ -87,6 +87,27 @@ export const ioc: Adapter = {
     return { Pass: order.join() === 'B,A' };
   },
 
+  async CancelledRequestStopsPending() {
+    const $Slow = IoCToken<string>('compare/Slow');
+
+    const app = new IoCContainer().RegisterFactory($Slow, async () => {
+      await tick(20);
+      return 'late';
+    }, { Lifetime: 'scoped' });
+
+    const request = new AbortController();
+
+    await using scope = app.CreateScope({ Signal: request.signal });
+
+    const pending = scope.Resolve($Slow);
+
+    request.abort();
+
+    const rejected = await pending.then(() => false, (err) => err?.code === 'IOC_SCOPE_ABORTED');
+
+    return { Pass: rejected, Note: '`CreateScope({ Signal })`' };
+  },
+
   MissingFoundAtStartup() {
     const c = new IoCContainer().RegisterClass(Repo, { Deps: [$Missing] });
 

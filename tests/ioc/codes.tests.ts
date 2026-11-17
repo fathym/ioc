@@ -1,12 +1,14 @@
 // Every error code has a producer, and isIoCError recognizes each one, including the
 // AggregateError-based ones.
 import {
+  IoCAbortedError,
   IoCActivationError,
   IoCCircularDependencyError,
   IoCContainerDisposedError,
   IoCDisposeError,
   IoCDuplicateRegistrationError,
   type IoCErrorCode,
+  ioCErrorDocsUrl,
   IoCModuleCycleError,
   IoCNotIsolatableError,
   IoCRegistrationError,
@@ -80,6 +82,14 @@ const producers: Record<IoCErrorCode, () => unknown> = {
       .Resolve($Missing),
   IOC_NOT_ISOLATABLE: () =>
     new IoCContainer().RegisterValue($Missing, 'x').CreateScope().Isolate($Missing),
+  IOC_SCOPE_ABORTED: () => {
+    const run = new AbortController();
+
+    run.abort();
+
+    return new IoCContainer().RegisterValue($Missing, 'x').CreateScope({ Signal: run.signal })
+      .Resolve($Missing);
+  },
 };
 
 const codeOf = async (produce: () => unknown): Promise<string | undefined> => {
@@ -99,6 +109,21 @@ Deno.test('Error codes', async (t) => {
     });
   }
 
+  await t.step('every error links to its code section in the error catalog (DocsUrl)', async () => {
+    for (const [code, produce] of Object.entries(producers)) {
+      let docsUrl: unknown;
+
+      try {
+        await produce();
+      } catch (err) {
+        docsUrl = (err as { DocsUrl?: string }).DocsUrl;
+      }
+
+      assertEquals(docsUrl, ioCErrorDocsUrl(code as IoCErrorCode), code);
+      assert(String(docsUrl).endsWith(`errors.md#${code.toLowerCase()}`));
+    }
+  });
+
   await t.step('isIoCError recognizes every error class, by code or in general', () => {
     const errors: [unknown, IoCErrorCode][] = [
       [new IoCServiceNotFoundError('X', '$default'), 'IOC_SERVICE_NOT_FOUND'],
@@ -114,6 +139,7 @@ Deno.test('Error codes', async (t) => {
       [new IoCModuleCycleError(['A', 'A']), 'IOC_MODULE_CYCLE'],
       [new IoCResolveTimeoutError('X', 1), 'IOC_RESOLVE_TIMEOUT'],
       [new IoCNotIsolatableError('X', 'why'), 'IOC_NOT_ISOLATABLE'],
+      [new IoCAbortedError('why'), 'IOC_SCOPE_ABORTED'],
     ];
 
     for (const [err, code] of errors) {

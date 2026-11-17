@@ -142,8 +142,16 @@ functions 99% (November 2026), with CI failing below 97% of lines or 95% of bran
 - **A timeout rejects the caller; it doesn't cancel the build.** The build keeps running, and if
   it succeeds its result is cached, so the factory isn't called again.
   - [guarantees › after a timeout the build keeps running, and its late result is cached](../../tests/ioc/guarantees.tests.ts)
-- **There is no cancellation.** The container doesn't pass an `AbortSignal` to factories. A factory
-  that needs one uses its own, such as `AbortSignal.timeout(ms)`.
+- **A scope created with `CreateScope({ Signal })` is cancelled when that signal aborts.** Its
+  waiting resolves reject with `IoCAbortedError`, new ones are refused, and its `Signal` (and its
+  inner scopes' signals) abort, so factories can stop the work they started. It is still disposed
+  by its owner. Every container's `Signal` also aborts when the container is disposed. Scopes
+  without a signal pay nothing for this.
+  - [guarantees › aborting a scope signal rejects its pending resolves and refuses new ones](../../tests/ioc/guarantees.tests.ts)
+  - [guarantees › a scope signal follows its parent and its own abort, and the scope still disposes](../../tests/ioc/guarantees.tests.ts)
+  - [guarantees › a container's Signal aborts when the container is disposed](../../tests/ioc/guarantees.tests.ts)
+- **A timeout doesn't cancel the build.** A factory that should stop on time uses its scope's
+  `Signal`, or its own `AbortSignal.timeout(ms)`.
 
 ## What `Validate()` can see
 

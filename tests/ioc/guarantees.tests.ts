@@ -4,8 +4,14 @@
 import { IoCContainer } from '../../src/ioc/ioc.ts';
 import { IoCToken } from '../../src/ioc/IoCToken.ts';
 import { DefineModule } from '../../src/ioc/IoCModule.ts';
-import { IoCDisposeError, IoCResolveTimeoutError } from '../../src/ioc/errors.ts';
-import { assert, assertEquals, assertInstanceOf, assertRejects } from '../test.deps.ts';
+import { IoCAbortedError, IoCDisposeError, IoCResolveTimeoutError } from '../../src/ioc/errors.ts';
+import {
+  assert,
+  assertEquals,
+  assertInstanceOf,
+  assertRejects,
+  assertThrows,
+} from '../test.deps.ts';
 
 const tick = (ms = 1) => new Promise((r) => setTimeout(r, ms));
 
@@ -245,6 +251,114 @@ Deno.test('Guarantees - what Validate sees', async (t) => {
       restore();
 
       assert(ioc.Validate({ Throw: false }).length > 0);
+    },
+  );
+});
+
+Deno.test('Guarantees - cancellation', async (t) => {
+  await t.step("a container's Signal aborts when the container is disposed", async () => {
+    const ioc = new IoCContainer();
+
+    const signal = ioc.Signal;
+
+    assertEquals(signal.aborted, false);
+
+    await ioc.Dispose();
+
+    assertEquals(signal.aborted, true);
+    assertEquals(new IoCContainer().Signal.aborted, false);
+  });
+
+  await t.step(
+    'aborting a scope signal rejects its pending resolves and refuses new ones',
+    async () => {
+      const $Slow = IoCToken<string>('GuaranteeCancelSlow');
+
+      let sawAbort = false;
+
+      const app = new IoCContainer().RegisterFactory($Slow, async (ioc) => {
+        await tick(20);
+
+        sawAbort = ioc.Signal.aborted;
+
+        return 'late';
+      }, { Lifetime: 'scoped' });
+
+      const request = new AbortController();
+
+      const scope = app.CreateScope({ Signal: request.signal });
+
+      const pending = scope.Resolve($Slow);
+
+      request.abort('client went away');
+
+      const err = await assertRejects(() => pending, IoCAbortedError);
+
+      assertEquals(err.code, 'IOC_SCOPE_ABORTED');
+      assertEquals(err.Reason, 'client went away');
+
+      await assertRejects(() => scope.Resolve($Slow), IoCAbortedError);
+      assertThrows(() => scope.CreateScope(), IoCAbortedError);
+
+      await tick(30);
+
+      assert(sawAbort, 'the factory saw the aborted signal');
+
+      await scope.Dispose();
+    },
+  );
+
+  await t.step(
+    'a scope signal follows its parent and its own abort, and the scope still disposes',
+    async () => {
+      let disposed = 0;
+
+      class Session {
+        [Symbol.dispose]() {
+          disposed++;
+        }
+      }
+
+      const app = new IoCContainer().RegisterClass(Session, { Lifetime: 'scoped' });
+
+      const run = new AbortController();
+
+      const scope = app.CreateScope({ Signal: run.signal });
+
+      const inner = scope.CreateScope();
+
+      await scope.Resolve(Session);
+
+      run.abort();
+
+      assert(scope.Signal.aborted);
+      assert(inner.Signal.aborted);
+      assertEquals(app.Signal.aborted, false);
+
+      await scope.Dispose();
+
+      assertEquals(disposed, 1);
+
+      const late = app.CreateScope();
+
+      await app.Dispose();
+
+      assert(late.Signal.aborted, "a scope's signal aborts when its parent is disposed");
+    },
+  );
+
+  await t.step(
+    'a scope without a signal resolves as before (no cancellation overhead)',
+    async () => {
+      const $Value = IoCToken<number>('GuaranteeCancelValue');
+
+      const app = new IoCContainer().RegisterFactory($Value, () => Promise.resolve(7), {
+        Lifetime: 'scoped',
+      });
+
+      await using scope = app.CreateScope();
+
+      assertEquals(await scope.Resolve($Value), 7);
     },
   );
 });

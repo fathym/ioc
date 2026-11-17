@@ -178,10 +178,21 @@ export function isDisposable(value: unknown): value is object {
   return typeof v[Symbol.asyncDispose] === 'function' || typeof v[Symbol.dispose] === 'function';
 }
 
-/** Disposes one instance through `Symbol.asyncDispose` or `Symbol.dispose`. */
-export async function disposeOne(value: object): Promise<void> {
+/**
+ * Disposes one instance through `Symbol.asyncDispose` or `Symbol.dispose`. Returns a promise only
+ * when disposal is asynchronous, so synchronous disposers cost no promise or timer.
+ */
+export function disposeOne(value: object): unknown {
   const v = value as Record<symbol, () => unknown>;
 
-  if (typeof v[Symbol.asyncDispose] === 'function') await v[Symbol.asyncDispose]();
-  else if (typeof v[Symbol.dispose] === 'function') v[Symbol.dispose]();
+  if (typeof v[Symbol.asyncDispose] === 'function') {
+    const result = v[Symbol.asyncDispose]();
+
+    // A thenable that isn't a native promise is awaited (and bounded) like one.
+    return typeof (result as { then?: unknown } | null)?.then === 'function'
+      ? Promise.resolve(result)
+      : result;
+  }
+
+  if (typeof v[Symbol.dispose] === 'function') return v[Symbol.dispose]();
 }

@@ -4,7 +4,7 @@ DocumentType: Guide
 Title: API Reference
 Summary: Every public method, option, type and error of @fathym/ioc 1.0 - signature, behavior, edge cases and a runnable example, grouped by task.
 Created: 2026-10-13
-Updated: 2026-10-22
+Updated: 2026-11-01
 Owners:
   - fathym
 References:
@@ -38,7 +38,7 @@ code block is a complete, runnable example, checked in CI.
   [ResolveAll](#resolveallkey), [ResolveNamed](#resolvenamedkey),
   [ResolveRecord](#resolverecordrecord), [Names](#nameskey), [Has](#haskey-name),
   [how resolution behaves](#how-resolution-behaves)
-- **Scopes:** [CreateScope](#createscope), [Isolate](#isolatekeys)
+- **Scopes:** [CreateScope](#createscopeoptions), [Signal](#signal), [Isolate](#isolatekeys)
 - **Modules:** [Use](#usemodules), [IoCModule](#iocmodule),
   [DefineModule](#definemoduledefinition)
 - **Lifecycle:** [Start](#startoptions), [Activate](#activate), [Dispose](#dispose),
@@ -276,15 +276,15 @@ console.log((await ioc.Resolve($Handler))('/notes')); // handled /notes
 
 ### Registration options
 
-| Option     | On                                 | Default      | Meaning                                                                                                                                                                                                    |
-| ---------- | ---------------------------------- | ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `Lifetime` | `RegisterClass`, `RegisterFactory` | singleton    | `'singleton'` (or omitted): one shared instance. `'transient'`: a new instance per resolve. `'scoped'`: one instance per [scope](#createscope); resolving it from the root throws `IoCScopeRequiredError`. |
-| `Name`     | all three                          | `'$default'` | Registers under a name, so several services share one key. Named and unnamed registrations never stand in for each other.                                                                                  |
-| `Default`  | all three                          | `false`      | A replaceable default; see [defaults](#defaults) below.                                                                                                                                                    |
-| `Replace`  | all three                          | `false`      | Replaces an existing registration in this container on purpose. Without it, registering a key and name again throws.                                                                                       |
-| `Dispose`  | all three                          | none         | `(instance) => …`: cleanup run when the owning container is disposed, for resources without `Symbol.asyncDispose` / `Symbol.dispose` (`(kv) => kv.close()`).                                               |
-| `Deps`     | `RegisterClass`, `RegisterFactory` | none         | The services to inject, in order: keys or `[key, name]`.                                                                                                                                                   |
-| `Type`     | `RegisterClass`                    | the class    | The token to register the class under; the class must satisfy its type.                                                                                                                                    |
+| Option     | On                                 | Default      | Meaning                                                                                                                                                                                                           |
+| ---------- | ---------------------------------- | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Lifetime` | `RegisterClass`, `RegisterFactory` | singleton    | `'singleton'` (or omitted): one shared instance. `'transient'`: a new instance per resolve. `'scoped'`: one instance per [scope](#createscopeoptions); resolving it from the root throws `IoCScopeRequiredError`. |
+| `Name`     | all three                          | `'$default'` | Registers under a name, so several services share one key. Named and unnamed registrations never stand in for each other.                                                                                         |
+| `Default`  | all three                          | `false`      | A replaceable default; see [defaults](#defaults) below.                                                                                                                                                           |
+| `Replace`  | all three                          | `false`      | Replaces an existing registration in this container on purpose. Without it, registering a key and name again throws.                                                                                              |
+| `Dispose`  | all three                          | none         | `(instance) => …`: cleanup run when the owning container is disposed, for resources without `Symbol.asyncDispose` / `Symbol.dispose` (`(kv) => kv.close()`).                                                      |
+| `Deps`     | `RegisterClass`, `RegisterFactory` | none         | The services to inject, in order: keys or `[key, name]`.                                                                                                                                                          |
+| `Type`     | `RegisterClass`                    | the class    | The token to register the class under; the class must satisfy its type.                                                                                                                                           |
 
 #### Defaults
 
@@ -566,10 +566,10 @@ console.log(ioc.Has($Db), ioc.Has($Db, 'replica')); // false true
 
 ## Scopes
 
-### CreateScope()
+### CreateScope(options?)
 
 ```ts ignore
-CreateScope(): IoCContainer<TKeys>
+CreateScope(options?: { Signal?: AbortSignal }): IoCContainer<TKeys>
 ```
 
 Creates a child container, for one request, command, job or test.
@@ -583,6 +583,10 @@ Creates a child container, for one request, command, job or test.
 - A scope skips modules its parent already has, and has its own `Start()` and `State`.
 - Dispose it when done (`await using scope = ioc.CreateScope()`). Disposing the parent disposes its
   live scopes too, and a scope can't be used once its parent is disposed.
+- **`Signal`** cancels the scope's work when it aborts, for a request or agent run that was
+  cancelled: resolves waiting in the scope reject with
+  [`IoCAbortedError`](./errors.md#ioc_scope_aborted), new ones are refused, and the scope's
+  [`Signal`](#signal) aborts so factories can stop. The scope is still disposed by its owner.
 
 ```ts
 import { IoCContainer } from '@fathym/ioc';
@@ -598,6 +602,42 @@ await using b = ioc.CreateScope();
 
 console.log((await a.Resolve(RequestId)) === (await a.Resolve(RequestId))); // true
 console.log((await a.Resolve(RequestId)) === (await b.Resolve(RequestId))); // false
+```
+
+### Signal
+
+```ts ignore
+get Signal(): AbortSignal
+```
+
+Aborted when this container or a parent is disposed, or when the signal given to
+`CreateScope({ Signal })` (here or in a parent scope) aborts. Factories reach it through their
+`ioc` argument and pass it to the work they start (model calls, queries, tools), so a cancelled
+request stops that work too. It is the platform's `AbortSignal`, so it can go straight to `fetch`.
+
+```ts
+import { IoCContainer, IoCToken } from '@fathym/ioc';
+
+const $Page = IoCToken<string, 'app/Page'>('app/Page');
+
+const app = new IoCContainer().RegisterFactory($Page, async (ioc) => {
+  // Pass the scope's signal on: here a timer stands in for fetch(url, { signal: ioc.Signal }).
+  await new Promise((resolve) => setTimeout(resolve, 10));
+
+  ioc.Signal.throwIfAborted();
+
+  return '<html>';
+}, { Lifetime: 'scoped' });
+
+const request = new AbortController();
+
+await using scope = app.CreateScope({ Signal: request.signal });
+
+const page = scope.Resolve($Page);
+
+request.abort('client disconnected');
+
+await page.catch((err) => console.log(err.code)); // IOC_SCOPE_ABORTED
 ```
 
 ### Isolate(...keys)
@@ -932,7 +972,8 @@ Checks the registrations visible from this container without building anything, 
 | `arguments` | A class registered without `Deps` whose constructor declares parameters                                          |
 
 Only declared `Deps` are checked: what a factory resolves in its body is only known when it runs.
-Each issue is `{ Kind, Service, Message }`.
+Each issue is `{ Kind, Service, Message, Hint }`; `Hint` says what to change, and the thrown
+error's message shows it as a `Fix:` line under each problem.
 
 ```ts
 import { IoCContainer, IoCToken } from '@fathym/ioc';
@@ -1089,7 +1130,7 @@ registry; `any` (the default) means untyped.
 | `IoCServiceResolver<T>`   | `(ioc: IoCContainer) => T \| Promise<T>`: a factory without dependencies       |
 | `IoCDescription`          | What `Describe()` returns                                                      |
 | `IoCServiceDescription`   | One entry of `Describe().Services`                                             |
-| `IoCValidationIssue`      | One problem found by `Validate()`: `{ Kind, Service, Message }`                |
+| `IoCValidationIssue`      | One problem found by `Validate()`: `{ Kind, Service, Message, Hint }`          |
 | `IoCErrorCode`            | The union of every error code                                                  |
 
 ---
@@ -1119,8 +1160,11 @@ other class extends the abstract `IoCError`.
 | `IoCModuleCycleError`           | `IOC_MODULE_CYCLE`                            | `Path`                                          |
 | `IoCStartError`                 | `IOC_START_FAILED`                            | `Module`, `cause`, `RollbackErrors`             |
 | `IoCNotIsolatableError`         | `IOC_NOT_ISOLATABLE`                          | `Service`, `Reason`                             |
+| `IoCAbortedError`               | `IOC_SCOPE_ABORTED`                           | `Reason`                                        |
 | `IoCResolveTimeoutError`        | `IOC_RESOLVE_TIMEOUT`                         | `Service`, `TimeoutMs`                          |
 
+Every error class also has `DocsUrl`, the link to its code's section in the
+[error catalog](./errors.md#error-codes); `ioCErrorDocsUrl(code)` gives the same link for a code.
 Each message, its causes and its fix are in the [error catalog](./errors.md).
 
 ```ts

@@ -3,7 +3,7 @@
 import { IoCServiceNotFoundError, IoCValidationError } from '../../src/ioc/errors.ts';
 import { IoCContainer } from '../../src/ioc/ioc.ts';
 import { IoCToken } from '../../src/ioc/IoCToken.ts';
-import { assertEquals, assertRejects, assertThrows } from '../test.deps.ts';
+import { assert, assertEquals, assertRejects, assertThrows } from '../test.deps.ts';
 
 const $Url = IoCToken<string>('ValUrl');
 
@@ -31,6 +31,8 @@ Deno.test('Validate - problems', async (t) => {
       Kind: 'missing',
       Service: 'Repo',
       Message: 'Repo depends on ValUrl[replica], which is not registered.',
+      Hint:
+        "Register ValUrl[replica] with RegisterClass, RegisterFactory or RegisterValue (Name: 'replica'), or Use() the module that provides it. If a scope or the host registers it later, declare it with Expect().",
     }]);
   });
 
@@ -158,9 +160,52 @@ Deno.test('Validate - behavior', async (t) => {
       err.message,
       'IoC validation failed:\n' +
         '  - Repo depends on ValUrl, which is not registered.\n' +
+        '    Fix: Register ValUrl with RegisterClass, RegisterFactory or RegisterValue, or Use() ' +
+        'the module that provides it. If a scope or the host registers it later, declare it with ' +
+        'Expect().\n' +
         '  - Lonely is constructed without arguments, but its constructor declares 1 ' +
-        'parameter(s); register it with Deps or with a factory.',
+        'parameter(s); register it with Deps or with a factory.\n' +
+        "    Fix: List the constructor's 1 parameter(s) in order: RegisterClass(Lonely, { Deps: " +
+        '[/* one key per parameter */] }), or build it with RegisterFactory.\n' +
+        'Docs: https://github.com/fathym/ioc/blob/main/docs/reference/errors.md#ioc_validation_failed',
     );
+    assertEquals(err.DocsUrl, err.message.split('Docs: ')[1]);
+  });
+
+  await t.step('every kind of problem comes with a Hint', () => {
+    class Session {}
+
+    class Cache {
+      constructor(public session: Session) {}
+    }
+
+    class Ping {
+      constructor(public pong: unknown) {}
+    }
+
+    class Pong {
+      constructor(public ping: unknown) {}
+    }
+
+    class Lonely {
+      constructor(public x: number) {}
+    }
+
+    const issues = new IoCContainer()
+      .RegisterClass(Session, { Lifetime: 'scoped' })
+      .RegisterClass(Cache, { Deps: [Session] })
+      .RegisterClass(Ping, { Deps: [Pong] })
+      .RegisterClass(Pong, { Deps: [Ping] })
+      .RegisterClass(Repo, { Deps: [$Url] })
+      .RegisterClass(Lonely)
+      .Validate({ Throw: false });
+
+    assertEquals(
+      new Set(issues.map((i) => i.Kind)),
+      new Set(['captive', 'cycle', 'missing', 'arguments']),
+    );
+
+    for (const issue of issues) assert(issue.Hint && issue.Hint.length > 20, issue.Kind);
   });
 
   await t.step('a scope validates against its parents, and its own registrations win', () => {

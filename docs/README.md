@@ -30,12 +30,14 @@ example in these docs is type-checked and run in CI.
 | Are upgrading from 0.0.x or 0.1  | [Migrating from 0.x](./migration/from-0.x.md) _[How-to]_    |
 | Want to know why it is this way  | [IoC 1.0 design](./design/ioc-1.0.md) _[Explanation]_       |
 | Are deciding whether to adopt it | [Evaluating @fathym/ioc](./evaluating.md) _[Explanation]_   |
+| Build with AI coding agents      | [@fathym/ioc and AI](./ai/README.md) _[How-to]_             |
 
 ## All pages
 
 | Folder                                          | What's in it                                                            |
 | ----------------------------------------------- | ----------------------------------------------------------------------- |
 | [getting-started/](./getting-started/README.md) | Install, a first container, async services, scopes, testing             |
+| [ai/](./ai/README.md)                           | Using it with AI coding agents, and the AI coding benchmark             |
 | [guides/](./guides/README.md)                   | One-task recipes, such as registering many modules                      |
 | [reference/](./reference/README.md)             | The API reference, the error catalog, the guarantees and the comparison |
 | [migration/](./migration/README.md)             | Upgrading from 0.x                                                      |

@@ -16,7 +16,8 @@ export type IoCErrorCode =
   | 'IOC_START_FAILED'
   | 'IOC_MODULE_CYCLE'
   | 'IOC_RESOLVE_TIMEOUT'
-  | 'IOC_NOT_ISOLATABLE';
+  | 'IOC_NOT_ISOLATABLE'
+  | 'IOC_SCOPE_ABORTED';
 
 /**
  * True when `error` was thrown by the container, optionally with a specific code. Prefer it to
@@ -47,10 +48,33 @@ export function isIoCError(
   return code === undefined || c === code;
 }
 
+/** The error catalog; each code has its own section, e.g. `#ioc_service_not_found`. */
+const ERROR_DOCS = 'https://github.com/fathym/ioc/blob/main/docs/reference/errors.md';
+
+/**
+ * The error catalog entry for `code`: what it means, the likely causes, and the fix.
+ *
+ * @example
+ * ```ts
+ * import { ioCErrorDocsUrl } from '@fathym/ioc';
+ *
+ * console.log(ioCErrorDocsUrl('IOC_SERVICE_NOT_FOUND'));
+ * // https://github.com/fathym/ioc/blob/main/docs/reference/errors.md#ioc_service_not_found
+ * ```
+ */
+export function ioCErrorDocsUrl(code: IoCErrorCode): string {
+  return `${ERROR_DOCS}#${code.toLowerCase()}`;
+}
+
 /** Base class of the container's errors. Every subclass has a stable {@link IoCErrorCode}. */
 export abstract class IoCError extends Error {
   /** The stable error code. */
   public abstract readonly code: IoCErrorCode;
+
+  /** The error catalog entry for this error's code: what it means and how to fix it. */
+  public get DocsUrl(): string {
+    return ioCErrorDocsUrl(this.code);
+  }
 }
 
 /**
@@ -121,6 +145,9 @@ export interface IoCValidationIssue {
 
   /** A readable description of the problem. */
   Message: string;
+
+  /** What to change to fix it, written to be acted on directly (by a person or a coding agent). */
+  Hint?: string;
 }
 
 /** Thrown by `Validate()`, listing every problem found in the registrations. */
@@ -149,7 +176,12 @@ export class IoCValidationError extends IoCError {
 
     const lines = normalized.map((i) => i.Message);
 
-    super(`IoC validation failed:\n${lines.map((p) => `  - ${p}`).join('\n')}`);
+    const detail = normalized.map((i) => `  - ${i.Message}${i.Hint ? `\n    Fix: ${i.Hint}` : ''}`);
+
+    super(
+      `IoC validation failed:\n${detail.join('\n')}\n` +
+        `Docs: ${ioCErrorDocsUrl('IOC_VALIDATION_FAILED')}`,
+    );
 
     this.Problems = lines;
     this.Issues = normalized;
@@ -265,6 +297,11 @@ export class IoCActivationError extends AggregateError {
   constructor(errors: unknown[], public readonly Services: string[]) {
     super(errors, `IoC activation failed for: ${Services.join(', ')}.`);
   }
+
+  /** The error catalog entry for this error's code: what it means and how to fix it. */
+  public get DocsUrl(): string {
+    return ioCErrorDocsUrl(this.code);
+  }
 }
 
 /**
@@ -285,6 +322,11 @@ export class IoCDisposeError extends AggregateError {
    */
   constructor(errors: unknown[]) {
     super(errors, 'Errors occurred while disposing the IoC container.');
+  }
+
+  /** The error catalog entry for this error's code: what it means and how to fix it. */
+  public get DocsUrl(): string {
+    return ioCErrorDocsUrl(this.code);
   }
 }
 
@@ -379,6 +421,34 @@ export class IoCResolveTimeoutError extends IoCError {
         `(a connection, a lock), or factories may wait on each other through a container ` +
         `captured in a closure; resolve through the factory's parameter. Raise PendingTimeoutMs ` +
         `if it is just slow.`,
+    );
+  }
+}
+
+/**
+ * Thrown when a scope created with `CreateScope({ Signal })` (or a scope inside it) is used after
+ * that signal aborted, and given to resolves still waiting when it aborts. The scope itself is not
+ * disposed: dispose it as usual (`await using`).
+ */
+export class IoCAbortedError extends IoCError {
+  /** The error name, for logs and `instanceof`-free checks. */
+  public override name = 'IoCAbortedError';
+
+  /** The stable error code. */
+  public readonly code = 'IOC_SCOPE_ABORTED' as const;
+
+  /**
+   * Creates the error.
+   *
+   * @param Reason The signal's abort reason.
+   */
+  constructor(public readonly Reason?: unknown) {
+    super(
+      `The scope was cancelled: its signal aborted${
+        Reason === undefined
+          ? ''
+          : ` (${Reason instanceof Error ? Reason.message : String(Reason)})`
+      }. Create a new scope for further work.`,
     );
   }
 }

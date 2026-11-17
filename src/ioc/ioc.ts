@@ -1,4 +1,5 @@
 import {
+  IoCAbortedError,
   IoCActivationError,
   IoCCircularDependencyError,
   IoCContainerDisposedError,
@@ -41,6 +42,33 @@ import type { IoCToken } from './IoCToken.ts';
 
 /** Where the container is in its lifecycle (see {@link IoCContainer.State}). */
 export type IoCContainerState = 'idle' | 'starting' | 'started' | 'stopping' | 'disposed';
+
+/**
+ * The platform's `AbortSignal` where the runtime's type definitions declare one (Deno, Node.js,
+ * Bun, browsers), so it can be passed straight to `fetch` and other APIs; otherwise the minimal
+ * shape the container needs.
+ */
+export type IoCAbortSignal = typeof globalThis extends { AbortSignal: { prototype: infer S } } ? S
+  : {
+    readonly aborted: boolean;
+    readonly reason: unknown;
+    addEventListener(type: 'abort', listener: () => void, options?: { once?: boolean }): void;
+    removeEventListener(type: 'abort', listener: () => void): void;
+  };
+
+/** The parts of `AbortSignal` the container uses; typed here so no DOM types are needed. */
+type Signal = {
+  readonly aborted: boolean;
+  readonly reason: unknown;
+  addEventListener(type: 'abort', listener: () => void, options?: { once?: boolean }): void;
+  removeEventListener(type: 'abort', listener: () => void): void;
+};
+
+/** `AbortController` and `AbortSignal.any`, from the runtime. */
+const aborts = globalThis as unknown as {
+  AbortController: new () => { readonly signal: Signal; abort(reason?: unknown): void };
+  AbortSignal: { any(signals: Signal[]): Signal };
+};
 
 /** Options for a container. Its scopes inherit them. */
 export interface IoCContainerOptions {
@@ -466,6 +494,27 @@ export class IoCContainer<TKeys = any> {
   /** @ignore */
   protected disposing?: Promise<void>;
 
+  /**
+   * Aborted when this container is disposed; created on first use.
+   *
+   * @ignore
+   */
+  protected abortController?: { readonly signal: Signal; abort(reason?: unknown): void };
+
+  /**
+   * This container's `Signal`: its own, its parent's and the linked one combined.
+   *
+   * @ignore
+   */
+  protected combinedSignal?: Signal;
+
+  /**
+   * The signal given to `CreateScope({ Signal })`, if any.
+   *
+   * @ignore
+   */
+  protected linkedSignal?: Signal;
+
   /** @ignore */
   protected readonly options: Readonly<IoCContainerOptions>;
 
@@ -561,7 +610,9 @@ export class IoCContainer<TKeys = any> {
       name: opts.Name,
       kind: 'class',
       ctor: clazz,
-      factory: deps ? async (ioc) => new clazz(...await resolveAll(ioc, deps)) : () => new clazz(),
+      factory: deps
+        ? (ioc) => thenWith(resolveDeps(ioc, deps), (values) => new clazz(...values))
+        : () => new clazz(),
       deps,
       options: opts,
       dispose: opts.Dispose as ((instance: unknown) => unknown) | undefined,
@@ -605,7 +656,9 @@ export class IoCContainer<TKeys = any> {
       key,
       name: opts.Name,
       kind: 'factory',
-      factory: deps ? async (ioc) => call(ioc, ...await resolveAll(ioc, deps)) : (ioc) => call(ioc),
+      factory: deps
+        ? (ioc) => thenWith(resolveDeps(ioc, deps), (values) => call(ioc, ...values))
+        : (ioc) => call(ioc),
       deps,
       options: opts,
       dispose: opts.Dispose as ((instance: unknown) => unknown) | undefined,
@@ -729,15 +782,7 @@ export class IoCContainer<TKeys = any> {
     key: K,
     name?: string,
   ): Promise<IoCServiceOf<K>> {
-    const self = this.self();
-
-    self.assertNotDisposed();
-
-    const frame = this.frame();
-
-    const reg = self.lookup(checkKey(key), name || DEFAULT_NAME, frame);
-
-    return await self.timed(self.resolveIn(reg, frame), reg.label) as IoCServiceOf<K>;
+    return await this.resolveNow(key, name) as IoCServiceOf<K>;
   }
 
   /** Resolves a service, or `undefined` when nothing is registered for it. */
@@ -774,7 +819,7 @@ export class IoCContainer<TKeys = any> {
   >(record: R): Promise<{ -readonly [K in keyof R]: IoCDependencyValue<R[K]> }> {
     const entries = Object.entries(record);
 
-    const values = await resolveAll(this, entries.map(([, dep]) => normalizeDependency(dep)));
+    const values = await resolveDeps(this, entries.map(([, dep]) => normalizeDependency(dep)));
 
     return Object.fromEntries(entries.map(([k], i) => [k, values[i]])) as {
       -readonly [K in keyof R]: IoCDependencyValue<R[K]>;
@@ -827,16 +872,63 @@ export class IoCContainer<TKeys = any> {
    * console.log((await a.Resolve(RequestId)) === (await b.Resolve(RequestId))); // false
    * ```
    */
-  public CreateScope(): IoCContainer<TKeys> {
+  public CreateScope(options?: {
+    /**
+     * Cancels the scope's work when it aborts (an agent run or a request that was cancelled):
+     * resolves waiting in the scope reject with `IoCAbortedError`, new ones are refused, and the
+     * scope's `Signal` aborts, so factories can stop what they started. The scope is still
+     * disposed by its owner.
+     */
+    Signal?: IoCAbortSignal;
+  }): IoCContainer<TKeys> {
     const self = this.self();
 
     self.assertNotDisposed();
+
+    self.assertNotAborted();
 
     const scope = new IoCContainer(self.options);
 
     scope.parent = self;
 
+    scope.linkedSignal = options?.Signal as Signal | undefined;
+
     return scope as unknown as IoCContainer<TKeys>;
+  }
+
+  /**
+   * Aborted when this container or a parent is disposed, or when the signal given to
+   * `CreateScope({ Signal })` (here or in a parent scope) aborts. Factories reach it through their
+   * `ioc` argument and pass it to the work they start, so a cancelled request or agent run stops
+   * its model calls, queries and tools.
+   *
+   * @example
+   * ```ts
+   * import { IoCContainer, IoCToken } from '@fathym/ioc';
+   *
+   * const $Answer = IoCToken<string, 'Answer'>('Answer');
+   *
+   * const app = new IoCContainer().RegisterFactory($Answer, async (ioc) => {
+   *   await new Promise((resolve) => setTimeout(resolve, 10));
+   *
+   *   ioc.Signal.throwIfAborted(); // stop if the request was cancelled meanwhile
+   *
+   *   return 'done';
+   * }, { Lifetime: 'scoped' });
+   *
+   * const request = new AbortController();
+   *
+   * await using scope = app.CreateScope({ Signal: request.signal });
+   *
+   * const answer = scope.Resolve($Answer);
+   *
+   * request.abort('client went away');
+   *
+   * await answer.catch((err) => console.log(err.code)); // IOC_SCOPE_ABORTED
+   * ```
+   */
+  public get Signal(): IoCAbortSignal {
+    return this.self().signal() as IoCAbortSignal;
   }
 
   /**
@@ -1075,6 +1167,9 @@ export class IoCContainer<TKeys = any> {
             Service: reg.label,
             Message: `${reg.label} is constructed without arguments, but its constructor ` +
               `declares ${arity} parameter(s); register it with Deps or with a factory.`,
+            Hint: `List the constructor's ${arity} parameter(s) in order: ` +
+              `RegisterClass(${reg.label}, { Deps: [/* one key per parameter */] }), or build ` +
+              `it with RegisterFactory.`,
           });
         }
       }
@@ -1088,6 +1183,13 @@ export class IoCContainer<TKeys = any> {
             Service: reg.label,
             Message: `${reg.label} depends on ${labelFor(dep.key, dep.name)}, which is not ` +
               `registered.`,
+            Hint:
+              `Register ${labelFor(dep.key, dep.name)} with RegisterClass, RegisterFactory or ` +
+              `RegisterValue${
+                dep.name && dep.name !== DEFAULT_NAME ? ` (Name: '${dep.name}')` : ''
+              }, or Use() the module ` +
+              `that provides it. If a scope or the host registers it later, declare it with ` +
+              `Expect().`,
           });
         }
       }
@@ -1112,6 +1214,8 @@ export class IoCContainer<TKeys = any> {
                   `${via.length ? ` (through ${via.join(' -> ')})` : ''}; it would keep one ` +
                   `instance for its whole life. Make ${reg.label} scoped, or resolve ` +
                   `${target.label} where it is used, from the scope at hand.`,
+                Hint: `Register ${reg.label} with Lifetime: 'scoped', or remove ${target.label} ` +
+                  `from its Deps and resolve it from the request's scope where it is needed.`,
               });
             }
           }
@@ -1141,6 +1245,8 @@ export class IoCContainer<TKeys = any> {
             Kind: 'cycle',
             Service: reg.label,
             Message: `Circular dependency: ${[...cycle, reg.label].join(' -> ')}.`,
+            Hint: `Remove one edge of the cycle: move what both need into a third service, or ` +
+              `have one side resolve the other later (in a method, not its constructor).`,
           });
         }
 
@@ -1425,7 +1531,118 @@ export class IoCContainer<TKeys = any> {
   }
 
   /**
-   * Resolves `reg` (found from this container) for the chain `frame`.
+   * What `Resolve` does, without forcing a promise: the instance itself when it is ready (or
+   * built synchronously), otherwise a promise of it bounded by `PendingTimeoutMs`.
+   *
+   * @ignore
+   */
+  protected resolveNow(key: IoCServiceKey<unknown>, name: string | undefined): unknown {
+    const self = this.self();
+
+    self.assertNotDisposed();
+
+    self.assertNotAborted();
+
+    const frame = this.frame();
+
+    const reg = self.lookup(checkKey(key), name || DEFAULT_NAME, frame);
+
+    const value = self.timed(self.resolveIn(reg, frame), reg.label);
+
+    // Only scopes given a signal pay for watching it.
+    return value instanceof Promise && self.isCancellable() ? self.untilAborted(value) : value;
+  }
+
+  /**
+   * This container's combined signal, created on first use.
+   *
+   * @ignore
+   */
+  protected signal(): Signal {
+    if (this.combinedSignal) return this.combinedSignal;
+
+    this.abortController = new aborts.AbortController();
+
+    if (this.disposing || this.isGone()) {
+      this.abortController.abort(new IoCContainerDisposedError());
+    }
+
+    const sources = [this.abortController.signal];
+
+    if (this.parent) sources.push(this.parent.signal());
+
+    if (this.linkedSignal) sources.push(this.linkedSignal);
+
+    // AbortSignal.any holds its dependents weakly, so short-lived scopes don't pile up listeners.
+    this.combinedSignal = sources.length > 1 ? aborts.AbortSignal.any(sources) : sources[0];
+
+    return this.combinedSignal;
+  }
+
+  /**
+   * True when this container or a parent was given a signal by `CreateScope({ Signal })`.
+   *
+   * @ignore
+   */
+  protected isCancellable(): boolean {
+    for (const c of this.chain()) {
+      if (c.linkedSignal) return true;
+    }
+
+    return false;
+  }
+
+  /**
+   * Throws when a signal given to `CreateScope({ Signal })`, here or in a parent, has aborted.
+   *
+   * @ignore
+   */
+  protected assertNotAborted(): void {
+    for (const c of this.chain()) {
+      if (c.linkedSignal?.aborted) throw new IoCAbortedError(c.linkedSignal.reason);
+    }
+  }
+
+  /**
+   * `value`, or a rejection with `IoCAbortedError` as soon as this container's signal aborts.
+   *
+   * @ignore
+   */
+  protected untilAborted<T>(value: Promise<T>): Promise<T> {
+    const signal = this.signal();
+
+    const reasonError = () =>
+      signal.reason instanceof IoCContainerDisposedError
+        ? signal.reason
+        : new IoCAbortedError(signal.reason);
+
+    if (signal.aborted) {
+      value.catch(noop);
+
+      return Promise.reject(reasonError());
+    }
+
+    return new Promise<T>((resolve, reject) => {
+      const onAbort = () => reject(reasonError());
+
+      signal.addEventListener('abort', onAbort, { once: true });
+
+      value.then(
+        (v) => {
+          signal.removeEventListener('abort', onAbort);
+          resolve(v);
+        },
+        (err) => {
+          signal.removeEventListener('abort', onAbort);
+          reject(err);
+        },
+      );
+    });
+  }
+
+  /**
+   * Resolves `reg` (found from this container) for the chain `frame`: the instance itself when it
+   * is ready (or built synchronously), otherwise a promise of it.
    *
    * @ignore
    */
@@ -1515,7 +1732,9 @@ export class IoCContainer<TKeys = any> {
 
     // The factory gets a view of this container that carries its step of the chain, so what it
     // resolves through it is checked for cycles.
-    const view = Object.create(this, { [IOC_FRAME]: { value: step } });
+    const view = Object.create(this);
+
+    view[IOC_FRAME] = step;
 
     const done = () => {
       step.settled = true;
@@ -1730,6 +1949,9 @@ export class IoCContainer<TKeys = any> {
   protected async disposeNow(): Promise<void> {
     this.state = 'stopping';
 
+    // Tell work started through this container's Signal to stop.
+    this.abortController?.abort(new IoCContainerDisposedError());
+
     // Modules stop while every service is still alive: the scopes' modules first (they may require
     // this container's), then this container's. A running Start() finishes its current module.
     const errors = await this.stopTree();
@@ -1763,9 +1985,37 @@ export class IoCContainer<TKeys = any> {
   //#endregion
 }
 
-/** Resolves dependencies through `ioc` (a factory's view, so the chain continues), in order. */
-function resolveAll(ioc: IoCContainer, deps: IoCDependencyRecord[]): Promise<unknown[]> {
-  return Promise.all(
-    deps.map((d) => ioc.Resolve(d.key as IoCServiceKey<unknown>, d.name)),
-  );
+/**
+ * Resolves dependencies through `ioc` (a factory's view, so the chain continues), in order.
+ * Returns the values directly when every one is available synchronously, so a graph of built or
+ * synchronous services resolves without a promise per step; otherwise a promise of them all.
+ */
+function resolveDeps(
+  ioc: IoCContainer,
+  deps: IoCDependencyRecord[],
+): unknown[] | Promise<unknown[]> {
+  const values: unknown[] = [];
+
+  try {
+    for (const d of deps) {
+      // deno-lint-ignore no-explicit-any
+      values.push((ioc as any).resolveNow(d.key, d.name));
+    }
+  } catch (err) {
+    // Builds already started keep running; their failures are reported by their own callers.
+    for (const v of values) if (isThenable(v)) Promise.resolve(v).catch(noop);
+
+    throw err;
+  }
+
+  return values.some(isThenable) ? Promise.all(values) : values;
+}
+
+/** Applies `fn` to `value` now, or once it settles when it is a promise. */
+function thenWith<T, R>(value: T | Promise<T>, fn: (value: T) => R): R | Promise<Awaited<R>> {
+  return value instanceof Promise ? value.then(fn) as Promise<Awaited<R>> : fn(value);
+}
+
+function isThenable(value: unknown): value is PromiseLike<unknown> {
+  return typeof (value as { then?: unknown } | null)?.then === 'function';
 }

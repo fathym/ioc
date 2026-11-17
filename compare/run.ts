@@ -251,10 +251,11 @@ where a repository needs a database and asks whether \`deno check\` rejects it.
 ## Benchmarks
 
 The same graph in each library: two values, a singleton repository, a transient handler, and a
-scoped request context. \`@fathym/ioc\` always resolves asynchronously, so each resolve includes an
-\`await\` and its \`PendingTimeoutMs\` timer; the other three resolve synchronously. Treat these as
-orders of magnitude on one machine, not as a ranking: at a few microseconds per resolve, the
-container is rarely what limits an application.
+scoped request context. \`Resolve\` in \`@fathym/ioc\` always returns a promise, so each resolve
+includes at least one \`await\`; services whose dependencies are ready are built synchronously
+inside it, and only work that is still pending gets a \`PendingTimeoutMs\` timer. The other three
+resolve synchronously. Treat these as orders of magnitude on one machine, not as a ranking: at
+about a microsecond per resolve, the container is rarely what limits an application.
 
 ${benchTables}
 

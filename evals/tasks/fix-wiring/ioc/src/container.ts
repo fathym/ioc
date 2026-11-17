@@ -1,0 +1,10 @@
+import { IoCContainer, IoCToken } from '@fathym/ioc';
+import { Agent, EchoProvider, type ModelProvider } from './domain.ts';
+
+export const $Provider = IoCToken<ModelProvider, 'agent/ModelProvider'>('agent/ModelProvider');
+
+export function buildContainer() {
+  return new IoCContainer()
+    .RegisterClass(EchoProvider, { Type: $Provider })
+    .RegisterClass(Agent, { Deps: [$Provider] });
+}

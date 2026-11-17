@@ -136,6 +136,14 @@ export const tsyringe: Adapter = {
     };
   },
 
+  CancelledRequestStopsPending() {
+    // No API ties a request's AbortSignal to the container's builds.
+    return Promise.resolve({
+      Pass: false,
+      Note: 'no AbortSignal option in its API (from its docs)',
+    });
+  },
+
   MissingFoundAtStartup() {
     const c = container.createChildContainer();
     c.register('Repo', { useFactory: (d) => new Repo(d.resolve<Db>('Db')) });

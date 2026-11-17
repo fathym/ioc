@@ -31,6 +31,9 @@ export type Adapter = {
 
   /** A missing dependency can be found at startup, before anything is resolved. */
   MissingFoundAtStartup(): Promise<Outcome>;
+
+  /** Cancelling a request (an AbortSignal) rejects the builds it is still waiting on. */
+  CancelledRequestStopsPending(): Promise<Outcome>;
 };
 
 /** Scenario keys with the wording used in the comparison table. */
@@ -41,6 +44,7 @@ export const SCENARIOS: [keyof Adapter, string][] = [
   ['ScopeDisposedOnThrow', 'A request scope disposes its instances when the request throws'],
   ['ReverseDisposal', 'Disposal runs in reverse creation order'],
   ['MissingFoundAtStartup', 'A missing dependency is found at startup, before any resolve'],
+  ['CancelledRequestStopsPending', 'Cancelling a request rejects the builds it waits on'],
 ];
 
 export const tick = (ms = 1) => new Promise((r) => setTimeout(r, ms));

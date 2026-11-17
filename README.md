@@ -183,8 +183,8 @@ const Api = DefineModule({
 [comparison page](https://github.com/fathym/ioc/blob/main/docs/reference/comparison.md), with the
 code for every cell. InversifyJS checks dependencies at compile time with `toResolvedValue`, not
 with `@inject` decorators, and loads `reflect-metadata` itself. NestJS cells come from its
-documentation. On raw speed the synchronous containers win: a resolve here takes about 5 µs
-against well under 1 µs; the comparison page has the numbers.
+documentation. On raw speed the synchronous containers win: a resolve here takes about 1 µs
+against 50–200 ns; the comparison page has the numbers.
 
 Sizes are each whole library bundled with its required polyfill and measured with
 `deno task size --compare` (NestJS 12.3 core and common). Dependencies count indirect ones;
@@ -226,6 +226,21 @@ TypeScript 5.4 or later. See the
 Every code example in the docs is type-checked and run in CI, so what you read is what works. The
 generated API docs are on [JSR](https://jsr.io/@fathym/ioc/doc), and AI tools can start from
 [`llms.txt`](https://github.com/fathym/ioc/blob/main/llms.txt).
+
+## Working with an AI coding agent
+
+Give your agent the conventions and verified, version-exact answers instead of guesses:
+
+```sh
+deno run -A jsr:@fathym/ioc/init-agents                      # writes the agent kit into your project
+claude mcp add fathym-ioc -- deno run -A jsr:@fathym/ioc/mcp  # the MCP knowledge server, for Claude Code
+```
+
+The agent kit is a Claude Code skill, a Cursor rule, an `AGENTS.md` section and Copilot
+instructions. The MCP server answers with examples CI has run, the API reference and every error
+code with its fix. All of the docs are also in one file,
+[`llms-full.txt`](https://github.com/fathym/ioc/blob/main/llms-full.txt). See
+[working with AI coding agents](https://github.com/fathym/ioc/blob/main/docs/guides/ai-coding-agents.md).
 
 ## Built to be depended on
 
